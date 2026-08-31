@@ -66,18 +66,27 @@ def _probe_corrected(ms_str: str) -> tuple[bool | None, str | None]:
 
 
 def run(ms_path: str, workdir: str) -> dict:
+    # 1. MS valid.
+    #
     # An absent or not-yet-imported path is a STAGE, not an error: it is what
-    # next_recommended_step = "import_asdm" exists to report. The path is
-    # therefore probed, not validated. Every tool that operates ON an MS still
-    # validates.
+    # next_recommended_step = "import_asdm" exists to report. This tool used to
+    # call validate_ms_path here, which raises for exactly that case, so the
+    # import_asdm branch below could never be produced and a caller could not
+    # ask "where am I" before importing. The path is therefore probed, not
+    # validated. Every tool that operates ON an MS still validates.
     p = Path(ms_path).expanduser().resolve()
     ms_str = str(p)
     wd = Path(workdir)
     casa_calls: list[str] = []
     warnings: list[str] = []
 
-    # 1. MS valid
     ms_valid = (p / "table.info").exists()
+    if not ms_valid:
+        warnings.append(
+            f"'{p}' is not a Measurement Set"
+            f" ({'path does not exist' if not p.exists() else 'no table.info'});"
+            " reporting the import stage rather than the MS state."
+        )
 
     # ---------------------------------------------------------------- history
     entries = read_stage_log(wd)
