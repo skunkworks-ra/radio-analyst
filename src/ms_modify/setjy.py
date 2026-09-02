@@ -34,6 +34,7 @@ from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
 from ms_inspect.util.frequencies import field_frequencies
+from ms_inspect.util.stage_log import record_stage
 
 TOOL_NAME = "ms_setjy"
 
@@ -118,10 +119,14 @@ class _FieldPlan:
 def _build_script(
     ms_str: str,
     plans: list[_FieldPlan],
+    workdir: str,
     usescratch: bool,
     warnings_inline: list[str],
 ) -> str:
     """Return a self-contained setjy Python script."""
+    from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
+    from ms_inspect.util.stage_log import TABLE_PROBE_SNIPPET as probe
+
     warn_block = ""
     if warnings_inline:
         warn_lines = "\n".join(f"# WARNING: {w}" for w in warnings_inline)
@@ -157,9 +162,17 @@ Run with: python setjy.py
 \"\"\"
 from casatasks import setjy
 
+{record}
+{probe}
+
 ms_path = {ms_str!r}
 
 {warn_block}{no_flux_block}{setjy_blocks}
+# setjy's job is to put a source model where the solvers can find it. With
+# usescratch=True that is a physical MODEL_DATA column; measure it rather than
+# assume the call worked.
+_model = "MODEL_DATA" in _table_colnames(ms_path)
+_record_stage({workdir!r}, "setjy", ms_path, {{"model_data": _model, "usescratch": {usescratch!r}}})
 print("setjy complete.")
 """
 
@@ -393,7 +406,7 @@ def run(
     flux_fields = [p.name for p in plans]
 
     script_path = str(workdir_path / "setjy.py")
-    script_content = _build_script(ms_str, plans, usescratch, inline_warnings)
+    script_content = _build_script(ms_str, plans, str(workdir_path), usescratch, inline_warnings)
     Path(script_path).write_text(script_content)
     casa_calls.append(f"write_script → {script_path}")
 
@@ -489,7 +502,24 @@ def run(
         except Exception as exc:
             warnings.append(f"setjy(field='{plan.name}') failed: {exc}")
 
+    # Measure the column rather than infer it from "setjy did not raise".
+    # A per-field failure above is a warning, so fields_done can be short while
+    # MODEL_DATA is present from an earlier field; the log records both.
+    with open_table(ms_str) as tb:
+        model_present = "MODEL_DATA" in set(tb.colnames())
+    record_stage(
+        str(workdir_path),
+        "setjy",
+        ms_str,
+        {
+            "model_data": model_present,
+            "usescratch": usescratch,
+            "n_fields_done": len(fields_done),
+        },
+    )
+
     base_data["fields_done"] = fmt_field(fields_done)
+    base_data["model_data_present"] = fmt_field(model_present)
     return response_envelope(
         tool_name=TOOL_NAME,
         ms_path=ms_path,
