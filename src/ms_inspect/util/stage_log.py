@@ -40,6 +40,13 @@ from pathlib import Path
 #: Filename, relative to the workdir. Shared by the writer snippet and the reader.
 STAGE_LOG_NAME = "stage_log.jsonl"
 
+#: Shape of one log line's envelope (stage/product/at/exists/measurement are
+#: unversioned — this covers only additions like this one). A reader newer
+#: than the writer can still read every version below its own; a reader
+#: OLDER than the writer must not guess at fields it does not know about —
+#: see schema_version_of()'s docstring.
+SCHEMA_VERSION = 1
+
 #: Embedded verbatim in generated scripts. Call once after each product is
 #: written. Opens, appends one line and closes — never holds a handle, because
 #: a buffered write is lost when a job dies mid-stage, which is precisely the
@@ -64,6 +71,8 @@ def _record_stage(workdir, stage, product, measurement=None):
 
     exists = os.path.exists(product)
     entry = {
+        "schema_version": 1,
+        "analyst_rev": os.environ.get("ANALYST_REV", "unknown"),
         "stage": stage,
         "product": product,
         "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -158,6 +167,17 @@ def completed_stages(entries: list[dict]) -> set[str]:
         for e in entries
         if e.get("exists") is True and e.get("stage") is not None
     }
+
+
+def schema_version_of(entry: dict) -> int:
+    """The envelope version one log line was written with.
+
+    A line written before schema_version existed carries no such key at all —
+    that is read as version 0, not a parse failure, so a caller can refuse
+    cleanly on a version it does not recognise instead of guessing at fields
+    it was never taught about.
+    """
+    return int(entry.get("schema_version", 0))
 
 
 def products_for(entries: list[dict], stage: str) -> list[str]:
