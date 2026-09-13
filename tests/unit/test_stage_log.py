@@ -40,6 +40,45 @@ def test_snippet_appends_a_line_for_a_product_that_exists(tmp_path):
     assert entries[0]["at"].endswith("Z")
 
 
+def test_snippet_stamps_schema_version_and_analyst_rev(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANALYST_REV", "abc1234")
+    product = tmp_path / "gain.g"
+    product.mkdir()
+    _load_recorder()(str(tmp_path), "gaincal", str(product))
+
+    entries = stage_log.read_stage_log(tmp_path)
+    assert entries[0]["schema_version"] == 1
+    assert entries[0]["analyst_rev"] == "abc1234"
+
+
+def test_snippet_stamps_analyst_rev_unknown_without_the_env_var(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANALYST_REV", raising=False)
+    product = tmp_path / "gain.g"
+    product.mkdir()
+    _load_recorder()(str(tmp_path), "gaincal", str(product))
+
+    entries = stage_log.read_stage_log(tmp_path)
+    assert entries[0]["analyst_rev"] == "unknown"
+
+
+def test_schema_version_of_a_current_line_is_one(tmp_path):
+    product = tmp_path / "gain.g"
+    product.mkdir()
+    _load_recorder()(str(tmp_path), "gaincal", str(product))
+
+    entries = stage_log.read_stage_log(tmp_path)
+    assert stage_log.schema_version_of(entries[0]) == 1
+
+
+def test_schema_version_of_an_old_shape_line_is_zero_not_a_parse_failure(tmp_path):
+    """A line written before schema_version existed has no such key at all."""
+    old_line = {"stage": "gaincal", "product": str(tmp_path / "gain.g"), "exists": True}
+    (tmp_path / stage_log.STAGE_LOG_NAME).write_text(json.dumps(old_line) + "\n")
+
+    entries = stage_log.read_stage_log(tmp_path)
+    assert stage_log.schema_version_of(entries[0]) == 0
+
+
 def test_snippet_raises_and_still_records_when_the_product_is_absent(tmp_path):
     """The failure line must survive the raise — it is the record of the failure."""
     missing = tmp_path / "never_written.g"
