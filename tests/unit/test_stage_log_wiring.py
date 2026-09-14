@@ -8,7 +8,12 @@ asked to write. ms_workflow_status derives the whole reduction state from those
 lines, so a generator that silently stops emitting one makes the run look like
 it never happened.
 
-No CASA required: every tool here is exercised on its execute=False path.
+Every tool here is exercised on its execute=False path, but several of them
+(gaincal, bandpass, polcal) call check_spw_coverage() even under
+execute=False — that needs a real, CASA-openable MS (`real_ms_raw`, see
+tests/unit/conftest.py), not a `table.info`-only stub. Against the stub it
+silently took check_spw_coverage's swallow-and-degrade fallback instead of
+exercising it, which is a bug this file used to have, not a feature.
 """
 
 from __future__ import annotations
@@ -18,13 +23,6 @@ import re
 from pathlib import Path
 
 import pytest
-
-
-def _make_ms(tmp_path) -> Path:
-    ms = tmp_path / "test.ms"
-    ms.mkdir()
-    (ms / "table.info").write_text("Type = Measurement Set\n")
-    return ms
 
 
 def _make_workdir(tmp_path) -> Path:
@@ -97,14 +95,16 @@ def _module_level_index(script: str, func_name: str, product: str | None = None)
 
 
 @pytest.fixture
-def ms_and_workdir(tmp_path):
-    return _make_ms(tmp_path), _make_workdir(tmp_path)
+def ms_and_workdir(real_ms_raw, tmp_path):
+    return Path(real_ms_raw), _make_workdir(tmp_path)
 
 
 def _patch_model_data_present(monkeypatch) -> None:
-    """initial_rflag.run() checks MODEL_DATA before writing a script (T8),
-    which needs casatools.table.open() to succeed. _make_ms's fake MS has no
-    real table, so this stands in for a real open, MODEL_DATA present."""
+    """initial_rflag.run() checks MODEL_DATA before writing a script (T8).
+    real_ms_raw genuinely has MODEL_DATA (sm.predict() writes it), so this
+    patch is no longer load-bearing for correctness — kept so this test
+    doesn't depend on the fixture's exact column set, and stays valid even
+    against a real MS variant that doesn't have MODEL_DATA."""
     from contextlib import contextmanager
 
     from ms_modify import initial_rflag
