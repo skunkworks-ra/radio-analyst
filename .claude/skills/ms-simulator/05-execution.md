@@ -4,7 +4,15 @@ How to generate, execute, and validate simulation scripts.
 
 ## Script structure
 
-Generate a single self-contained Python script. Use this template skeleton:
+Generate a single self-contained Python script. Use this template skeleton.
+
+**`sm.open()` vs `sm.openfromms()` — do not confuse these.** `sm.open(ms=...)`
+always (re)creates the MS from scratch, even if a file already exists at that
+path — reopening an already-built MS with it silently truncates
+SPECTRAL_WINDOW/FIELD/MAIN back to empty, with no error. Any stage that comes
+*after* Stage 1 has already run `sm.close()` — predicting, corrupting, adding
+noise — must reopen with `sm.openfromms(msname)` instead. Only Stage 1 itself
+(building a brand-new MS) uses `sm.open()`.
 
 ```python
 #!/usr/bin/env python3
@@ -65,7 +73,7 @@ sm.close()
 {sky_model_code}
 
 # ── Stage 3: Predict visibilities ───────────────────────────
-sm.open(ms=msname)
+sm.openfromms(msname)  # NOT sm.open() — the MS already exists (Stage 1)
 sm.predict({predict_args})
 sm.close()
 
@@ -120,7 +128,12 @@ Multiple fields: call `sm.setfield` once per source.
 # Single source, single SPW
 sm.observe("3C286", "spw0", starttime="-0.5h", stoptime="+0.5h")
 
-# Multi-source schedule
+# Multi-source schedule — CAUTION: with usehourangle=True, every start/stop
+# time below is relative to the FIRST source's transit (3C286 here), not each
+# source's own. This is only safe when every source is close in RA to the
+# first one — true for target/phasecal (chosen close together on purpose),
+# NOT reliably true for a flux calibrator, which is routinely hours away in
+# RA. If sources are far apart in RA, see "Hour angle range" below.
 sm.observe("3C286", "spw0", starttime="-2.5h", stoptime="-2.42h")  # flux cal
 sm.observe("target", "spw0", starttime="-2.4h", stoptime="-2.0h")  # target
 sm.observe("phasecal", "spw0", starttime="-2.0h", stoptime="-1.97h")  # phase cal
@@ -161,6 +174,15 @@ After execution, validate the output MS exists and is well-formed:
 - `sm.open` will fail if the MS path already exists
 - Always `shutil.rmtree` before creating a new MS
 
+### Reopening an MS wipes it back to empty
+- `sm.open(ms=msname)` always (re)creates the MS from scratch — it does not
+  error if the path already exists, it silently truncates it
+- Any stage after Stage 1 (predict, corrupt, add noise) must reopen with
+  `sm.openfromms(msname)` — verified directly: `sm.open()` on an
+  already-observed MS with no error emptied SPECTRAL_WINDOW and FIELD back
+  to zero rows, and a later `msmd.open()` reported "no valid spectral
+  windows"
+
 ### Coordinate system mismatch
 - Shipped VLA/MeerKAT configs use `global` (ITRF/XYZ) coordinates
 - Custom arrays often use `local` (East-North-Up) coordinates
@@ -173,9 +195,38 @@ After execution, validate the output MS exists and is well-formed:
   as the reference and note it in the output
 
 ### Hour angle range
-- `usehourangle=True` means starttime/stoptime are relative to transit
 - `-0.5h` to `+0.5h` = 1 hour centered on meridian transit
 - For full tracks, use `-6h` to `+6h` (12-hour synthesis)
+
+### usehourangle=True is relative to the FIRST source, not each source
+- All start/stop times in the whole `sm` session are hour angles from the
+  *first* source's transit — not, as it's easy to assume, each individual
+  source's own transit
+- Fine when every source in the schedule is close together in RA (a real
+  target + phasecal pair, chosen close on purpose). Wrong, and silent, when
+  a source is far in RA from the first one — a flux calibrator, e.g. — since
+  its "-2.5h" window is actually near the flux cal's own low-elevation or
+  below-horizon hour angle, not its transit. The result is a field that
+  gets flagged out almost or entirely, with no error raised anywhere.
+- Verified directly: two fields ~8h apart in RA, scheduled this way, came
+  out with the second field's data 100% flagged (shadow/elevation limits
+  correctly rejecting genuinely low-elevation data — the schedule was wrong,
+  not the flagging).
+- Fix: switch to `usehourangle=False` and give each far-apart source its own
+  real transit-relative window, computed independently — e.g. with astropy:
+  ```python
+  from astropy.time import Time
+  from astropy.coordinates import EarthLocation, SkyCoord
+  import astropy.units as u
+
+  site = EarthLocation(lat=<deg>*u.deg, lon=<deg>*u.deg, height=<m>*u.m)
+  ref = Time("<ISO time>", scale="utc", location=site)
+  target = SkyCoord(ra="<ra>", dec="<dec>", unit=(u.hourangle, u.deg))
+  ha_hours = (ref.sidereal_time("apparent") - target.ra).wrap_at(12*u.hourangle).hour
+  offset_hours = -ha_hours / 1.0027379  # sidereal -> solar hours, to ref's transit
+  ```
+  Use `offset_hours` (not a guessed number) as the center of that source's
+  own `starttime`/`stoptime` window, with `settimes(usehourangle=False, ...)`.
 
 ### Large MS warning
 Approximate MS size: `N_bl * N_chan * N_pol * N_time * 16 bytes`

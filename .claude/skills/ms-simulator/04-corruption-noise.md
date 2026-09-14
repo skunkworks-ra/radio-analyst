@@ -8,7 +8,7 @@ Fast, good for quick tests. Adds Gaussian noise with constant sigma to all
 visibilities regardless of baseline or frequency.
 
 ```python
-sm.open(ms=msname)
+sm.openfromms(msname)  # NOT sm.open() — that wipes an already-built MS
 sm.setnoise(mode="simplenoise", simplenoise="0.1Jy")
 sm.corrupt()
 sm.close()
@@ -34,7 +34,7 @@ Uses atmospheric model for realistic frequency-dependent noise. Accounts for
 dish size, antenna/spillover/correlator efficiency, receiver temperature.
 
 ```python
-sm.open(ms=msname)
+sm.openfromms(msname)  # NOT sm.open() — that wipes an already-built MS
 sm.setnoise(
     mode="tsys-atm",
     pwv=5.0,              # precipitable water vapour in mm
@@ -107,7 +107,7 @@ asks for calibration effects.
 Simulates slow antenna-based gain drift (amplitude and phase).
 
 ```python
-sm.open(ms=msname)
+sm.openfromms(msname)  # NOT sm.open() — that wipes an already-built MS
 sm.setgain(
     mode="fbm",           # fractional Brownian motion
     table="",             # no cal table output
