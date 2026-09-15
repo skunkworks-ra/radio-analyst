@@ -3,7 +3,12 @@ name: Plugin CI
 on:
   push:
     branches: [main, ci-setup]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      run_llm_layer:
+        description: "Also run the LLM-driven tool probe (Layer 2, spends tokens)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -106,12 +111,127 @@ jobs:
 
       - name: Ask Claude to use the plugin end-to-end (billed to Pro subscription token)
         run: |
+          export CLAUDE_PLUGIN_ROOT="$PWD"
           claude -p "Use the ms_observation_info tool from the ms-inspect MCP server on the MS at $PWD/smoke.ms and report the telescope name it returns." \
             --model haiku \
-            --allowed-tools "mcp__plugin_radio-analyst_ms-inspect__ms_observation_info" \
+            --mcp-config .mcp.json \
+            --allowed-tools "mcp__ms-inspect__ms_observation_info" \
             --permission-prompts none \
             --strict-mcp-config \
             --output-format json \
             > llm_smoke_output.json
           cat llm_smoke_output.json
           grep -qi "VLA" llm_smoke_output.json
+
+  # ---------------------------------------------------------------------
+  # Manual-only: probe every registered MCP tool (52 across the 3 servers).
+  # Layer 1 (raw MCP, no tokens) always runs on dispatch. Layer 2 (LLM-driven,
+  # spends tokens) is opt-in via the run_llm_layer input.
+  # ---------------------------------------------------------------------
+  tool-probe-setup:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build-image
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: gen
+        run: |
+          python3 -c "
+          import json
+          m = json.load(open('scripts/ci/tool_manifest.json'))['tools']
+          pairs = [{'server': s, 'tool': t} for s, tools in m.items() for t in tools]
+          print('matrix=' + json.dumps({'include': pairs}))
+          " >> "$GITHUB_OUTPUT"
+
+  tool-probe:
+    if: github.event_name == 'workflow_dispatch'
+    needs: [build-image, tool-probe-setup]
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.build-image.outputs.image }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.tool-probe-setup.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: pixi install
+        run: pixi install --manifest-path pixi.toml
+
+      - name: Prepare CASA measures data dir
+        run: mkdir -p "$HOME/.casa/data"
+
+      - name: Generate smoke MS
+        run: pixi run --manifest-path pixi.toml python scripts/ci/generate_smoke_ms.py smoke.ms
+
+      - name: Probe ${{ matrix.tool }}
+        run: |
+          pixi run --manifest-path pixi.toml python scripts/ci/tool_probe.py \
+            --server "${{ matrix.server }}" --tool "${{ matrix.tool }}" \
+            --smoke-ms smoke.ms --out "results/${{ matrix.tool }}.layer1.json"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tool-probe-layer1-${{ matrix.tool }}
+          path: results/${{ matrix.tool }}.layer1.json
+
+  tool-probe-llm:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_llm_layer
+    needs: [build-image, tool-probe-setup]
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.build-image.outputs.image }}
+    env:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      MCP_TIMEOUT: "120000"
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.tool-probe-setup.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: pixi install
+        run: pixi install --manifest-path pixi.toml
+
+      - name: Prepare CASA measures data dir
+        run: mkdir -p "$HOME/.casa/data"
+
+      - name: Generate smoke MS
+        run: pixi run --manifest-path pixi.toml python scripts/ci/generate_smoke_ms.py smoke.ms
+
+      - name: LLM-probe ${{ matrix.tool }}
+        run: |
+          pixi run --manifest-path pixi.toml python scripts/ci/tool_probe_llm.py \
+            --server "${{ matrix.server }}" --tool "${{ matrix.tool }}" \
+            --smoke-ms smoke.ms --out "results/${{ matrix.tool }}.layer2.json"
+        continue-on-error: true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tool-probe-layer2-${{ matrix.tool }}
+          path: results/${{ matrix.tool }}.layer2.json
+
+  tool-probe-report:
+    if: always() && github.event_name == 'workflow_dispatch'
+    needs: [tool-probe, tool-probe-llm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tool-probe-layer*
+          path: downloaded-artifacts
+          merge-multiple: true
+
+      - name: Merge into lookup-table report
+        run: python3 scripts/ci/merge_tool_report.py --results-dir downloaded-artifacts --out tool_probe_report.csv
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tool-probe-report
+          path: tool_probe_report.csv
