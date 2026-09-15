@@ -171,11 +171,7 @@ def run(
         )
 
     # This tool always flags datacolumn='residual' (CORRECTED − MODEL); that
-    # computation is meaningless without a MODEL_DATA column. On the G55 run,
-    # ms_verify_model had already reported it absent and the caller called
-    # this tool anyway — the script it wrote failed in CASA 7 s later ("Failed
-    # to parse parameters for mode rflag"). Refuse here instead of writing a
-    # script CASA will reject; the skill already says to run setjy first.
+    # computation is meaningless without MODEL_DATA. Refuse before CASA does.
     with open_table(ms_str) as tb:
         if "MODEL_DATA" not in set(tb.colnames()):
             from ms_inspect.exceptions import ComputationError

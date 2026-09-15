@@ -284,9 +284,8 @@ def run(
             ms_path=ms_path,
         ) from e
 
-    # applycal returns None, so a clean return proves only that it did not
-    # raise. corrected_written used to be set to True on that basis alone;
-    # measure the column instead, and record the measurement.
+    # applycal returns None; a clean return proves only that it did not raise.
+    # Measure the column instead of trusting the return.
     with open_table(ms_str) as tb:
         corrected_written = "CORRECTED_DATA" in set(tb.colnames())
     record_stage(

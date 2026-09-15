@@ -2,10 +2,9 @@
 Unit tests for SAFE_RM_TABLE_SNIPPET -- the archive-aside guard pasted into
 every generated script that (re)writes a caltable.
 
-It had no coverage at all when it landed. That matters here because its
-failure mode is silent and irreversible: a script that still deletes on a
+Its failure mode is silent and irreversible: a script that still deletes on a
 retry destroys the only copy of the previous attempt's caltable, with nothing
-downstream able to tell (PLAN.md, "Where the trouble is" #1).
+downstream able to tell.
 """
 
 from __future__ import annotations

@@ -4,14 +4,9 @@ tools/workflow_status.py — ms_workflow_status
 Rolls up the state of an MS + workdir into a single next-step label.
 
 The stage state comes from workdir/stage_log.jsonl, which the generated
-scripts append to as they complete. It used to be inferred from the filesystem
-with a hardcoded list of caltable names — ["delay.K", "bandpass.B", "gain.G",
-"gain.fluxscaled"]. That could never work: the caltable path is an ARGUMENT to
-every writing tool, with no default, so the names belong to the caller. On the
-2026-08-31 G55 run this tool looked for those four while the run had written
-delay.K, bandpass.b, gain.g and flux.fluxscale, reported one caltable out of
-four, and froze next_recommended_step at apply_initial_rflag_then_applycal for
-ten turns.
+scripts append to as they complete — not from a fixed list of caltable names,
+since the caltable path is an argument to every writing tool and belongs to
+the caller.
 
 Two kinds of fact, kept apart on purpose:
 
@@ -68,12 +63,8 @@ def _probe_corrected(ms_str: str) -> tuple[bool | None, str | None]:
 def run(ms_path: str, workdir: str) -> dict:
     # 1. MS valid.
     #
-    # An absent or not-yet-imported path is a STAGE, not an error: it is what
-    # next_recommended_step = "import_asdm" exists to report. This tool used to
-    # call validate_ms_path here, which raises for exactly that case, so the
-    # import_asdm branch below could never be produced and a caller could not
-    # ask "where am I" before importing. The path is therefore probed, not
-    # validated. Every tool that operates ON an MS still validates.
+    # Probed, not validated — an absent path is the import_asdm stage, not an
+    # error. Every tool that operates ON an MS still validates.
     p = Path(ms_path).expanduser().resolve()
     ms_str = str(p)
     wd = Path(workdir)

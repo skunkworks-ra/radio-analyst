@@ -68,14 +68,11 @@ def validate_output_caltable(
     return ct
 
 
-# Runtime guard embedded in generated scripts. A retry must not destroy the
-# only copy of what an earlier attempt produced (PLAN.md, "Where the trouble
-# is" #1: a second gaincal used to overwrite the first gain.G with nothing to
-# undo it). So this archives the existing table aside -- os.rename, atomic on
-# the same filesystem, which workdir always is here -- rather than deleting
-# it. Refuses to touch anything whose table.info identifies it as a
-# Measurement Set, even if the script is edited or re-run against a changed
-# filesystem.
+# Runtime guard embedded in generated scripts. Archives the previous attempt's
+# caltable aside (os.rename, atomic on the same filesystem) instead of
+# deleting it, so a retry cannot destroy the only copy of prior output.
+# Refuses to touch anything whose table.info identifies it as a Measurement
+# Set, even if the script is edited or re-run against a changed filesystem.
 SAFE_RM_TABLE_SNIPPET = '''\
 def _safe_rm_table(path):
     """Archive an existing caltable aside; refuse to touch a Measurement Set.
