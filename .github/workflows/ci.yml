@@ -37,7 +37,16 @@ jobs:
           cache: true
 
       - name: Install casatools and casatasks
-        run: pixi run pip install casatools casatasks
+        # Pinned: casatools/casatasks >=6.7.2 bundle a libldap.so.2 that requires
+        # EVP_md2 from OpenSSL <3.0. Ubuntu runners (and modern Fedora) ship
+        # OpenSSL 3.x without it, so importing casatools fails with
+        # "undefined symbol: EVP_md2, version OPENSSL_3.0.0". 6.7.0.31 does not
+        # hit this. Re-test before bumping.
+        run: pixi run pip install casatools==6.7.0.31 casatasks==6.7.0.31
 
       - name: Run unit tests
-        run: pixi run test-unit
+        # mkdir must be in the same run block as pixi run: separate steps put
+        # the dir and the test process in different uid namespaces.
+        run: |
+          mkdir -p ~/.casa/data
+          pixi run test-unit
