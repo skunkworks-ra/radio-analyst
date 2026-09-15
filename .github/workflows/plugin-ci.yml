@@ -104,11 +104,13 @@ jobs:
       - name: Warm up MCP server (cold casatools import happens here, not in the timed call)
         run: claude mcp list
 
-      - name: Ask Claude to use the plugin end-to-end (billed to Pro subscription token)
+      - name: Ask Claude to exercise all three MCP servers (billed to Pro subscription token)
         run: |
-          claude -p "Use the ms_observation_info tool from the ms-inspect MCP server on the MS at $PWD/smoke.ms and report the telescope name it returns." \
+          export CLAUDE_PLUGIN_ROOT="$PWD"
+          claude -p "Call these three tools in order and report each result: (1) ms_observation_info from the ms-inspect server on the MS at $PWD/smoke.ms, (2) ms_verify_import from the ms-inspect server on the same MS, (3) ms_sdm_summary from the ms-create server — if it errors because $PWD/smoke.ms is not an ASDM, report that error text verbatim instead of skipping the call." \
             --model haiku \
-            --allowed-tools "mcp__plugin_radio-analyst_ms-inspect__ms_observation_info" \
+            --mcp-config .mcp.json \
+            --allowed-tools "mcp__ms-inspect__ms_observation_info,mcp__ms-inspect__ms_verify_import,mcp__ms-create__ms_sdm_summary" \
             --permission-prompts none \
             --strict-mcp-config \
             --output-format json \
