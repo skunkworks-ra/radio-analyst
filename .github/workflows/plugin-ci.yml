@@ -106,9 +106,11 @@ jobs:
 
       - name: Ask Claude to use the plugin end-to-end (billed to Pro subscription token)
         run: |
+          export CLAUDE_PLUGIN_ROOT="$PWD"
           claude -p "Use the ms_observation_info tool from the ms-inspect MCP server on the MS at $PWD/smoke.ms and report the telescope name it returns." \
             --model haiku \
-            --allowed-tools "mcp__plugin_radio-analyst_ms-inspect__ms_observation_info" \
+            --mcp-config .mcp.json \
+            --allowed-tools "mcp__ms-inspect__ms_observation_info" \
             --permission-prompts none \
             --strict-mcp-config \
             --output-format json \
