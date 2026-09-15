@@ -125,7 +125,7 @@ After creating the sky model, predict into the MS:
 
 ### Method A: sm.predict (simple, handles component lists directly)
 ```python
-sm.open(ms=msname)
+sm.openfromms(msname)  # NOT sm.open() — that wipes an already-built MS
 sm.predict(imagename="", complist="/tmp/sky_model.cl")
 sm.close()
 ```
