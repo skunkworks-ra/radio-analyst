@@ -177,18 +177,13 @@ def _fake_main_table(colnames):
 
 
 # ---------------------------------------------------------------------------
-# The two defects this tool was rewritten to fix (G55 run, 2026-08-31)
+# Stage completion from the log, not from a fixed set of caltable names
 # ---------------------------------------------------------------------------
 
 
 def test_caller_chosen_caltable_names_are_recognised(fake_ms, monkeypatch):
-    """THE original defect.
-
-    The old tool held ["delay.K", "bandpass.B", "gain.G", "gain.fluxscaled"]
-    and the run wrote delay.K, bandpass.b, gain.g and flux.fluxscale — one of
-    four matched. Those paths are ARGUMENTS with no default, so no fixed list
-    can be right. The names below are exactly the ones the G55 run used.
-    """
+    """Caltable paths are arguments with no default, so no fixed name list
+    can be right — completion must come from the stage log, by stage name."""
     ms, workdir = fake_ms
     (ms / "STATE").mkdir()
     monkeypatch.setattr(
@@ -209,13 +204,8 @@ def test_caller_chosen_caltable_names_are_recognised(fake_ms, monkeypatch):
 
 
 def test_corrected_is_reported_for_both_measurement_sets(fake_ms, monkeypatch):
-    """THE second defect.
-
-    Calibration runs on calibrators.ms; the target applycal writes CORRECTED to
-    the MS this tool is given. Probing only the latter is why the run reported
-    corrected_populated=false for ten turns after applycal had populated
-    CORRECTED on the calibrators.
-    """
+    """Calibration runs on calibrators.ms; the target applycal writes CORRECTED
+    to the MS this tool is given. Both must be reported, never merged."""
     ms, workdir = fake_ms
     cal_ms = workdir / "calibrators.ms"
     cal_ms.mkdir()
@@ -237,13 +227,9 @@ def test_corrected_is_reported_for_both_measurement_sets(fake_ms, monkeypatch):
     assert result["data"]["corrected_populated_target"]["value"] is False
 
 
-def test_the_stage_that_froze_the_g55_run_now_advances(fake_ms, monkeypatch):
-    """Regression for the observed symptom, not just its cause.
-
-    Turns 7 through 16 all reported apply_initial_rflag_then_applycal. With
-    CORRECTED on the calibrators and the initial rflag recorded, the tool must
-    move on.
-    """
+def test_final_solves_advance_once_corrected_and_flagged(fake_ms, monkeypatch):
+    """With CORRECTED on the calibrators and the initial rflag recorded, the
+    tool must recommend the final solves, not repeat the prior stage."""
     ms, workdir = fake_ms
     cal_ms = workdir / "calibrators.ms"
     cal_ms.mkdir()
