@@ -91,10 +91,8 @@ def run(ms_path: str, workdir: str) -> dict:
     # ------------------------------------------------------------- live state
     #
     # Calibration runs on calibrators.ms; the target applycal writes CORRECTED
-    # to the MS this tool was given. Probing only the latter is why the G55 run
-    # reported corrected_populated=false for ten turns after applycal had in
-    # fact populated CORRECTED on the calibrators. Both are reported, never
-    # merged: they answer different questions.
+    # to the MS this tool was given. Both are reported, never merged — they
+    # answer different questions.
     calibrators_ms = wd / "calibrators.ms"
     calibrators_ms_present = calibrators_ms.exists() and (calibrators_ms / "table.info").exists()
 

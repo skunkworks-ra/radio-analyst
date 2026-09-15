@@ -190,9 +190,7 @@ class TestConvergence:
 
 
 class TestCorrectedDataGuardrail:
-    """Both real outcomes of the CORRECTED_DATA check, against real MSs —
-    not the accidental "could not verify" degrade every other test in this
-    file used to take by accident (see module docstring)."""
+    """Both real outcomes of the CORRECTED_DATA check, against real MSs."""
 
     def test_raises_when_corrected_data_is_genuinely_absent(self, tmp_path, real_ms_raw):
         from ms_inspect.exceptions import InsufficientMetadataError

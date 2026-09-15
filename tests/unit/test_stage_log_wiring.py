@@ -11,9 +11,8 @@ it never happened.
 Every tool here is exercised on its execute=False path, but several of them
 (gaincal, bandpass, polcal) call check_spw_coverage() even under
 execute=False — that needs a real, CASA-openable MS (`real_ms_raw`, see
-tests/unit/conftest.py), not a `table.info`-only stub. Against the stub it
-silently took check_spw_coverage's swallow-and-degrade fallback instead of
-exercising it, which is a bug this file used to have, not a feature.
+tests/unit/conftest.py), not a `table.info`-only stub, or the test exercises
+check_spw_coverage's swallow-and-degrade fallback instead of the real path.
 """
 
 from __future__ import annotations

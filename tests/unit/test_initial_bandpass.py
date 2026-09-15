@@ -9,11 +9,8 @@ corrupted the FLAG state of non-BP calibrators).
 These tests deliberately exercise real CASA metadata reads via the shared
 `real_ms_raw` fixture (tests/unit/conftest.py) — run() calls
 check_spw_coverage() even under execute=False, and that call must be
-exercised for real, not accidentally routed through its swallow-and-degrade
-fallback against an invalid fixture (the bug this file used to have: its own
-"No CASA required" docstring was wrong, every test here silently rode
-check_spw_coverage's except-Exception fallback against a table.info-only
-stub instead of exercising it).
+exercised for real, not routed through its swallow-and-degrade fallback
+against a table.info-only stub.
 """
 
 from __future__ import annotations

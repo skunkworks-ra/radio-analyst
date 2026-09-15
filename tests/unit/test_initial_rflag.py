@@ -194,9 +194,8 @@ class TestInitialRflagRun:
         assert mtime2 >= mtime1
 
     def test_missing_model_data_refuses_to_write_script(self, tmp_path, monkeypatch):
-        """T8: the G55 run's turn 5 — ms_verify_model had already reported
-        MODEL_DATA absent; the tool wrote initial_rflag.py anyway and CASA
-        rejected it 7s later. The guard must refuse before writing anything."""
+        """Refuses to write the script when MODEL_DATA is absent, before
+        CASA can reject it."""
         from ms_inspect.exceptions import ComputationError
         from ms_modify import initial_rflag
 
