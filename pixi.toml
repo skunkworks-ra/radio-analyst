@@ -68,6 +68,12 @@ test-unit   = { cmd = "pytest tests/unit/ -v" }
 # Usage: RADIO_MCP_TEST_MS=/path/to/your.ms pixi run test-int
 test-int    = { cmd = "pytest tests/integration/ -v" }
 
+# Probe all 52 registered MCP tools (raw MCP stdio, no LLM, no tokens).
+# Requires smoke.ms — generate with: pixi run python scripts/ci/generate_smoke_ms.py smoke.ms
+test-tool-probe     = { cmd = "python scripts/ci/run_all_tool_probes.py" }
+# Same, plus the optional LLM-driven layer (costs tokens, needs claude on PATH).
+test-tool-probe-llm = { cmd = "python scripts/ci/run_all_tool_probes.py --llm" }
+
 # Lint / format
 lint        = { cmd = "ruff check src/ tests/" }
 fmt         = { cmd = "ruff format src/ tests/" }
