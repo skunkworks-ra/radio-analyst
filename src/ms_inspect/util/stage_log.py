@@ -2,19 +2,12 @@
 stage_log.py — the workdir stage log, written by generated scripts and read by
 ms_workflow_status.
 
-A reduction's state used to be inferred from the filesystem: ms_workflow_status
-held a hardcoded list of caltable names and reported whichever ones it found.
-That could not work, because every writing tool takes its caltable path as an
-argument with no default, so the names are the caller's to choose. On the
-2026-08-31 G55 run the tool looked for 'bandpass.B', 'gain.G' and
-'gain.fluxscaled' while the run had written 'bandpass.b', 'gain.g' and
-'flux.fluxscale', reported one caltable out of four, and froze its
-recommendation for ten turns.
-
-The log replaces inference with a record. Each generated script appends one
-line per product it writes, AFTER CASA returns, so a line exists only if that
-step actually completed. It is append-only: a retry adds a line rather than
-destroying the previous one.
+A reduction's state cannot be inferred from the filesystem: every writing tool
+takes its caltable path as a caller-chosen argument, so no fixed set of names
+can be searched for. The log replaces inference with a record: each generated
+script appends one line per product it writes, after CASA returns, so a line
+exists only if that step actually completed. It is append-only — a retry adds
+a line rather than destroying the previous one.
 
 Placed in ms_inspect because it is the package ms_modify and ms_create both
 already import from; ms_inspect never imports either of them. The snippet is
@@ -23,13 +16,10 @@ self-contained — same contract as pathguard.SAFE_RM_TABLE_SNIPPET.
 
 Two limits, both deliberate:
 
-- The check is existence only. A caltable directory appears the moment CASA
-  starts writing it, so this does not prove the solve produced solutions. Row
-  counts were considered and deferred until an empty-caltable failure is
-  actually observed.
-- A script killed outright (SIGKILL, an OOM, the -6 abort seen when the disk
-  filled) writes no line at all. The log explains a failure; it does not detect
-  every one. The driver's recorded exit code remains the outer truth.
+- The check is existence only, not proof the solve produced solutions.
+- A script killed outright (SIGKILL, OOM, disk full) writes no line at all.
+  The log explains a failure; it does not detect every one. The driver's
+  recorded exit code remains the outer truth.
 """
 
 from __future__ import annotations
