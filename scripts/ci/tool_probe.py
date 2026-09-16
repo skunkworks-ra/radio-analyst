@@ -5,12 +5,13 @@ Speaks MCP directly to one server (no LLM, no tokens) and calls one tool with
 the args from tool_manifest.json. Ground truth for the harness in
 tool_probe_llm.py -- both read the same manifest so they can't drift apart.
 
-Pass criterion is deliberately loose: any well-formed MCP response counts,
-whether the tool succeeded or returned its own error envelope. Only a
-transport-level failure (crash, timeout, no response) is a probe failure.
-Most manifest entries point non-MS tools at nonexistent files on purpose --
+Pass criterion is deliberately loose: a tool that runs and returns its own
+error envelope (isError=False, e.g. MS_NOT_FOUND) still counts as a pass --
+most manifest entries point non-MS tools at nonexistent files on purpose, so
 we're proving the server is alive and returns clean errors, not exercising
-real science.
+real science. A transport-level failure (crash, timeout, no response) or an
+MCP-level rejection (isError=True, e.g. a schema validation error that never
+reaches the tool's own code) is a probe failure.
 
 Runs identically in CI and locally:
     pixi run python scripts/ci/tool_probe.py --server ms-inspect --tool ms_observation_info --smoke-ms smoke.ms
@@ -60,7 +61,7 @@ async def probe(server: str, tool: str, args: dict, timeout_s: float) -> dict:
                 result = await session.call_tool(tool, {"params": args})
                 text = result.content[0].text if result.content else ""
                 return {
-                    "probe_status": "PASS",
+                    "probe_status": "FAIL" if result.isError else "PASS",
                     "is_error": bool(result.isError),
                     "response": text[:2000],
                 }

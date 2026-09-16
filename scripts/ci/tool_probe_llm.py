@@ -5,6 +5,14 @@ use. Meant to sit side by side with tool_probe.py's raw MCP ground truth so a
 harness can diff "what the tool actually returned" vs "what the model says
 it returned" -- useful for catching tool-use hallucination, not just outages.
 
+`cli_status` reflects only whether the `claude -p` invocation itself ran to
+completion and returned parseable output. It says nothing about whether the
+underlying tool call succeeded -- a tool that returns an error, or even a
+schema-validation rejection, still leaves `cli_status: PASS` if the CLI
+reported back cleanly. tool_probe.py's `probe_status` is the ground truth for
+tool-call outcome; read `llm_reported` here to see what the model said
+happened, and diff it against tool_probe.py's `response` for that tool.
+
     pixi run python scripts/ci/tool_probe_llm.py --server ms-inspect --tool ms_observation_info --smoke-ms smoke.ms
 """
 import argparse
@@ -59,11 +67,11 @@ def main() -> int:
     )
 
     llm_reported = ""
-    llm_status = "FAIL"
+    cli_status = "FAIL"
     try:
         payload = json.loads(proc.stdout)
         llm_reported = payload.get("result", proc.stdout)
-        llm_status = "PASS" if proc.returncode == 0 else "FAIL"
+        cli_status = "PASS" if proc.returncode == 0 else "FAIL"
     except json.JSONDecodeError:
         llm_reported = proc.stdout or proc.stderr
 
@@ -71,14 +79,14 @@ def main() -> int:
         "server": args.server,
         "tool": args.tool,
         "args_filled": tool_args,
-        "llm_status": llm_status,
+        "cli_status": cli_status,
         "llm_reported": llm_reported[:2000] if isinstance(llm_reported, str) else llm_reported,
     }
     print(json.dumps(record, indent=2))
     if args.out:
         os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
         json.dump(record, open(args.out, "w"), indent=2)
-    return 0 if llm_status == "PASS" else 1
+    return 0 if cli_status == "PASS" else 1
 
 
 if __name__ == "__main__":
