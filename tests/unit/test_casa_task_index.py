@@ -15,8 +15,7 @@ class TestLookupKnownTasks:
         assert loc is not None
         assert loc.section == "flagging"
         assert loc.docs_url == (
-            "https://casadocs.readthedocs.io/en/stable/api/tt/"
-            "casatasks.flagging.flagdata.html"
+            "https://casadocs.readthedocs.io/en/stable/api/tt/casatasks.flagging.flagdata.html"
         )
         assert loc.source_url == (
             "https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/raw/"

@@ -15,6 +15,7 @@ happened, and diff it against tool_probe.py's `response` for that tool.
 
     pixi run python scripts/ci/tool_probe_llm.py --server ms-inspect --tool ms_observation_info --smoke-ms smoke.ms
 """
+
 import argparse
 import json
 import os
@@ -56,14 +57,27 @@ def main() -> int:
 
     env = dict(os.environ, CLAUDE_PLUGIN_ROOT=REPO_ROOT)
     proc = subprocess.run(
-        ["claude", "-p", prompt,
-         "--model", args.model,
-         "--mcp-config", os.path.join(REPO_ROOT, ".mcp.json"),
-         "--allowed-tools", allowed,
-         "--permission-prompts", "none",
-         "--strict-mcp-config",
-         "--output-format", "json"],
-        cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=180,
+        [
+            "claude",
+            "-p",
+            prompt,
+            "--model",
+            args.model,
+            "--mcp-config",
+            os.path.join(REPO_ROOT, ".mcp.json"),
+            "--allowed-tools",
+            allowed,
+            "--permission-prompts",
+            "none",
+            "--strict-mcp-config",
+            "--output-format",
+            "json",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
     )
 
     llm_reported = ""

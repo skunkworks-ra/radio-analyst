@@ -4,6 +4,7 @@
 3 antennas, 1 SPW, 1 field, ~2 minutes of data — big enough to be a real MS,
 small enough to build and read in a few seconds with no bundled test data.
 """
+
 import os
 import shutil
 import sys
@@ -45,7 +46,9 @@ with open(cfg_file) as f:
 sm.open(ms=msname)
 sm.setconfig(
     telescopename="VLA",
-    x=x, y=y, z=z,
+    x=x,
+    y=y,
+    z=z,
     dishdiameter=diam,
     mount=["ALT-AZ"] * len(x),
     antname=antnames,

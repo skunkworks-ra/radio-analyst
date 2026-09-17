@@ -6,6 +6,7 @@ Proves the plugin's server process works without spending any Anthropic
 tokens. Does not prove the skill loads or that Claude picks the right tool —
 that part needs the paid LLM smoke test.
 """
+
 import asyncio
 import os
 import sys
