@@ -51,6 +51,7 @@ from ms_inspect.tools import (
     verify_model,
     workflow_status,
 )
+from ms_inspect.util import casa_task_index as _cti
 from ms_inspect.util import phase_cal_catalog as _pcc
 from ms_inspect.util.dispatch import path_lock, run_tool, run_tool_sync
 
@@ -1831,6 +1832,70 @@ async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
             "separation_deg": round(match.separation_deg, 6),
             "pos_accuracy": e.pos_accuracy,
             "band": band_data,
+        },
+        "warnings": [],
+    }
+    return json.dumps(result, separators=(",", ":"))
+
+
+# ---------------------------------------------------------------------------
+# CASA task documentation / source lookup
+# ---------------------------------------------------------------------------
+
+
+class CasaTaskLookupInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_name: str = Field(..., description="CASA task name, e.g. 'tclean', 'flagdata'.")
+
+
+@mcp.tool(
+    name="ms_casa_task_lookup",
+    description=(
+        "Resolve a CASA task name to its casadocs API page and its casa6 source file "
+        "(raw content, on the NRAO Bitbucket server). Returns URLs only — does not "
+        "fetch either page. Use WebFetch on the returned URL to read the actual content. "
+        "status=NOT_FOUND if the task is not in the bundled index."
+    ),
+    annotations={
+        "title": "CASA Task Documentation Lookup",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_casa_task_lookup(params: CasaTaskLookupInput) -> str:
+    """
+    Resolve a CASA task name to its documentation and source URLs.
+
+    Args:
+        params.task_name: CASA task name (case-insensitive), e.g. 'tclean'.
+
+    Returns:
+        JSON envelope. data contains: task_name, section, docs_url, source_url.
+        status=NOT_FOUND if the task is not in the bundled index (it may not
+        exist, or may have been added to CASA since this index was built).
+    """
+    location = _cti.lookup(params.task_name)
+
+    if location is None:
+        result = {
+            "status": "NOT_FOUND",
+            "data": None,
+            "warnings": [
+                f"'{params.task_name}' is not in the bundled CASA task index. "
+                "Check spelling, or the task may not exist in CASA."
+            ],
+        }
+        return json.dumps(result, separators=(",", ":"))
+
+    result = {
+        "status": "OK",
+        "data": {
+            "task_name": location.task_name,
+            "section": location.section,
+            "docs_url": location.docs_url,
+            "source_url": location.source_url,
         },
         "warnings": [],
     }

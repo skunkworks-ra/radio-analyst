@@ -16,6 +16,7 @@ reaches the tool's own code) is a probe failure.
 Runs identically in CI and locally:
     pixi run python scripts/ci/tool_probe.py --server ms-inspect --tool ms_observation_info --smoke-ms smoke.ms
 """
+
 import argparse
 import asyncio
 import json
@@ -57,7 +58,10 @@ async def probe(server: str, tool: str, args: dict, timeout_s: float) -> dict:
                 await session.initialize()
                 tools = {t.name for t in (await session.list_tools()).tools}
                 if tool not in tools:
-                    return {"probe_status": "FAIL", "reason": f"'{tool}' not advertised by {server}"}
+                    return {
+                        "probe_status": "FAIL",
+                        "reason": f"'{tool}' not advertised by {server}",
+                    }
                 result = await session.call_tool(tool, {"params": args})
                 text = result.content[0].text if result.content else ""
                 return {

@@ -8,6 +8,7 @@ Writes results/tool_probe_report.csv -- the same lookup table the CI
 matrix + merge job produces: tool | server | args_filled | raw_status |
 raw_response | llm_reported (blank unless --llm).
 """
+
 import argparse
 import csv
 import json
@@ -35,10 +36,20 @@ def main() -> int:
         for tool in tools:
             out_path = os.path.join(args.out_dir, f"{tool}.layer1.json")
             proc = subprocess.run(
-                [sys.executable, os.path.join(HERE, "tool_probe.py"),
-                 "--server", server, "--tool", tool,
-                 "--smoke-ms", args.smoke_ms, "--out", out_path],
-                capture_output=True, text=True,
+                [
+                    sys.executable,
+                    os.path.join(HERE, "tool_probe.py"),
+                    "--server",
+                    server,
+                    "--tool",
+                    tool,
+                    "--smoke-ms",
+                    args.smoke_ms,
+                    "--out",
+                    out_path,
+                ],
+                capture_output=True,
+                text=True,
             )
             record = json.load(open(out_path))
             if record["probe_status"] != "PASS":
@@ -48,27 +59,49 @@ def main() -> int:
             if args.llm:
                 llm_out = os.path.join(args.out_dir, f"{tool}.layer2.json")
                 llm_proc = subprocess.run(
-                    [sys.executable, os.path.join(HERE, "tool_probe_llm.py"),
-                     "--server", server, "--tool", tool,
-                     "--smoke-ms", args.smoke_ms, "--out", llm_out],
-                    capture_output=True, text=True,
+                    [
+                        sys.executable,
+                        os.path.join(HERE, "tool_probe_llm.py"),
+                        "--server",
+                        server,
+                        "--tool",
+                        tool,
+                        "--smoke-ms",
+                        args.smoke_ms,
+                        "--out",
+                        llm_out,
+                    ],
+                    capture_output=True,
+                    text=True,
                 )
                 if os.path.exists(llm_out):
                     llm_reported = json.load(open(llm_out)).get("llm_reported", "")
 
-            rows.append({
-                "tool": tool,
-                "server": server,
-                "args_filled": json.dumps(record.get("args_filled", {})),
-                "raw_status": record["probe_status"],
-                "raw_response": record.get("response") or record.get("reason", ""),
-                "llm_reported": llm_reported,
-            })
+            rows.append(
+                {
+                    "tool": tool,
+                    "server": server,
+                    "args_filled": json.dumps(record.get("args_filled", {})),
+                    "raw_status": record["probe_status"],
+                    "raw_response": record.get("response") or record.get("reason", ""),
+                    "llm_reported": llm_reported,
+                }
+            )
             print(f"{record['probe_status']:4s} {server:10s} {tool}")
 
     report_path = os.path.join(args.out_dir, "tool_probe_report.csv")
     with open(report_path, "w", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=["tool", "server", "args_filled", "raw_status", "raw_response", "llm_reported"])
+        writer = csv.DictWriter(
+            fh,
+            fieldnames=[
+                "tool",
+                "server",
+                "args_filled",
+                "raw_status",
+                "raw_response",
+                "llm_reported",
+            ],
+        )
         writer.writeheader()
         writer.writerows(rows)
 

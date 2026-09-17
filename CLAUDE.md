@@ -303,6 +303,7 @@ Environment variable reference:
 | `ms_pol_cal_conditions` | `tools/pol_cal_conditions.py` | Pol calibrator identification, catalogue properties at the observed band, and per-field parallactic-angle spread ranked; no verdict |
 | `ms_residual_stats` | `tools/residual_stats.py` | CORRECTED − MODEL amplitude distribution per SPW (pre-rflag threshold guide) |
 | `ms_corrected_stats` | `tools/corrected_stats.py` | Per-field parallel-hand amplitude (median/robust-std/p95) + phase RMS of a data column, **vector-averaged over the channel range** (so faint sources are not noise-biased). Post-applycal calibration sanity check. |
+| `ms_casa_task_lookup` | `util/casa_task_index.py` | Resolve a CASA task name to its casadocs API page and its casa6 source file (raw content). Returns URLs only, no fetch — caller `WebFetch`s the URL. `NOT_FOUND` if the task is not in the bundled index. |
 
 ### Phase 3 — Imaging inspection (1 tool)
 
@@ -546,6 +547,16 @@ or create visibility data.
 | `03-spectral-source.md` | SPW setup, polarization, component lists, image models |
 | `04-corruption-noise.md` | Noise models, gain/bandpass/leakage/troposphere, presets |
 | `05-execution.md` | Script generation template, validation, common pitfalls |
+
+### CASA documentation lookup
+
+Resolves a CASA task name to its casadocs page and casa6 source file, then
+fetches whichever answers the question — docs by default, source when docs
+are silent or may be stale. Auto-invoked on a direct CASA task/parameter
+question, or when `radio-interferometry` hits a question its own reference
+files don't answer.
+
+@.claude/skills/casa-docs/SKILL.md
 
 ## Slash commands
 
