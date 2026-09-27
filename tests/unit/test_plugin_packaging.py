@@ -9,9 +9,10 @@ pin the full form against what each server actually registers, so a renamed or
 moved tool, a renamed server, or a renamed plugin fails here instead of
 silently turning pre-approval off again.
 
-Also checked: every path the plugin wiring (.mcp.json, hooks/hooks.json) hands
-to Claude Code exists, and nothing is shipped under a top-level bin/ (which a
-plugin puts on the Bash tool's PATH).
+Also checked: every path the plugin wiring (plugin.json, hooks/hooks.json)
+hands to Claude Code exists, the clone's project .mcp.json agrees with the
+plugin's servers without depending on ${CLAUDE_PLUGIN_ROOT}, and nothing is
+shipped under a top-level bin/ (which a plugin puts on the Bash tool's PATH).
 """
 
 from __future__ import annotations
@@ -93,7 +94,7 @@ def _plugin_root_paths(obj) -> list[str]:
     return []
 
 
-@pytest.mark.parametrize("config", [".mcp.json", "hooks/hooks.json"])
+@pytest.mark.parametrize("config", [".claude-plugin/plugin.json", "hooks/hooks.json"])
 def test_plugin_wiring_paths_exist(config: str):
     paths = _plugin_root_paths(json.loads((REPO_ROOT / config).read_text()))
     assert paths, f"{config} references no ${{CLAUDE_PLUGIN_ROOT}} paths"
@@ -101,9 +102,25 @@ def test_plugin_wiring_paths_exist(config: str):
         assert (REPO_ROOT / p.removeprefix("${CLAUDE_PLUGIN_ROOT}/")).is_file(), p
 
 
-def test_mcp_servers_match_server_modules():
-    servers = json.loads((REPO_ROOT / ".mcp.json").read_text())["mcpServers"]
-    assert set(servers) == set(SERVER_MODULES)
+def _server_scripts(servers: dict, prefix: str) -> dict[str, str]:
+    return {name: cfg["args"][0].removeprefix(prefix) for name, cfg in servers.items()}
+
+
+def test_plugin_and_project_mcp_configs_agree():
+    # The plugin declares its servers in plugin.json with ${CLAUDE_PLUGIN_ROOT};
+    # those replace the same-named servers Claude Code also reads from the
+    # plugin's .mcp.json. The root .mcp.json is what a clone loads as project
+    # config, where ${CLAUDE_PLUGIN_ROOT} is undefined (every server failed
+    # with CONNECTION_CLOSED), so it must use repo-relative paths. Claude Code
+    # does not honour ${CLAUDE_PLUGIN_ROOT:-.} for plugin servers, so one file
+    # cannot serve both.
+    plugin = json.loads((REPO_ROOT / ".claude-plugin" / "plugin.json").read_text())["mcpServers"]
+    project = json.loads((REPO_ROOT / ".mcp.json").read_text())["mcpServers"]
+    assert set(plugin) == set(project) == set(SERVER_MODULES)
+    assert "CLAUDE_PLUGIN_ROOT" not in (REPO_ROOT / ".mcp.json").read_text()
+    for script in _server_scripts(project, "").values():
+        assert (REPO_ROOT / script).is_file(), script
+    assert _server_scripts(plugin, "${CLAUDE_PLUGIN_ROOT}/") == _server_scripts(project, "")
 
 
 def test_no_top_level_bin_dir():

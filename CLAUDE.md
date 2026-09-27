@@ -93,9 +93,9 @@ radio-analyst/
 │   └── FLUX_STANDARD_DESIGN.md    ← per-field flux standard resolution
 ├── pixi.toml                      ← environment (conda-forge + casatools via PyPI)
 ├── pyproject.toml                 ← build metadata and tooling config
-├── .mcp.json                      ← MCP server definitions (all three servers)
+├── .mcp.json                      ← MCP servers for a clone (project scope, repo-relative paths)
 ├── .claude-plugin/
-│   ├── plugin.json                ← plugin manifest
+│   ├── plugin.json                ← plugin manifest; declares the plugin's MCP servers (${CLAUDE_PLUGIN_ROOT})
 │   └── marketplace.json           ← marketplace catalogue entry
 ├── .claude/
 │   ├── skills/
