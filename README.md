@@ -1,25 +1,102 @@
 # radio-analyst
 
-MCP servers, skills, and slash commands for AI-assisted radio interferometric
-data reduction. Targets VLA/JVLA/EVLA, MeerKAT, and uGMRT observations stored
-as CASA Measurement Sets.
+A Claude Code plugin for reducing radio interferometric data with CASA. It
+gives Claude 53 tools across three MCP servers, the reasoning of an
+experienced interferometrist (skills), and step-by-step workflows (slash
+commands) for VLA/JVLA/EVLA, MeerKAT, and uGMRT Measurement Sets, from a raw
+ASDM to a first image.
 
-Three MCP servers expose the full tool suite:
+```bash
+claude plugin marketplace add https://github.com/skunkworks-ra/radio-analyst
+claude plugin install radio-analyst@radio-analyst
+```
 
-- **ms-inspect** — read-only inspection and diagnostics (34 tools, port 8000)
-- **ms-modify** — calibration, flagging, and MS modification (16 tools, port 8001)
-- **ms-create** — ASDM ingestion and reduction logging (3 tools, port 8002)
-
-Built on [casatools](https://casa.nrao.edu/) and the
-[Model Context Protocol](https://modelcontextprotocol.io/).
+Prerequisites, first-run behaviour and troubleshooting are under
+[Install](#install).
 
 ---
 
-## Installation
+## What you can do with it
 
-### Claude Code plugin (recommended)
+Talk about your data in plain language, or run a workflow command. Claude
+picks the tools, reads the numbers, and tells you what they mean.
 
-Installs all three MCP servers, the skills, and the slash commands in two commands:
+### Ask about a dataset
+
+With a Measurement Set path in the conversation, just ask:
+
+| You say | What happens |
+|---|---|
+| *"What's in /data/3c391.ms?"* | Telescope, array configuration, band, fields with their intents, scans, spectral windows and correlations, summarised in a paragraph. |
+| *"Which antenna should I use as the reference?"* | Antennas ranked by distance from the array centre and by unflagged data, with both quantities shown so you can overrule the ranking. |
+| *"Is there RFI in this observation? Which spectral windows are worst?"* | Per-channel flag fractions and a per-SpW amplitude severity, separating a SpW to drop from one worth salvaging. |
+| *"Will I get enough parallactic-angle coverage to solve for leakage?"* | Identifies the polarisation calibrators and measures the PA spread per field. You get the numbers and what they allow you to claim, not a yes/no. |
+| *"Is the phase calibrator in this MS a good one for B-config at L-band?"* | Cross-matches its position against the NRAO VLA calibrator list and returns flux, UV limits and quality codes per configuration. |
+| *"Plot the bandpass table in ./cal/bandpass.B"* | An interactive Bokeh HTML dashboard of the solutions, routed by table type. |
+| *"What's in this ASDM before I convert it?"* | Continuum vs. line SpWs, HI coverage, sources and intents, scan balance, target elevation. Reads only the ASDM XML, so no CASA is needed. |
+| *"What does `timecutoff` do in flagdata's tfcrop mode?"* | Fetches and quotes the casadocs page, or the casa6 source if the docs don't cover it, instead of answering from memory. |
+
+### Run a reduction, stage by stage
+
+Each command is a workflow that runs a checked sequence of steps and stops to
+report when a check fails. The commands are namespaced by the plugin:
+
+| Command | Takes you from → to |
+|---|---|
+| `/radio-analyst:inspect <ms>` | A new MS → a data-quality report with a go/no-go for calibration (orientation + instrument sanity, 12 tools, nothing written). |
+| `/radio-analyst:precal <ms>` | Imported MS → pre-calibrated calibrators: online flags, deterministic preflag, prior caltables (gain curves, opacity, requantizer, antenna positions), flux models, reference antenna, initial bandpass, residual RFI flagging. |
+| `/radio-analyst:calibrate <ms>` | Pre-calibrated MS → calibrated target: initial phase → delay → bandpass → gain → fluxscale → applycal, with solution statistics checked after every solve. |
+| `/radio-analyst:polcal <ms>` | Calibrated MS → polarisation-calibrated: cross-hand delay → leakage (D-terms) → position angle → applycal with parallactic-angle correction. |
+| `/radio-analyst:image <ms>` | Calibrated MS → first image, with tclean parameters derived from the data (cell, image size, gridder, deconvolver, threshold) and the result checked against the radiometer noise and expected beam. |
+| `/radio-analyst:simulate <description>` | A sentence → a synthetic MS, e.g. *"VLA B-config, L-band, 2 hours on 3C286 with a 5 % gain drift"*. |
+
+A typical first session on a new VLA dataset:
+
+```text
+> What's in /data/19A-123.sb1234.eb5678/ ?            # raw ASDM: look before importing
+> Import it to /data/work/obs.ms                        # writes an import script, then runs it
+> /radio-analyst:inspect /data/work/obs.ms              # go / no-go report
+> /radio-analyst:precal /data/work/obs.ms
+> /radio-analyst:calibrate /data/work/obs.ms
+> /radio-analyst:image /data/work/obs.ms
+> Give me the replay script for everything that worked.
+```
+
+### Keep a reproducible record
+
+As a reduction proceeds, Claude records each call that actually worked, with
+its exact parameters and the reason for it, in `reduction_log.jsonl` in the
+working directory. Ask for it back at any point, as a step list or as a single
+replay script. Dead ends stay out, so the log is the clean path through your
+data, not the search for it.
+
+---
+
+## How it works
+
+**Tools measure. The skill reasons.** Every tool answers one question with
+numbers and a completeness flag on each field (`COMPLETE`, `INFERRED`,
+`PARTIAL`, `SUSPECT`, `UNAVAILABLE`). No tool decides whether you may proceed.
+Thresholds depend on your science goal, so that judgement lives in the
+`radio-interferometry` skill, where Claude applies it and shows you the inputs.
+For example, 24° of parallactic-angle coverage doesn't block a leakage solve.
+It becomes "proceed, and limit fractional-polarisation claims to a few percent".
+
+**Nothing is written without a script you can read.** Every tool that modifies
+data or imports an ASDM (17 in total) defaults to `execute=False`. It returns a
+preview or writes a plain CASA Python script into your working directory and
+returns its path. The workflow then runs that script and checks the result with
+the read-only tools.
+
+**Three servers, by what they can touch:**
+
+- **ms-inspect**: read-only inspection and diagnostics (34 tools).
+- **ms-modify**: flagging, calibration, imaging (16 tools, script-first).
+- **ms-create**: ASDM inspection and import, and the reduction log (3 tools).
+
+---
+
+## Install
 
 ```bash
 # Register the marketplace (once per machine)
@@ -29,60 +106,102 @@ claude plugin marketplace add https://github.com/skunkworks-ra/radio-analyst
 claude plugin install radio-analyst@radio-analyst
 ```
 
-After install, the `ms-inspect`, `ms-modify`, and `ms-create` MCP servers,
-the three skills, and the six slash commands (as `/radio-analyst:<name>`) are
-available in every project.
-
 **Prerequisites**
 
 - [pixi](https://pixi.sh) on `PATH`: `curl -fsSL https://pixi.sh/install.sh | bash`
 - Linux x86_64 or macOS arm64 (the platforms `pixi.toml` targets). On macOS,
-  casatools is not in `pixi.lock`; the environment build pip-installs it.
-- About 1 GB free disk for the environment.
+  casatools isn't in `pixi.lock`, so the environment build installs it with pip.
+- Roughly 1 GB of free disk for the Python/CASA environment.
 
-**First run.** On the first session after install, a `SessionStart` hook builds the
-Python/CASA environment in the background (~1 GB download including
-casatools; several minutes) under `~/.claude/plugins/data/`, where it persists
-across plugin updates. Progress goes to `build.log` in that directory. The MCP
-servers report that the build is in progress until it finishes; then reconnect
-them with `/mcp`. Later updates only re-sync the sources and reuse the
-installed packages unless `pixi.lock` changed.
+**First run.** Start Claude Code. A `SessionStart` hook starts building the
+Python/CASA environment in the background, and you'll see a message saying so
+with the path to its log. The first build downloads casatools and its
+dependencies and takes several minutes. It is stored under
+`~/.claude/plugins/data/` and is kept across plugin updates. Until it finishes,
+the three servers report that the build is in progress. When `build.log` ends
+with `build complete`, run `/mcp` and reconnect them. Later updates only re-sync
+the plugin's sources and reuse the installed packages, unless `pixi.lock`
+changed.
 
-To remove:
+**Check it works:** `/mcp` lists `ms-inspect`, `ms-modify` and `ms-create` as
+connected. Then ask *"What's in <path to an MS>?"*.
 
-```bash
-claude plugin uninstall radio-analyst@radio-analyst
-```
-
-### Local development
-
-Use this when actively working on the plugin itself. Registers the MCP servers
-directly against the local pixi environment — no plugin system involved.
+**Update / remove**
 
 ```bash
-git clone https://github.com/skunkworks-ra/radio-analyst.git
-cd radio-analyst
-pixi install
-pixi run pip install casatools casatasks   # first time only; ~500 MB
-pixi run install-mcp
+claude plugin update radio-analyst@radio-analyst
+claude plugin uninstall radio-analyst@radio-analyst   # also deletes the environment
 ```
 
-`install-mcp` calls `scripts/dev/install-local.sh`, which registers `ms-inspect`,
-`ms-modify`, and `ms-create` via `claude mcp add --scope user` pointing
-directly at `.pixi/envs/default/bin/`. Re-run after any `pixi install` that
-rebuilds the environment. The script detects and removes a plugin-managed
-install automatically before registering.
+### Troubleshooting
 
-To switch back to the plugin install:
+| Symptom | Cause and fix |
+|---|---|
+| Servers fail with *"pixi is not on PATH"* | Install pixi (above), then restart Claude Code. |
+| Servers fail with *"still being built"* | Expected on the first run and after some updates. Wait for `build complete` in `build.log`, then reconnect with `/mcp`. |
+| Servers fail with *"build failed"* | Read `build.log` (the message gives its path). Reconnecting with `/mcp` retries the build. |
+| Tools return `CASA_NOT_AVAILABLE` | casatools didn't install or import. Look for `WARNING` lines in `build.log`. |
+| `INSUFFICIENT_METADATA` on a tool | The MS lacks a telescope name or antenna table. The error includes the exact repair command. |
 
-```bash
-pixi run uninstall-mcp
-# then follow the Claude Code plugin instructions above
-```
+### Permissions
 
-### Claude Desktop (stdio) and other MCP clients (HTTP)
+- **Inside the workflow commands**, the MCP tools each command lists are
+  pre-approved, and so is `Bash`, which runs the generated scripts. Those
+  commands include the ms-modify tools that write to your MS and working
+  directory. They run without a prompt per step, but each step goes through a
+  generated script, and the workflow stops when a check fails.
+- **Outside the commands**, every tool call prompts as usual. Allow them
+  permanently in `/permissions` if you prefer. For example,
+  `mcp__plugin_radio-analyst_ms-inspect__*` covers the read-only tools.
 
-Clone the repo and install the environment:
+---
+
+## Reference
+
+### Skills
+
+Loaded automatically when relevant. No need to invoke them yourself.
+
+| Skill | Purpose |
+|---|---|
+| `radio-interferometry` | Interferometrist reasoning across the reduction: band tables, intent vocabulary, elevation/PA/flag thresholds, calibrator science, failure modes and recovery, and the execution playbooks the commands follow. |
+| `ms-simulator` | Turns a conversational description into a `casatools.simulator` script and a validated MS. |
+| `casa-docs` | Answers CASA task and parameter questions from the fetched casadocs page or casa6 source, never from memory. |
+
+### Tools
+
+The per-tool inventory is in [`design_docs/DESIGN.md`](design_docs/DESIGN.md)
+(§8 ms-inspect, §8b ms-modify, §8c ms-create). Summary:
+
+- **ms-inspect (34)**:
+  - Orientation (6): observation info, fields, scans, scan intents, SpWs, correlator setup.
+  - Instrument sanity (7): antennas, baselines, elevation and parallactic angle vs. time, shadowing, flag preflight, per-antenna flag fraction.
+  - Calibration inspection (6): caltable statistics and detail, single and batch caltable plots, gaincal SNR prediction, caltable checks.
+  - Pre-calibration checks (5): import, model, prior caltables, online flag stats, flag summary.
+  - Instrument and RFI (7): reference antenna ranking, RFI channel stats, SpW amplitude severity, pol-cal conditions, residual and corrected-data statistics, phase-calibrator lookup.
+  - Imaging (1): image RMS, peak, dynamic range, beam.
+  - Workflow state (1).
+  - CASA docs lookup (1).
+- **ms-modify (16)**: intents, preflag, prior caltables, setjy / pol setjy,
+  initial bandpass, gaincal (incl. KCROSS), bandpass, polcal, fluxscale,
+  applycal, residual and post-cal RFI flagging, caltable autoflag, tclean.
+- **ms-create (3)**: ASDM summary, ASDM → MS import, reduction log.
+
+### Environment variables
+
+| Variable | Default | Effect |
+|---|---|---|
+| `RADIO_MCP_TRANSPORT` | `stdio` | `stdio` for Claude Code / Desktop; `http` for remote clients |
+| `RADIO_MCP_HOST` | `127.0.0.1` | HTTP bind address. **The HTTP transport has no authentication. Don't bind beyond localhost on shared or untrusted networks** |
+| `RADIO_MCP_PORT` | `8000` / `8001` / `8002` | HTTP port (inspect / modify / create) |
+| `RADIO_MCP_WORKERS` | `4` | Parallel workers for FLAG column reads (cap 8) |
+| `RADIO_MCP_ENV_WAIT` | `20` | Plugin only: seconds a server waits on an in-progress environment build before exiting with a pointer to `build.log` |
+
+---
+
+## Other clients
+
+Clone the repo and build the environment:
 
 ```bash
 git clone https://github.com/skunkworks-ra/radio-analyst.git
@@ -90,8 +209,8 @@ cd radio-analyst
 pixi install && pixi run pip install casatools casatasks
 ```
 
-Claude Desktop launches each server itself and talks to it over stdio, so use
-the stdio tasks. Add to `claude_desktop_config.json`:
+**Claude Desktop** launches each server itself and talks to it over stdio.
+Add to `claude_desktop_config.json`:
 
 ```json
 {
@@ -112,121 +231,52 @@ the stdio tasks. Add to `claude_desktop_config.json`:
 }
 ```
 
-For a client that connects to a running server instead, start them in HTTP
-mode:
+This gives Desktop the tools. The skills and workflow commands are Claude Code
+plugin components.
+
+**Any MCP client over HTTP**: start the servers, then connect to
+`http://localhost:8000/mcp` (and `:8001`, `:8002`; streamable HTTP):
 
 ```bash
-# Inspection server (port 8000)
 RADIO_MCP_TRANSPORT=http RADIO_MCP_PORT=8000 pixi run serve
-
-# Modification server (port 8001)
 RADIO_MCP_TRANSPORT=http RADIO_MCP_PORT=8001 pixi run serve-modify
-
-# Ingestion server (port 8002)
 RADIO_MCP_TRANSPORT=http RADIO_MCP_PORT=8002 pixi run serve-create
 ```
-
-Then point the client at `http://localhost:8000/mcp` (and `:8001`, `:8002`;
-streamable HTTP). The HTTP transport has no authentication, so keep it on
-localhost unless the network is trusted.
-
----
-
-## Tool inventory
-
-The full per-tool inventory with descriptions lives in
-[`design_docs/DESIGN.md`](design_docs/DESIGN.md) (§8 ms-inspect, §8b ms-modify, §8c ms-create). A
-summary by category:
-
-### ms-inspect — read-only inspection (34 tools)
-
-- **Layer 1 — Orientation** (6): observation info, field list, scan list, scan
-  intent summary, spectral window list, correlator config.
-- **Layer 2 — Instrument sanity** (7): antenna list, baseline lengths, elevation
-  vs time, parallactic angle vs time, shadowing report, flag preflight, antenna
-  flag fraction.
-- **Calibration inspection** (6): caltable solution stats + detail reader,
-  single/library caltable plots, gaincal SNR prediction, caltable structural checks.
-- **Pre-calibration inspection** (5): import/model/priorcal verification, online
-  flag stats, flag summary.
-- **Instrument & RFI inspection** (7): reference-antenna ranking, per-channel RFI
-  stats, SpW amplitude severity, pol-cal feasibility, residual/corrected-data
-  stats, phase-calibrator catalogue lookup.
-- **Imaging inspection** (1): robust image RMS / peak / dynamic-range / beam.
-- **Pipeline / workflow** (1): workflow state probe.
-- **Documentation** (1): CASA task → casadocs page and casa6 source URL lookup.
-
-### ms-modify — calibration and flagging (16 tools)
-
-Intent population, preflagging, prior caltables, flux models (setjy / setjy
-polcal), bandpass, gaincal, polcal, fluxscale, applycal, residual and post-cal
-RFI flagging, caltable autoflag, and tclean imaging. All modify tools support
-`execute=False` (default) to generate a reviewable Python script without
-touching the MS, and `execute=True` to run in-process.
-
-### ms-create — ingestion (3 tools)
-
-Pre-conversion ASDM summary, ASDM → MS import, and a per-reduction working-calls
-ledger.
-
----
-
-## Skills
-
-Skills provide domain reasoning on top of tool outputs. They are loaded
-automatically when the plugin is installed.
-
-| Skill | Purpose |
-|-------|---------|
-| `radio-interferometry` | Interferometrist reasoning for Phase 1 + Phase 2 analysis — band tables, intent vocabulary, elevation/PA/flag thresholds, diagnostic report structure, calibrator science, failure modes |
-| `ms-simulator` | Simulate synthetic Measurement Sets from natural-language descriptions using `casatools.simulator` |
-| `casa-docs` | Resolve a CASA task to its casadocs page and casa6 source (via `ms_casa_task_lookup`), then fetch and quote it rather than answer from memory |
-
-## Slash commands
-
-Working in a clone these are invoked as `/<name>`; installed from the
-marketplace they are namespaced by the plugin, `/radio-analyst:<name>`.
-
-| Command | What it does |
-|---------|-------------|
-| `/inspect <ms_path>` | Full Phase 1 + Phase 2 analysis with go/no-go report |
-| `/precal <ms_path>` | Pre-calibration workflow (online flags → preflag → priorcals → setjy → refant → initial BP → rflag) |
-| `/calibrate <ms_path>` | Full calibration solve (initial phase → delay → bandpass → gain → fluxscale → applycal) |
-| `/polcal <ms_path>` | Polarisation calibration (Kcross → D-terms → Xf → applycal with parang) |
-| `/image <ms_path>` | First-pass continuum/cube imaging with derived tclean parameters |
-| `/simulate <description>` | Generate a synthetic MS from a conversational description |
-
----
-
-## Environment variables
-
-| Variable | Default | Effect |
-|----------|---------|--------|
-| `RADIO_MCP_TRANSPORT` | `stdio` | `stdio` for Claude Code; `http` for remote |
-| `RADIO_MCP_HOST` | `127.0.0.1` | HTTP bind address. **The HTTP transport has no authentication — do not bind beyond localhost on shared or untrusted networks** |
-| `RADIO_MCP_PORT` | `8000` / `8001` / `8002` | HTTP port (inspect / modify / create) |
-| `RADIO_MCP_WORKERS` | `4` | Parallel workers for FLAG column reads (cap 8) |
-| `RADIO_MCP_ENV_WAIT` | `20` | Plugin install only: seconds a server launcher waits on an in-progress environment build before exiting with a pointer to `build.log` |
-| `RADIO_MCP_TEST_MS` | — | Path to MS for integration tests |
-| `RADIO_MCP_TEST_MS_TGZ` | — | Path to `.ms.tgz` tarball; auto-extracted by conftest.py |
 
 ---
 
 ## Development
 
+Working on the plugin itself: register the servers against your clone instead
+of the plugin install.
+
 ```bash
-# Unit tests (no CASA, no MS required)
-pixi run test-unit
-
-# Integration tests (requires a real MS)
-RADIO_MCP_TEST_MS=/path/to/your.ms pixi run test-int
-
-# Lint + format check
-pixi run check
+git clone https://github.com/skunkworks-ra/radio-analyst.git
+cd radio-analyst
+pixi install
+pixi run pip install casatools casatasks   # first time only
+pixi run install-mcp                       # removes a plugin install first, if any
 ```
 
-Python `>=3.12`. `casatools` and `casatasks` are PyPI-only — pixi resolves
-them via pip into the conda environment.
+`install-mcp` (`scripts/dev/install-local.sh`) registers the three servers at
+user scope, pointing at `.pixi/envs/default/bin/`. Re-run it after a
+`pixi install` that rebuilds the environment. `pixi run uninstall-mcp` undoes
+it. Opened in Claude Code, the clone also loads the skills and commands from
+`.claude/` directly, un-namespaced (`/inspect`, `/precal`, …).
+
+To try the plugin packaging itself from a clone:
+`claude plugin marketplace add ./ && claude plugin install radio-analyst@radio-analyst`.
+
+```bash
+pixi run test-unit     # unit tests (casatools required; builds a small real MS)
+pixi run test-int      # integration: RADIO_MCP_TEST_MS=/path/to.ms or RADIO_MCP_TEST_MS_TGZ=/path/to.ms.tgz
+pixi run check         # ruff lint + format check (CI gate)
+claude plugin validate .claude-plugin/plugin.json
+```
+
+[`CLAUDE.md`](CLAUDE.md) holds the contributor contract and conventions, and
+[`design_docs/DESIGN.md`](design_docs/DESIGN.md) the architecture. Read both
+before a non-trivial change.
 
 ---
 

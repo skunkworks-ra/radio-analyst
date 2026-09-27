@@ -11,7 +11,7 @@ This repository ships **three Model Context Protocol (MCP) servers** for an
 AI-assisted radio interferometric reduction pipeline targeting VLA/JVLA/EVLA,
 MeerKAT, and uGMRT:
 
-- **ms-inspect** — read-only inspection and diagnostics (33 tools, port 8000)
+- **ms-inspect** — read-only inspection and diagnostics (34 tools, port 8000)
 - **ms-modify** — calibration, flagging, and MS modification (16 tools, port 8001)
 - **ms-create** — ASDM ingestion and reduction logging (3 tools, port 8002)
 
