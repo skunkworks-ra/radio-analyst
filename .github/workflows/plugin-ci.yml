@@ -3,6 +3,20 @@ name: Plugin CI
 on:
   push:
     branches: [main, ci-setup]
+  # PRs that can change how the plugin installs or starts. The paid LLM job
+  # stays off PRs (see its `if`).
+  pull_request:
+    paths:
+      - ".claude-plugin/**"
+      - ".mcp.json"
+      - "hooks/**"
+      - "scripts/plugin/**"
+      - "scripts/ci/**"
+      - "pixi.toml"
+      - "pixi.lock"
+      - "pyproject.toml"
+      - "docker/**"
+      - ".github/workflows/plugin-ci.yml"
   workflow_dispatch:
     inputs:
       run_llm_layer:
@@ -19,6 +33,9 @@ env:
 
 jobs:
   build-image:
+    # A fork's PR token cannot push to GHCR; skip (and with it every job that
+    # needs the image) rather than fail.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
       image: ${{ env.IMAGE }}:${{ github.sha }}
@@ -72,16 +89,33 @@ jobs:
       - name: Raw MCP handshake + tool call (no LLM, no tokens spent)
         run: pixi run --manifest-path pixi.toml python scripts/ci/mcp_smoke.py smoke.ms
 
+  # The installed-plugin path (CLAUDE_PLUGIN_DATA set), which smoke-free does
+  # not reach: SessionStart hook -> detached build under CLAUDE_PLUGIN_DATA ->
+  # servers launched from the built env with pixi off PATH -> rebuild after a
+  # source change. Real pixi, real casatools, no tokens.
+  smoke-plugin-env:
+    needs: build-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: ${{ needs.build-image.outputs.image }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Plugin environment end to end
+        run: bash scripts/ci/plugin_env_smoke.sh smoke.ms
+
   smoke-llm:
+    if: github.event_name != 'pull_request'
     needs: [build-image, smoke-free]
     runs-on: ubuntu-latest
     container:
       image: ${{ needs.build-image.outputs.image }}
     env:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      # casatools' cold import pulls in ~150 shared libraries; the plugin's
-      # first MCP server spawn under claude -p can exceed the 30s default.
-      MCP_TIMEOUT: "120000"
+      # No MCP_TIMEOUT override: the servers must start inside Claude Code's
+      # default budget, as they do for users (the environment is built ahead
+      # of the launch, not inside it).
     steps:
       - uses: actions/checkout@v5
 
@@ -106,18 +140,32 @@ jobs:
       - name: Trust the workspace (non-interactive HOME never sees the trust dialog)
         run: pixi run --manifest-path pixi.toml python -c "import json, os; path = os.path.join(os.environ['HOME'], '.claude.json'); data = json.load(open(path)) if os.path.exists(path) else {}; data.setdefault('projects', {}).setdefault(os.getcwd(), {})['hasTrustDialogAccepted'] = True; json.dump(data, open(path, 'w'))"
 
-      - name: Warm up MCP server (cold casatools import happens here, not in the timed call)
-        run: claude mcp list
-
-      - name: Ask Claude to use the plugin end-to-end (billed to Pro subscription token)
+      - name: Build the plugin environment as a user's first session does
+        # `claude mcp list` launches the plugin's servers with
+        # CLAUDE_PLUGIN_DATA set; the launcher starts the detached build. If
+        # that started nothing, a one-line session runs the SessionStart hook.
         run: |
-          export CLAUDE_PLUGIN_ROOT="$PWD"
+          DATA="$HOME/.claude/plugins/data"
+          claude mcp list || true
+          stamp=""
+          for i in $(seq 1 180); do
+            stamp="$(find "$DATA" -name env.stamp 2>/dev/null | head -n1)"
+            [ -n "$stamp" ] && break
+            if [ "$i" -eq 3 ] && ! find "$DATA" -name build.log 2>/dev/null | grep -q .; then
+              echo "no build after 'claude mcp list'; starting a session to run the SessionStart hook"
+              claude -p "Reply with OK." --model haiku > /dev/null || true
+            fi
+            sleep 10
+          done
+          find "$DATA" -name build.log -exec tail -n 40 {} \;
+          [ -n "$stamp" ] || { echo "FAIL: the plugin environment was not built"; exit 1; }
+
+      - name: Ask Claude to use the installed plugin end-to-end (billed to Pro subscription token)
+        run: |
           claude -p "Use the ms_observation_info tool from the ms-inspect MCP server on the MS at $PWD/smoke.ms and report the telescope name it returns." \
             --model haiku \
-            --mcp-config .mcp.json \
-            --allowed-tools "mcp__ms-inspect__ms_observation_info" \
+            --allowed-tools "mcp__plugin_radio-analyst_ms-inspect__ms_observation_info" \
             --permission-prompts none \
-            --strict-mcp-config \
             --output-format json \
             > llm_smoke_output.json
           cat llm_smoke_output.json
