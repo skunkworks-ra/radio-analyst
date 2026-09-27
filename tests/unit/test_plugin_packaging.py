@@ -122,3 +122,11 @@ def test_plugin_version_not_pinned():
     marketplace = json.loads((REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text())
     assert "version" not in manifest
     assert all("version" not in entry for entry in marketplace["plugins"])
+
+
+def test_ci_tool_manifest_covers_every_registered_tool():
+    # scripts/ci/tool_manifest.json drives the per-tool CI probe matrix; a tool
+    # registered on a server but missing here is never probed.
+    manifest = json.loads((REPO_ROOT / "scripts" / "ci" / "tool_manifest.json").read_text())
+    probed = {server: set(tools) for server, tools in manifest["tools"].items()}
+    assert probed == _registered_tools()

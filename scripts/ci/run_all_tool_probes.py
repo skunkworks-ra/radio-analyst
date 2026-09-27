@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local runner: Layer 1 (always) + Layer 2 (optional) across all 52 tools.
+"""Local runner: Layer 1 (always) + Layer 2 (optional) across all 53 tools.
 
     pixi run test-tool-probe                       # layer 1 only
     pixi run test-tool-probe --llm                  # layer 1 + layer 2

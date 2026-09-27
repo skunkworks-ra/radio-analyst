@@ -124,7 +124,7 @@ jobs:
           grep -qi "VLA" llm_smoke_output.json
 
   # ---------------------------------------------------------------------
-  # Manual-only: probe every registered MCP tool (52 across the 3 servers).
+  # Manual-only: probe every registered MCP tool (53 across the 3 servers).
   # Layer 1 (raw MCP, no tokens) always runs on dispatch. Layer 2 (LLM-driven,
   # spends tokens) is opt-in via the run_llm_layer input.
   # ---------------------------------------------------------------------
