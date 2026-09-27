@@ -30,6 +30,23 @@ RA_LOG="$RA_DATA/build.log"
 RA_SOURCE_FILES=(pixi.toml pixi.lock pyproject.toml)
 RA_COPY_FILES=("${RA_SOURCE_FILES[@]}" README.md)
 
+# Platforms pixi.toml builds for, as `uname -s`-`uname -m`. Kept in step with
+# pixi.toml's `platforms` by tests/unit/test_plugin_env_scripts.py.
+RA_SUPPORTED_PLATFORMS=(Linux-x86_64 Darwin-arm64)
+
+ra_platform() {
+    printf '%s-%s' "$(uname -s)" "$(uname -m)"
+}
+
+ra_platform_supported() {
+    local p here
+    here="$(ra_platform)"
+    for p in "${RA_SUPPORTED_PLATFORMS[@]}"; do
+        [[ "$here" == "$p" ]] && return 0
+    done
+    return 1
+}
+
 ra_sha256() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum | cut -d' ' -f1

@@ -56,6 +56,10 @@ if [[ -z "$RA_DATA" ]]; then
     exec pixi run --manifest-path "$MANIFEST" "$TASK"
 fi
 
+if ! ra_platform_supported; then
+    echo "[$SERVER] radio-analyst builds its environment only for ${RA_SUPPORTED_PLATFORMS[*]}; this machine is $(ra_platform)." >&2
+    exit 1
+fi
 ra_ready && exec_server
 need_pixi
 

@@ -38,6 +38,12 @@ run_hook() {
     # by hand): the launchers use the repo's own pixi environment instead.
     [[ -n "$RA_DATA" ]] || exit 0
 
+    if ! ra_platform_supported; then
+        emit "radio-analyst: this machine is $(ra_platform), but the plugin's Python/CASA environment builds only for ${RA_SUPPORTED_PLATFORMS[*]} (the platforms pixi.toml targets), so the ms-inspect / ms-modify / ms-create MCP servers cannot run here." \
+            "The radio-analyst MCP servers (ms-inspect, ms-modify, ms-create) cannot run on this platform ($(ra_platform); supported: ${RA_SUPPORTED_PLATFORMS[*]}). No Measurement Set tool can be called in this session; say so if the user asks for one."
+        exit 0
+    fi
+
     if ! command -v pixi >/dev/null 2>&1; then
         emit "radio-analyst: pixi is not on PATH, so the ms-inspect / ms-modify / ms-create MCP servers cannot start. Install it (curl -fsSL https://pixi.sh/install.sh | bash), restart Claude Code, and the environment will build automatically." \
             "The radio-analyst MCP servers (ms-inspect, ms-modify, ms-create) are unavailable because pixi is not installed. If the user asks for a Measurement Set tool, tell them to install pixi from https://pixi.sh and restart Claude Code."
@@ -59,6 +65,8 @@ run_hook() {
 
 run_build() {
     [[ -n "$RA_DATA" ]] || { echo "CLAUDE_PLUGIN_DATA is not set" >&2; exit 1; }
+    ra_platform_supported ||
+        { echo "unsupported platform $(ra_platform); supported: ${RA_SUPPORTED_PLATFORMS[*]}" >&2; exit 1; }
     mkdir -p "$RA_DATA"
 
     if ! mkdir "$RA_LOCK" 2>/dev/null; then

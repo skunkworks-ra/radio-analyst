@@ -142,6 +142,7 @@ Third-party marketplaces don't auto-update by default. To turn that on, open
 | Symptom | Cause and fix |
 |---|---|
 | Servers fail with *"pixi is not on PATH"* | Install pixi (above), then restart Claude Code. |
+| *"this machine is …"* at session start | The environment builds only on Linux x86_64 and macOS arm64 (the platforms `pixi.toml` targets). On other platforms the skills load but no tool can run. |
 | Servers fail with *"still being built"* | Expected on the first run and after some updates. Wait for `build complete` in `build.log`, then reconnect with `/mcp`. |
 | Servers fail with *"build failed"* | Read `build.log` (the message gives its path). Reconnecting with `/mcp` retries the build. |
 | Tools return `CASA_NOT_AVAILABLE` | casatools didn't install or import. Look for `WARNING` lines in `build.log`. |
