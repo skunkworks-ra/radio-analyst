@@ -111,3 +111,14 @@ def test_no_top_level_bin_dir():
         "a plugin's top-level bin/ is put on the Bash tool's PATH, and claude.ai "
         "and Cowork refuse to install a plugin that has one"
     )
+
+
+def test_plugin_version_not_pinned():
+    # A "version" in plugin.json (or the marketplace entry) pins installed users
+    # to that string: `claude plugin update` ignores new commits until someone
+    # edits it. Unpinned, Claude Code versions the plugin by commit SHA. Remove
+    # this test only together with a release process that bumps the version.
+    manifest = json.loads((REPO_ROOT / ".claude-plugin" / "plugin.json").read_text())
+    marketplace = json.loads((REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text())
+    assert "version" not in manifest
+    assert all("version" not in entry for entry in marketplace["plugins"])

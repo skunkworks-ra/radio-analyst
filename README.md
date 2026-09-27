@@ -126,12 +126,16 @@ changed.
 **Check it works:** `/mcp` lists `ms-inspect`, `ms-modify` and `ms-create` as
 connected. Then ask *"What's in <path to an MS>?"*.
 
-**Update / remove**
+**Update / remove.** The plugin carries no version number, so Claude Code
+versions it by commit: an update brings you to the latest commit on `main`.
 
 ```bash
 claude plugin update radio-analyst@radio-analyst
 claude plugin uninstall radio-analyst@radio-analyst   # also deletes the environment
 ```
+
+Third-party marketplaces don't auto-update by default. To turn that on, open
+`/plugin` → **Marketplaces** → `radio-analyst` → **Enable auto-update**.
 
 ### Troubleshooting
 

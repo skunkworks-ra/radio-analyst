@@ -1,6 +1,5 @@
 {
   "name": "radio-analyst",
-  "version": "0.1.0",
   "description": "Radio interferometric Measurement Set inspector — MCP tools + skills for VLA/MeerKAT/uGMRT",
   "author": {
     "name": "Srikrishna Sekhar and Preshanth Jagannathan",
