@@ -71,6 +71,19 @@ directory. Resolve each name against this file's own directory, not against the
 working directory and not against any `.claude/skills/` path — installed as a
 plugin this skill lives in a cache directory that has neither.
 
+## Running generated scripts
+
+The ms-modify and ms-create tools default to `execute=False`: they write a
+CASA script into the workdir and return its `script_path`. Run it with a
+Python that has casatasks:
+
+- Installed as a plugin: the interpreter named in this session's context by the
+  radio-analyst plugin (`.../bin/python` under `~/.claude/plugins/data/`).
+- Working in a clone: `pixi run python <script_path>` from the repo root.
+
+If neither is available, stop and say so. Do not install casatools into
+another environment.
+
 ## Start here
 
 Read these three now, before anything else:
