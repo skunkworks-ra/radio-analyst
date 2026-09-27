@@ -311,6 +311,16 @@ def lookup_nearest(
     return best
 
 
+def cone_search(ra_deg: float, dec_deg: float, radius_arcsec: float = 5.0) -> PhaseCalMatch | None:
+    """Nearest catalog source within radius_arcsec, position only.
+
+    The identity check used by ms_field_list and ms_set_intents: a field whose
+    phase centre sits on a catalogued calibrator is that calibrator. Band and
+    array-configuration quality are lookup_nearest's concern, not this one's.
+    """
+    return lookup_nearest(ra_deg, dec_deg, max_sep_deg=radius_arcsec / 3600.0)
+
+
 def lookup_by_name(name: str) -> PhaseCalEntry | None:
     """Match by IAU name or alt_name (case-insensitive).  Returns first match."""
     name_upper = name.upper().replace(" ", "")

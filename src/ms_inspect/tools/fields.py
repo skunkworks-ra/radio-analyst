@@ -26,7 +26,7 @@ from ms_inspect.util.casa_context import open_msmd, validate_ms_path
 from ms_inspect.util.conversions import rad_to_deg, rad_to_dms, rad_to_hms
 from ms_inspect.util.formatting import field, response_envelope
 from ms_inspect.util.frequencies import field_frequencies
-from ms_inspect.util.vla_calibrators import cone_search as vla_cone_search
+from ms_inspect.util.phase_cal_catalog import cone_search as vla_cone_search
 
 TOOL_NAME = "ms_field_list"
 
@@ -659,31 +659,29 @@ def _vla_positional_match(
     if result is None:
         return field(None, flag="UNAVAILABLE", note="No VLA calibrator within 5 arcsec")
 
-    # Declination guard case — result has a note but empty name
-    if result.note and not result.name:
-        return field(None, flag="UNAVAILABLE", note=result.note)
-
+    entry = result.entry
+    separation_arcsec = result.separation_deg * 3600.0
     match_data = {
-        "name": result.name,
-        "alt_name": result.alt_name,
-        "separation_arcsec": result.separation_arcsec,
-        "position_code": result.position_code,
+        "name": entry.iau_name,
+        "alt_name": entry.alt_name,
+        "separation_arcsec": separation_arcsec,
+        "position_code": entry.pos_accuracy,
         "bands": {
             k: {
-                "qual_A": v.qual_A,
-                "qual_B": v.qual_B,
-                "qual_C": v.qual_C,
-                "qual_D": v.qual_D,
+                "qual_A": v.quality_A,
+                "qual_B": v.quality_B,
+                "qual_C": v.quality_C,
+                "qual_D": v.quality_D,
                 "flux_jy": v.flux_jy,
             }
-            for k, v in result.bands.items()
+            for k, v in entry.bands.items()
         },
     }
 
-    flag_val = "COMPLETE" if result.separation_arcsec < 1.0 else "INFERRED"
-    note = f"VLA callist match: {result.name}"
-    if result.alt_name:
-        note += f" ({result.alt_name})"
-    note += f" at {result.separation_arcsec:.3f} arcsec"
+    flag_val = "COMPLETE" if separation_arcsec < 1.0 else "INFERRED"
+    note = f"VLA callist match: {entry.iau_name}"
+    if entry.alt_name:
+        note += f" ({entry.alt_name})"
+    note += f" at {separation_arcsec:.3f} arcsec"
 
     return field(match_data, flag=flag_val, note=note)

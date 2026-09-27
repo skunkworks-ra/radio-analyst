@@ -15,9 +15,9 @@ from ms_inspect.util.calibrators import lookup as cal_lookup
 from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
 from ms_inspect.util.conversions import rad_to_deg
 from ms_inspect.util.formatting import field, response_envelope
+from ms_inspect.util.phase_cal_catalog import cone_search as vla_cone_search
 from ms_inspect.util.pol_calibrators import effective_role_at_band, lookup_pol
 from ms_inspect.util.stage_log import record_stage
-from ms_inspect.util.vla_calibrators import cone_search as vla_cone_search
 from ms_modify.exceptions import IntentsAlreadyPopulatedError
 
 TOOL_NAME = "set_intents"
@@ -109,7 +109,7 @@ def _compute_intent_map(
             if ra_deg is not None and dec_deg is not None:
                 try:
                     result = vla_cone_search(ra_deg, dec_deg, radius_arcsec=5.0)
-                    if result is not None and result.name:
+                    if result is not None and result.entry.iau_name:
                         intents.append("CALIBRATE_PHASE#ON_SOURCE")
                         sources.append("vla_cone_search")
                         matched = True

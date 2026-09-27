@@ -100,6 +100,27 @@ class TestComputeIntentMap:
         assert result[0]["source"] == "default_target"
         assert result[0]["intents"] == ["OBSERVE_TARGET#ON_SOURCE"]
 
+    def test_bundled_callist_identifies_phase_cal_by_position(self):
+        """No mock: the real bundled catalogue must match J1822-0938 to 1822-096.
+
+        The 3C391 tutorial MS names this field only by J2000 name, which the
+        primary catalogue does not know; the position is the only identity."""
+        fields = [_make_field(0, "J1822-0938", ra=275.619601, dec=-9.649121)]
+        result = _compute_intent_map(fields)
+
+        assert result[0]["source"] == "vla_cone_search"
+        assert result[0]["intents"] == ["CALIBRATE_PHASE#ON_SOURCE"]
+
+    def test_bundled_callist_and_phase_cal_lookup_agree(self):
+        """ms_set_intents and ms_phase_cal_lookup read one catalogue, so a
+        field one of them identifies the other identifies too."""
+        from ms_inspect.util.phase_cal_catalog import cone_search, lookup_nearest
+
+        near = lookup_nearest(275.619601, -9.649121)
+        cone = cone_search(275.619601, -9.649121, radius_arcsec=5.0)
+        assert near is not None and cone is not None
+        assert near.entry.iau_name == cone.entry.iau_name == "1822-096"
+
     def test_no_coordinates(self):
         """Field with no coordinates → default target (skips cone search)."""
         fields = [_make_field(0, "UNKNOWN", ra=None, dec=None)]
