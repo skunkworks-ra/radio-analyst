@@ -83,5 +83,5 @@ fmt-check   = { cmd = "ruff format --check src/ tests/" }
 check       = { cmd = "ruff check src/ tests/ && ruff format --check src/ tests/" }
 
 # Local MCP install / uninstall (user scope, bypasses plugin system)
-install-mcp   = { cmd = "bash bin/install-local.sh" }
-uninstall-mcp = { cmd = "bash bin/uninstall-local.sh" }
+install-mcp   = { cmd = "bash scripts/dev/install-local.sh" }
+uninstall-mcp = { cmd = "bash scripts/dev/uninstall-local.sh" }

@@ -72,7 +72,7 @@ run_build() {
     # Sync the sources. app/.pixi is left in place so unchanged packages are
     # reused; src/ is replaced wholesale so deleted modules do not linger.
     mkdir -p "$RA_APP"
-    for f in "${RA_SOURCE_FILES[@]}"; do
+    for f in "${RA_COPY_FILES[@]}"; do
         cp "$RA_ROOT/$f" "$RA_APP/$f"
     done
     rm -rf "$RA_APP/src"

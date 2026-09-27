@@ -50,9 +50,13 @@ Expected: no errors, both directories list files.
 Test the wrapper script directly — this simulates exactly what Claude Code does on first start:
 
 ```bash
-bash bin/serve.sh
-# First run: pixi install runs (~30s), casatools installs if missing (~2–5 min, ~500 MB)
-# Second run: both checks pass instantly, server starts in <1s
+bash scripts/plugin/serve.sh
+# Without CLAUDE_PLUGIN_DATA (a clone): pixi install runs (~30s), casatools
+# installs if missing (~2–5 min, ~500 MB); second run starts in <1s.
+# With CLAUDE_PLUGIN_DATA=/some/dir (what an installed plugin sees): the env is
+# built in the background under that dir (log: build.log there); the script
+# waits up to RADIO_MCP_ENV_WAIT (20 s) and otherwise exits saying so. Re-run
+# once the build log says "build complete".
 # Ctrl-C to exit
 ```
 

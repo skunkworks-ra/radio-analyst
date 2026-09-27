@@ -61,7 +61,7 @@ pixi run pip install casatools casatasks   # first time only; ~500 MB
 pixi run install-mcp
 ```
 
-`install-mcp` calls `bin/install-local.sh`, which registers `ms-inspect`,
+`install-mcp` calls `scripts/dev/install-local.sh`, which registers `ms-inspect`,
 `ms-modify`, and `ms-create` via `claude mcp add --scope user` pointing
 directly at `.pixi/envs/default/bin/`. Re-run after any `pixi install` that
 rebuilds the environment. The script detects and removes a plugin-managed

@@ -104,16 +104,18 @@ radio-analyst/
 │   │   └── ms-simulator/          ← SKILL.md + 01..05 knowledge files
 │   └── commands/                  ← inspect, precal, calibrate, polcal, image, simulate
 ├── docs/                          ← session context, tool survey, fix plan, handoff
-├── bin/
-│   ├── serve.sh                   ← MCP plugin entry point (ms-inspect)
-│   ├── serve-modify.sh            ← MCP plugin entry point (ms-modify)
-│   └── serve-create.sh            ← MCP plugin entry point (ms-create)
 ├── hooks/
 │   └── hooks.json                 ← plugin SessionStart hook → scripts/plugin/ensure-env.sh
-├── scripts/plugin/
-│   ├── env-lib.sh                 ← shared helpers: source hash, build lock, env paths
-│   ├── ensure-env.sh              ← builds the pixi env under ${CLAUDE_PLUGIN_DATA} (detached)
-│   └── launch.sh                  ← what bin/serve*.sh exec: run the server from that env
+├── scripts/
+│   ├── plugin/
+│   │   ├── serve.sh               ← MCP plugin entry point (ms-inspect)
+│   │   ├── serve-modify.sh        ← MCP plugin entry point (ms-modify)
+│   │   ├── serve-create.sh        ← MCP plugin entry point (ms-create)
+│   │   ├── launch.sh              ← what serve*.sh exec: run the server from the built env
+│   │   ├── ensure-env.sh          ← builds the pixi env under ${CLAUDE_PLUGIN_DATA} (detached)
+│   │   └── env-lib.sh             ← shared helpers: source hash, build lock, env paths
+│   ├── dev/                       ← install-local.sh / uninstall-local.sh (pixi run install-mcp)
+│   └── ci/                        ← smoke MS generator, MCP smoke + per-tool probes
 ├── src/
 │   ├── ms_create/
 │   │   ├── __init__.py            ← version string

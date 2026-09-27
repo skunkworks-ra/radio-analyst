@@ -1,7 +1,7 @@
 # shellcheck shell=bash disable=SC2034  # variables are used by the sourcing scripts
 # Shared helpers for the plugin's Python environment. Sourced by
 # scripts/plugin/ensure-env.sh (SessionStart hook + background build) and by
-# bin/serve*.sh (MCP server launchers). Nothing here writes to stdout: for the
+# scripts/plugin/serve*.sh (MCP server launchers). Nothing here writes to stdout: for the
 # launchers, stdout is the JSON-RPC stream.
 #
 # Layout when installed as a plugin (all under ${CLAUDE_PLUGIN_DATA}, which
@@ -23,8 +23,12 @@ RA_PREFIX_FILE="$RA_DATA/env.prefix"
 RA_LOCK="$RA_DATA/build.lock"
 RA_LOG="$RA_DATA/build.log"
 
-# Files copied into app/ and hashed to decide whether a rebuild is needed.
-RA_SOURCE_FILES=(pixi.toml pixi.lock pyproject.toml README.md)
+# Files hashed (with src/) to decide whether a rebuild is needed. All of them,
+# plus README.md, are copied into app/: pyproject.toml names README.md as the
+# package readme, so the build needs it, but its content never changes the
+# environment and is left out of the hash.
+RA_SOURCE_FILES=(pixi.toml pixi.lock pyproject.toml)
+RA_COPY_FILES=("${RA_SOURCE_FILES[@]}" README.md)
 
 ra_sha256() {
     if command -v sha256sum >/dev/null 2>&1; then

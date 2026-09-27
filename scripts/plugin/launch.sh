@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# MCP server launcher shared by bin/serve.sh, bin/serve-modify.sh and
-# bin/serve-create.sh.
+# MCP server launcher shared by serve.sh, serve-modify.sh and
+# serve-create.sh (all in this directory; .mcp.json points at them).
 #
 #   launch.sh <server-executable> <pixi-task>
 #

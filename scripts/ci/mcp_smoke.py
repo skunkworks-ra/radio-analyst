@@ -22,7 +22,7 @@ async def main() -> int:
 
     params = StdioServerParameters(
         command="bash",
-        args=[os.path.join(REPO_ROOT, "bin", "serve.sh")],
+        args=[os.path.join(REPO_ROOT, "scripts", "plugin", "serve.sh")],
         env=dict(os.environ, RADIO_MCP_TRANSPORT="stdio"),
     )
 
