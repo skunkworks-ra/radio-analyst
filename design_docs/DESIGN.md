@@ -863,7 +863,7 @@ On tool error:
 **Phase 1 (Layers 1 & 2): 13 tools** — the tables above plus `ms_flag_preflight`.
 
 > **Note on scope.** This design document was originally written for Phase 1
-> (Layers 1 & 2) only. The `ms_inspect` server has since grown to **33 tools**
+> (Layers 1 & 2) only. The `ms_inspect` server has since grown to **34 tools**
 > as later calibration/imaging phases were implemented, and the read-only
 > contract now spans the whole reduction. The remaining `ms_inspect` tools are
 > catalogued below; `ms_modify` (§8b) and `ms_create` (§8c) are full MCP servers
@@ -921,7 +921,13 @@ On tool error:
 |------|----------------|
 | `ms_workflow_status` | State probe over MS + workdir: which pipeline stages are complete + `next_recommended_step` |
 
-**Total `ms_inspect`: 33 tools.**
+### Documentation
+
+| Tool | What it returns |
+|------|----------------|
+| `ms_casa_task_lookup` | A CASA task's casadocs API page and casa6 source-file URLs from a bundled index (no fetch; the caller fetches). `NOT_FOUND` if the task is not in the index |
+
+**Total `ms_inspect`: 34 tools.**
 
 ---
 

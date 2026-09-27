@@ -147,3 +147,22 @@ def test_ci_tool_manifest_covers_every_registered_tool():
     manifest = json.loads((REPO_ROOT / "scripts" / "ci" / "tool_manifest.json").read_text())
     probed = {server: set(tools) for server, tools in manifest["tools"].items()}
     assert probed == _registered_tools()
+
+
+@pytest.mark.parametrize("doc", ["CLAUDE.md", "design_docs/DESIGN.md"])
+def test_tool_inventories_list_every_registered_tool(doc: str):
+    # CLAUDE.md "Adding a new tool", step 8: update the inventory in both files.
+    text = (REPO_ROOT / doc).read_text()
+    missing = sorted(t for ts in _registered_tools().values() for t in ts if f"`{t}`" not in text)
+    assert not missing, f"{doc} does not list {missing}"
+
+
+def test_documented_tool_counts_match_registrations():
+    counts = {server: len(tools) for server, tools in _registered_tools().items()}
+    claude_md = (REPO_ROOT / "CLAUDE.md").read_text()
+    readme = (REPO_ROOT / "README.md").read_text()
+    design = (REPO_ROOT / "design_docs" / "DESIGN.md").read_text()
+    for server, n in counts.items():
+        assert re.search(rf"\*\*{server}\*\* — .*\({n} tools", claude_md), (server, n)
+        assert re.search(rf"\*\*{server}\*\*: .*\({n} tools", readme), (server, n)
+    assert f"**Total `ms_inspect`: {counts['ms-inspect']} tools.**" in design
