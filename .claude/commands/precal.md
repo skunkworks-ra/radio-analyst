@@ -31,7 +31,8 @@ allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_observation_info,
 
 Run the pre-calibration workflow on this MS: $ARGUMENTS
 
-Load the `radio-interferometry` skill, then read its `10-precal-workflow.md`
+Load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
+installed as a plugin), then read its `10-precal-workflow.md`
 supporting file (a sibling of that skill's `SKILL.md`) before starting.
 Execute the stages below in order; STOP and report if any stage fails its
 decision gate.

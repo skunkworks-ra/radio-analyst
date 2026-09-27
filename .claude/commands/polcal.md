@@ -17,7 +17,8 @@ allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
 
 Run polarization calibration on this MS: $ARGUMENTS
 
-Load the `radio-interferometry` skill, then read its `09-polcal-execution.md`
+Load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
+installed as a plugin), then read its `09-polcal-execution.md`
 supporting file (a sibling of that skill's `SKILL.md`) before
 starting. Prerequisite: delay.K, bandpass.B, and gain.G (or gain.fluxscaled)
 must already exist — run `/calibrate` first if not.

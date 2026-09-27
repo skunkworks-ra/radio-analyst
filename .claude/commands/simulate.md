@@ -5,7 +5,8 @@ allowed-tools: Bash, Read, Write, Edit
 
 Simulate a CASA Measurement Set based on the following description: $ARGUMENTS
 
-Follow the ms-simulator skill protocol:
+Load the `ms-simulator` skill (`radio-analyst:ms-simulator` when installed as a
+plugin) and follow its protocol:
 
 1. **Parse** the description to extract telescope, config, band/frequency,
    source(s), duration, and any corruption requests.

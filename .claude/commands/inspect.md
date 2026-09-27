@@ -19,7 +19,8 @@ allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_observation_info,
 Run a complete Phase 1 + Phase 2 interferometric data quality analysis on this
 Measurement Set: $ARGUMENTS
 
-Follow the workflow in the radio-interferometry skill exactly:
+Load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
+installed as a plugin) and follow its workflow exactly:
 
 **Phase 1 — run in this order:**
 1. ms_observation_info

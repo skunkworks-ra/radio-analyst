@@ -24,7 +24,8 @@ allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
 
 Run the full calibration solve sequence on this MS: $ARGUMENTS
 
-Load the `radio-interferometry` skill, then read its `07-calibration-execution.md`
+Load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
+installed as a plugin), then read its `07-calibration-execution.md`
 supporting file (a sibling of that skill's `SKILL.md`) before
 starting. Execute the stages below in order; STOP and report if any
 ms_calsol_stats outlier gate fails.
