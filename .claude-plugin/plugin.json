@@ -1,6 +1,6 @@
 {
   "name": "radio-analyst",
-  "description": "Radio interferometric Measurement Set inspector — MCP tools + skills for VLA/MeerKAT/uGMRT",
+  "description": "CASA data reduction for radio interferometers (VLA, MeerKAT, uGMRT): 53 MCP tools, interferometrist skills, and inspect/precal/calibrate/polcal/image workflows",
   "author": {
     "name": "Srikrishna Sekhar and Preshanth Jagannathan",
     "url": "https://github.com/skunkworks-ra"
