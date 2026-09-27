@@ -64,12 +64,19 @@ class TestComputeIntentMap:
     @patch("ms_modify.intents.vla_cone_search")
     def test_vla_cone_search_match(self, mock_cone):
         """VLA cone search match → CALIBRATE_PHASE."""
-        from unittest.mock import MagicMock
+        from ms_inspect.util.phase_cal_catalog import PhaseCalEntry, PhaseCalMatch
 
-        mock_result = MagicMock()
-        mock_result.name = "J1407+2827"
-        mock_result.alt_name = "OQ208"
-        mock_cone.return_value = mock_result
+        entry = PhaseCalEntry(
+            iau_name="1407+284",
+            ra_deg=211.75,
+            dec_deg=28.45,
+            pos_accuracy="A",
+            pos_ref=None,
+            alt_name="OQ208",
+        )
+        mock_cone.return_value = PhaseCalMatch(
+            entry=entry, separation_deg=0.0, band=None, quality=None
+        )
 
         fields = [_make_field(0, "UNKNOWN_SOURCE", ra=211.75, dec=28.45)]
         result = _compute_intent_map(fields)

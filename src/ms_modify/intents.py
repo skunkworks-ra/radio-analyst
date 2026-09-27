@@ -109,7 +109,7 @@ def _compute_intent_map(
             if ra_deg is not None and dec_deg is not None:
                 try:
                     result = vla_cone_search(ra_deg, dec_deg, radius_arcsec=5.0)
-                    if result is not None and result.entry.iau_name:
+                    if result is not None:
                         intents.append("CALIBRATE_PHASE#ON_SOURCE")
                         sources.append("vla_cone_search")
                         matched = True

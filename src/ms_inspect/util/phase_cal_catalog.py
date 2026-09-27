@@ -99,9 +99,12 @@ _BAND_RE = re.compile(
     r"^\s*(\d+\.?\d*cm)\s+([A-Z])\s+"  # wavelength  band_code
     r"([A-Z?])\s+([A-Z?])\s+([A-Z?])\s+([A-Z?])\s+"  # q_A q_B q_C q_D
     r"([\d.]+)"  # flux
-    r"(?:\s+([\d.]+))?"  # uvmin (optional)
-    r"(?:\s+([\d.]+))?"  # uvmax (optional)
 )
+_NUMBER_RE = re.compile(r"\d+\.?\d*")
+
+# Start column of "UVMAX" in the BAND header. A row may carry a UVMAX value
+# with no UVMIN, so the two limits are told apart by column, not by order.
+_DEFAULT_UVMAX_COL = 46
 
 
 def _parse_ra(s: str) -> float:
@@ -150,12 +153,23 @@ def _parse_j2000_line(line: str) -> tuple[str, float, float, str, str | None, st
     return iau_name, ra_deg, dec_deg, pos_accuracy, pos_ref, alt_name
 
 
-def _parse_band_line(line: str) -> BandEntry | None:
+def _parse_band_line(line: str, uvmax_col: int = _DEFAULT_UVMAX_COL) -> BandEntry | None:
     m = _BAND_RE.match(line)
     if not m:
         return None
     wavelength = m.group(1).strip()
     band_code = BAND_WAVELENGTH_TO_CODE.get(wavelength, m.group(2))
+
+    # A number that starts left of the UVMAX column is UVMIN. Rows drift by a
+    # column or two, so the boundary sits one column left of the header.
+    uvmin_kl: float | None = None
+    uvmax_kl: float | None = None
+    for num in _NUMBER_RE.finditer(line, m.end(7)):
+        if num.start() < uvmax_col - 1:
+            uvmin_kl = float(num.group())
+        else:
+            uvmax_kl = float(num.group())
+
     return BandEntry(
         band_code=band_code,
         wavelength=wavelength,
@@ -164,8 +178,8 @@ def _parse_band_line(line: str) -> BandEntry | None:
         quality_C=m.group(5),
         quality_D=m.group(6),
         flux_jy=float(m.group(7)),
-        uvmin_kl=float(m.group(8)) if m.group(8) else None,
-        uvmax_kl=float(m.group(9)) if m.group(9) else None,
+        uvmin_kl=uvmin_kl,
+        uvmax_kl=uvmax_kl,
     )
 
 
@@ -178,6 +192,7 @@ def _load_catalog(text: str) -> dict[str, PhaseCalEntry]:
     catalog: dict[str, PhaseCalEntry] = {}
     current: PhaseCalEntry | None = None
     in_band_table = False
+    uvmax_col = _DEFAULT_UVMAX_COL
 
     for raw_line in text.splitlines():
         line = raw_line.rstrip()
@@ -197,6 +212,8 @@ def _load_catalog(text: str) -> dict[str, PhaseCalEntry]:
         # Band table header — sequence: "---" then this line then "==="
         if "BAND" in line and "FLUX" in line:
             in_band_table = True
+            if "UVMAX" in line:
+                uvmax_col = line.index("UVMAX")
             continue
 
         # J2000 source header → start a new entry
@@ -223,7 +240,7 @@ def _load_catalog(text: str) -> dict[str, PhaseCalEntry]:
 
         # Band data rows
         if in_band_table and current is not None:
-            band = _parse_band_line(line)
+            band = _parse_band_line(line, uvmax_col)
             if band is not None:
                 current.bands[band.band_code] = band
 
