@@ -13,7 +13,8 @@
 #   env.stamp     source hash the current environment was built from
 #   env.prefix    absolute path of the built environment prefix
 #   build.lock/   held while a build runs (portable mkdir lock; holds a pid)
-#   build.log     output of the most recent builds
+#   build.log     output of the current or most recent build
+#   build.log.prev  output of the build before that
 
 RA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RA_DATA="${CLAUDE_PLUGIN_DATA:-}"

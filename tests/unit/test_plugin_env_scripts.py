@@ -86,3 +86,43 @@ def test_launcher_on_unsupported_platform_fails_fast(unsupported_machine):
     assert proc.stdout == ""  # stdout is the JSON-RPC stream
     assert "this machine is Linux-aarch64" in proc.stderr
     assert not Path(unsupported_machine["CLAUDE_PLUGIN_DATA"], "build.lock").exists()
+
+
+def _ra_source_hash(env: dict[str, str]) -> str:
+    return subprocess.run(
+        ["bash", "-c", f'source "{SCRIPTS / "env-lib.sh"}" && ra_source_hash'],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+def test_build_starts_a_fresh_log_and_keeps_the_previous_one(tmp_path: Path):
+    # A ready environment (stamp == source hash, server executable present)
+    # makes --build stop at "already up to date", after the log rotation and
+    # before any pixi call, so this runs without pixi.
+    data = tmp_path / "plugin-data"
+    prefix = tmp_path / "env"
+    (prefix / "bin").mkdir(parents=True)
+    (prefix / "bin" / "ms-inspect").write_text("#!/bin/sh\n")
+    (prefix / "bin" / "ms-inspect").chmod(0o755)
+    data.mkdir()
+    env = dict(os.environ, CLAUDE_PLUGIN_DATA=str(data))
+    (data / "env.prefix").write_text(f"{prefix}\n")
+    (data / "env.stamp").write_text(_ra_source_hash(env) + "\n")
+    (data / "build.log").write_text("=== old build\nold output\n")
+
+    with (data / "build.log").open("a") as log_out:  # as ra_spawn_build does
+        subprocess.run(
+            ["bash", str(SCRIPTS / "ensure-env.sh"), "--build"],
+            env=env,
+            stdout=log_out,
+            stderr=subprocess.STDOUT,
+            check=True,
+        )
+
+    assert (data / "build.log.prev").read_text() == "=== old build\nold output\n"
+    log = (data / "build.log").read_text()
+    assert "old output" not in log
+    assert log.startswith("=== [") and "environment already up to date" in log

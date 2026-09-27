@@ -79,6 +79,14 @@ run_build() {
     echo $$ >"$RA_LOCK/pid"
     trap 'rm -rf "$RA_LOCK"' EXIT
 
+    # One build per log: keep the previous build's log as build.log.prev and
+    # start this one empty. Truncate rather than rename, because a spawned
+    # build's own stdout is build.log (opened for append).
+    if [[ -s "$RA_LOG" ]]; then
+        cp "$RA_LOG" "$RA_LOG.prev"
+    fi
+    : >"$RA_LOG"
+
     echo "=== [$(date)] radio-analyst environment build from $RA_ROOT"
     if ra_ready; then
         echo "environment already up to date"

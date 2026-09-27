@@ -35,8 +35,9 @@ fail() {
     fi
     exit 1
 }
-builds_started() { grep -c '^=== .*environment build from' "$RA_LOG" 2>/dev/null || true; }
-builds_completed() { grep -c '^=== .*build complete' "$RA_LOG" 2>/dev/null || true; }
+# build.log holds one build (the previous one moves to build.log.prev), so
+# "did a build run" is "did build.log change", not a count of its lines.
+log_fingerprint() { cksum "$RA_LOG" 2>/dev/null || echo none; }
 
 echo "=== 1. cold hook"
 out="$(bash scripts/plugin/ensure-env.sh --hook)"
@@ -70,7 +71,7 @@ echo "=== 4. all three servers from the built env"
 # in-repo fallback (which needs pixi) cannot quietly stand in for it.
 pixi_dir="$(dirname "$(command -v pixi)")"
 NO_PIXI_PATH="$(tr ':' '\n' <<<"$PATH" | grep -vxF "$pixi_dir" | paste -sd: -)"
-before="$(builds_started)"
+before="$(log_fingerprint)"
 PATH="$NO_PIXI_PATH" "$PY" - <<'EOF' || fail "server handshake without pixi on PATH"
 import asyncio, json, os, time
 from mcp import ClientSession, StdioServerParameters
@@ -101,7 +102,7 @@ async def main() -> None:
 
 asyncio.run(main())
 EOF
-[[ "$(builds_started)" == "$before" ]] || fail "launching a server with a ready environment started a build"
+[[ "$(log_fingerprint)" == "$before" ]] || fail "launching a server with a ready environment started a build"
 
 echo "=== 5. tool call on a real MS"
 [[ -d "$SMOKE_MS" ]] || "$PY" scripts/ci/generate_smoke_ms.py "$SMOKE_MS"
@@ -118,7 +119,7 @@ touched=src/ms_create/__init__.py
 cp "$touched" "$touched.orig"
 trap 'mv -f "$ROOT/$touched.orig" "$ROOT/$touched"' EXIT
 echo "# plugin_env_smoke: simulated update" >>"$touched"
-completed="$(builds_completed)"
+stamp_before="$(cat "$RA_STAMP")"
 start=$(date +%s)
 RADIO_MCP_ENV_WAIT=600 "$PY" - <<'EOF' || fail "ms-create did not come up after the rebuild"
 import asyncio, os
@@ -136,7 +137,9 @@ async def main() -> None:
 
 asyncio.run(main())
 EOF
-[[ "$(builds_completed)" -eq $((completed + 1)) ]] || fail "expected exactly one rebuild"
+[[ "$(cat "$RA_STAMP")" != "$stamp_before" ]] || fail "the environment stamp did not change"
+[[ "$(grep -c '^=== .*build complete' "$RA_LOG")" -eq 1 ]] || fail "expected exactly one rebuild in build.log"
+grep -q 'build complete' "$RA_LOG.prev" || fail "the first build's log was not kept as build.log.prev"
 echo "update rebuild + server start took $(($(date +%s) - start))s"
 
 echo "PASS"
