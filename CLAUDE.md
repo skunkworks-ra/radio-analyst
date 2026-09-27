@@ -247,6 +247,7 @@ Environment variable reference:
 | `RADIO_MCP_HOST` | `127.0.0.1` | HTTP bind address. No authentication on the HTTP transport — keep it on localhost unless the network is trusted |
 | `RADIO_MCP_PORT` | `8000` | HTTP port (ms-inspect); ms-modify uses 8001, ms-create uses 8002 |
 | `RADIO_MCP_WORKERS` | `4` | Parallel worker count for FLAG column reads (cap 8) |
+| `RADIO_MCP_ENV_WAIT` | `20` | Plugin install only: seconds `scripts/plugin/launch.sh` waits on an in-progress environment build before exiting |
 | `RADIO_MCP_TEST_MS` | — | Path to pre-extracted MS for integration tests |
 | `RADIO_MCP_TEST_MS_TGZ` | — | Path to `.ms.tgz` tarball; auto-extracted by conftest.py |
 | `RADIO_MCP_TEST_CALTABLE` | — | Path to a G or B caltable; the caltable integration tests in `tests/integration/test_tools.py` skip without it |

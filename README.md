@@ -6,7 +6,7 @@ as CASA Measurement Sets.
 
 Three MCP servers expose the full tool suite:
 
-- **ms-inspect** — read-only inspection and diagnostics (33 tools, port 8000)
+- **ms-inspect** — read-only inspection and diagnostics (34 tools, port 8000)
 - **ms-modify** — calibration, flagging, and MS modification (16 tools, port 8001)
 - **ms-create** — ASDM ingestion and reduction logging (3 tools, port 8002)
 
@@ -19,7 +19,7 @@ Built on [casatools](https://casa.nrao.edu/) and the
 
 ### Claude Code plugin (recommended)
 
-Installs both MCP servers, skills, and slash commands in two commands:
+Installs all three MCP servers, the skills, and the slash commands in two commands:
 
 ```bash
 # Register the marketplace (once per machine)
@@ -29,12 +29,18 @@ claude plugin marketplace add https://github.com/skunkworks-ra/radio-analyst
 claude plugin install radio-analyst@radio-analyst
 ```
 
-After install, the `ms-inspect` and `ms-modify` MCP servers are registered
-globally, and the `/inspect` and `/simulate` commands are available in all
-projects.
+After install, the `ms-inspect`, `ms-modify`, and `ms-create` MCP servers,
+the three skills, and the six slash commands (as `/radio-analyst:<name>`) are
+available in every project.
 
-Requires [pixi](https://pixi.sh) on `PATH` (Linux x86_64 and macOS arm64
-only). On the first session after install, a `SessionStart` hook builds the
+**Prerequisites**
+
+- [pixi](https://pixi.sh) on `PATH`: `curl -fsSL https://pixi.sh/install.sh | bash`
+- Linux x86_64 or macOS arm64 (the platforms `pixi.toml` targets). On macOS,
+  casatools is not in `pixi.lock`; the environment build pip-installs it.
+- About 1 GB free disk for the environment.
+
+**First run.** On the first session after install, a `SessionStart` hook builds the
 Python/CASA environment in the background (~1 GB download including
 casatools; several minutes) under `~/.claude/plugins/data/`, where it persists
 across plugin updates. Progress goes to `build.log` in that directory. The MCP
@@ -74,15 +80,42 @@ pixi run uninstall-mcp
 # then follow the Claude Code plugin instructions above
 ```
 
-### Claude Desktop and other MCP clients (HTTP transport)
+### Claude Desktop (stdio) and other MCP clients (HTTP)
 
-Clone the repo, install the environment, then start the servers in HTTP mode:
+Clone the repo and install the environment:
 
 ```bash
 git clone https://github.com/skunkworks-ra/radio-analyst.git
 cd radio-analyst
 pixi install && pixi run pip install casatools casatasks
+```
 
+Claude Desktop launches each server itself and talks to it over stdio, so use
+the stdio tasks. Add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "ms-inspect": {
+      "command": "pixi",
+      "args": ["run", "--manifest-path", "/path/to/radio-analyst/pixi.toml", "serve"]
+    },
+    "ms-modify": {
+      "command": "pixi",
+      "args": ["run", "--manifest-path", "/path/to/radio-analyst/pixi.toml", "serve-modify"]
+    },
+    "ms-create": {
+      "command": "pixi",
+      "args": ["run", "--manifest-path", "/path/to/radio-analyst/pixi.toml", "serve-create"]
+    }
+  }
+}
+```
+
+For a client that connects to a running server instead, start them in HTTP
+mode:
+
+```bash
 # Inspection server (port 8000)
 RADIO_MCP_TRANSPORT=http RADIO_MCP_PORT=8000 pixi run serve
 
@@ -93,24 +126,9 @@ RADIO_MCP_TRANSPORT=http RADIO_MCP_PORT=8001 pixi run serve-modify
 RADIO_MCP_TRANSPORT=http RADIO_MCP_PORT=8002 pixi run serve-create
 ```
 
-Add to your Claude Desktop `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "ms-inspect": {
-      "command": "pixi",
-      "args": ["run", "--manifest-path", "/path/to/radio-analyst/pixi.toml", "serve-http"]
-    },
-    "ms-modify": {
-      "command": "pixi",
-      "args": ["run", "--manifest-path", "/path/to/radio-analyst/pixi.toml", "serve-modify-http"]
-    }
-  }
-}
-```
-
-For any MCP-compatible client — point at `http://localhost:8000/mcp` (streamable HTTP).
+Then point the client at `http://localhost:8000/mcp` (and `:8001`, `:8002`;
+streamable HTTP). The HTTP transport has no authentication, so keep it on
+localhost unless the network is trusted.
 
 ---
 
@@ -120,7 +138,7 @@ The full per-tool inventory with descriptions lives in
 [`design_docs/DESIGN.md`](design_docs/DESIGN.md) (§8 ms-inspect, §8b ms-modify, §8c ms-create). A
 summary by category:
 
-### ms-inspect — read-only inspection (33 tools)
+### ms-inspect — read-only inspection (34 tools)
 
 - **Layer 1 — Orientation** (6): observation info, field list, scan list, scan
   intent summary, spectral window list, correlator config.
@@ -136,6 +154,7 @@ summary by category:
   stats, phase-calibrator catalogue lookup.
 - **Imaging inspection** (1): robust image RMS / peak / dynamic-range / beam.
 - **Pipeline / workflow** (1): workflow state probe.
+- **Documentation** (1): CASA task → casadocs page and casa6 source URL lookup.
 
 ### ms-modify — calibration and flagging (16 tools)
 
@@ -161,6 +180,7 @@ automatically when the plugin is installed.
 |-------|---------|
 | `radio-interferometry` | Interferometrist reasoning for Phase 1 + Phase 2 analysis — band tables, intent vocabulary, elevation/PA/flag thresholds, diagnostic report structure, calibrator science, failure modes |
 | `ms-simulator` | Simulate synthetic Measurement Sets from natural-language descriptions using `casatools.simulator` |
+| `casa-docs` | Resolve a CASA task to its casadocs page and casa6 source (via `ms_casa_task_lookup`), then fetch and quote it rather than answer from memory |
 
 ## Slash commands
 
@@ -186,6 +206,7 @@ marketplace they are namespaced by the plugin, `/radio-analyst:<name>`.
 | `RADIO_MCP_HOST` | `127.0.0.1` | HTTP bind address. **The HTTP transport has no authentication — do not bind beyond localhost on shared or untrusted networks** |
 | `RADIO_MCP_PORT` | `8000` / `8001` / `8002` | HTTP port (inspect / modify / create) |
 | `RADIO_MCP_WORKERS` | `4` | Parallel workers for FLAG column reads (cap 8) |
+| `RADIO_MCP_ENV_WAIT` | `20` | Plugin install only: seconds a server launcher waits on an in-progress environment build before exiting with a pointer to `build.log` |
 | `RADIO_MCP_TEST_MS` | — | Path to MS for integration tests |
 | `RADIO_MCP_TEST_MS_TGZ` | — | Path to `.ms.tgz` tarball; auto-extracted by conftest.py |
 
