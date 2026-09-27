@@ -20,6 +20,7 @@ from contextlib import contextmanager
 
 from ms_inspect.tools import fields as fields_mod
 from ms_inspect.tools.fields import run as field_list_run
+from ms_inspect.util.telescope import profile_from_name
 
 
 class FakeMsmd:
@@ -81,13 +82,14 @@ class FakeMsmd:
         return [base, base + 300.0]
 
 
-def _patch(monkeypatch, specs, **msmd_kwargs):
+def _patch(monkeypatch, specs, telescope="EVLA", **msmd_kwargs):
     @contextmanager
     def fake_open(_ms_path):
         yield FakeMsmd(specs, **msmd_kwargs)
 
     monkeypatch.setattr(fields_mod, "open_msmd", fake_open)
     monkeypatch.setattr(fields_mod, "validate_ms_path", lambda p: p)
+    monkeypatch.setattr(fields_mod, "resolve_telescope", lambda p: profile_from_name(telescope))
 
 
 def _rec(result, name):

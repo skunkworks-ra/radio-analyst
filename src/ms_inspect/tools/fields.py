@@ -27,6 +27,11 @@ from ms_inspect.util.conversions import rad_to_deg, rad_to_dms, rad_to_hms
 from ms_inspect.util.formatting import field, response_envelope
 from ms_inspect.util.frequencies import field_frequencies
 from ms_inspect.util.phase_cal_catalog import cone_search as vla_cone_search
+from ms_inspect.util.telescope import TelescopeProfile, resolve_telescope
+
+# Telescope-profile band codes that the VLA calibrator list spells differently.
+# The list has no S or Ka entries, so those bands find no band entry.
+_CALLIST_BAND_CODE = {"Ku": "U"}
 
 TOOL_NAME = "ms_field_list"
 
@@ -49,6 +54,9 @@ def run(ms_path: str) -> dict:
     p = validate_ms_path(ms_path)
     casa_calls: list[str] = []
     warnings: list[str] = []
+    # Read only when a field falls back to the VLA calibrator list.
+    telescope_read = False
+    telescope: TelescopeProfile | None = None
 
     with open_msmd(str(p)) as msmd:
         casa_calls.append("msmd.open()")
@@ -172,7 +180,7 @@ def run(ms_path: str) -> dict:
         else:
             cal_match = field(None, flag="UNAVAILABLE", note="Not in bundled calibrator catalogue")
             catalogue_role = field(None, flag="UNAVAILABLE")
-            cal_resolved = field(None, flag="UNAVAILABLE")
+            cal_resolved = None  # filled from the VLA calibrator list below
 
         # --- Role resolution: this field's own intents decide ---
         #
@@ -260,6 +268,22 @@ def run(ms_path: str) -> dict:
                 flag="UNAVAILABLE",
                 note="No readable spectral window for this field",
             )
+
+        # --- Resolved status when the bundled catalogue has no entry ---
+        if cal_resolved is None:
+            if not telescope_read and vla_cal_match_field["value"] is not None:
+                telescope_read = True
+                casa_calls.append("tb.open(OBSERVATION).getcol('TELESCOPE_NAME')")
+                try:
+                    telescope = resolve_telescope(str(p))
+                except Exception:
+                    telescope = None
+            cal_resolved, resolved_warning = _resolved_from_callist(
+                vla_cal_match_field, fq, telescope
+            )
+            target_only = set(role_out["value"] or []) == {"target"}
+            if resolved_warning and not target_only:
+                warnings.append(f"[{name}] {resolved_warning}")
 
         # --- Flux standard: resolved from THIS field's frequency ---
         #
@@ -617,6 +641,99 @@ def _infer_roles_from_scan_pattern(
     return result
 
 
+def _resolved_from_callist(
+    vla_match: dict,
+    freq: dict | None,
+    telescope: TelescopeProfile | None,
+) -> tuple[dict, str | None]:
+    """
+    Resolved status from the VLA calibrator list, for a field the bundled
+    catalogue does not know. Returns (field, warning or None).
+
+    The list gives, per band, a quality code for each VLA configuration and
+    UV limits: ``uvmin_kl`` (structure at short spacings) and ``uvmax_kl``
+    (resolved at long spacings). The band is the one at the field's centre
+    frequency. A limit there means the source has structure, so value is True
+    and the warning carries the uvrange. No limit gives False. Both are
+    INFERRED: the list is a catalogue view, not a measurement of this
+    observation.
+
+    UNAVAILABLE results carry the reason in the note and give no warning.
+    The quality codes describe the VLA only, so another telescope gets
+    UNAVAILABLE. The configuration is not known here, so all four codes are
+    reported and an X grade in any of them is named in the warning.
+    """
+    match = vla_match.get("value")
+    if match is None:
+        return (
+            field(
+                None,
+                flag="UNAVAILABLE",
+                note="Not in the bundled catalogue or the VLA calibrator list.",
+            ),
+            None,
+        )
+    if telescope is None or telescope.canonical != "VLA":
+        return (
+            field(
+                None,
+                flag="UNAVAILABLE",
+                note="Only the VLA calibrator list matched, and it applies to the VLA only.",
+            ),
+            None,
+        )
+    if freq is None or freq.get("centre_ghz") is None:
+        return (
+            field(None, flag="UNAVAILABLE", note="No observing frequency to choose a band."),
+            None,
+        )
+
+    code = None
+    for ghz in (freq["centre_ghz"], freq["min_ghz"], freq["max_ghz"]):
+        code = telescope.band_code(ghz * 1e9)
+        if code:
+            break
+    code = _CALLIST_BAND_CODE.get(code, code)
+    b = match["bands"].get(code) if code else None
+    if b is None:
+        return (
+            field(
+                None,
+                flag="UNAVAILABLE",
+                note=f"The VLA calibrator list has no entry for {match['name']} at band {code or '?'}.",
+            ),
+            None,
+        )
+
+    uvmin, uvmax = b["uvmin_kl"], b["uvmax_kl"]
+    if uvmin is not None and uvmax is not None:
+        uvrange = f"{uvmin:g}~{uvmax:g}klambda"
+    elif uvmin is not None:
+        uvrange = f">{uvmin:g}klambda"
+    elif uvmax is not None:
+        uvrange = f"<{uvmax:g}klambda"
+    else:
+        uvrange = None
+    quals = "/".join(b[f"qual_{c}"] for c in "ABCD")
+    bad = "".join(c for c in "ABCD" if b[f"qual_{c}"] == "X")
+
+    note = (
+        f"From the VLA calibrator list ({match['name']}) at band {code}: "
+        f"quality A/B/C/D {quals}, " + (f"uvrange='{uvrange}'" if uvrange else "no UV limits") + "."
+    )
+    problems = []
+    if uvrange:
+        problems.append(f"pass uvrange='{uvrange}' to solves on this field")
+    if bad:
+        problems.append(f"quality X in config {bad}: do not use it as a calibrator there")
+    warning = None
+    if problems:
+        warning = (
+            f"VLA calibrator list ({match['name']}) at band {code}: " + "; ".join(problems) + "."
+        )
+    return field(uvrange is not None, flag="INFERRED", note=note), warning
+
+
 def _vla_positional_match(
     ra_deg: float | None,
     dec_deg: float | None,
@@ -673,6 +790,8 @@ def _vla_positional_match(
                 "qual_C": v.quality_C,
                 "qual_D": v.quality_D,
                 "flux_jy": v.flux_jy,
+                "uvmin_kl": v.uvmin_kl,
+                "uvmax_kl": v.uvmax_kl,
             }
             for k, v in entry.bands.items()
         },

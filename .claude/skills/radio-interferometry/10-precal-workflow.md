@@ -164,7 +164,7 @@ it is an override that skips the frequency check.
 | Warning | Action |
 |---------|--------|
 | `CALIBRATOR_RESOLVED_WARNING` | Use the component model listed in the warning, not a point source model |
-| 3C84 present | Set `uvrange='>5klambda'` in initial bandpass to exclude extended emission |
+| Bandpass calibrator has a UV limit | See "UV limits on the bandpass calibrator" at the end of Step 5 |
 | 3C138 present at K/Ka/Q | Source was in flare in early 2025 — note in summary; flux scale may be affected |
 | 3C48 present below 4 GHz | PA is unstable at these frequencies — viable for Stokes I only |
 
@@ -229,9 +229,19 @@ Record the top 3 cross-field candidates. If a solve fails or a gain solve flags
 heavily, first check whether the refant is weak on that solve's field, then try
 the next cross-field candidate before changing other parameters.
 
-For 3C84 observations: pass `uvrange='>5klambda'` to `ms_initial_bandpass`
-regardless of refant choice. The extended emission contaminates solutions on
-short baselines independent of the reference antenna.
+**UV limits on the bandpass calibrator.** Read the bandpass field's
+`resolved_source` and warnings in `ms_field_list`. For a field outside the
+bundled catalogue, the tool takes them from the VLA calibrator list at the
+band of the field's centre frequency. The limits are band-specific: 3C84 has
+`uvmin 12 klambda` at L-band and no limit at C-band.
+
+| `ms_field_list` for the bandpass field | Action |
+|---|---|
+| warning says `pass uvrange='...'` | Pass that `uvrange` to `ms_initial_bandpass` and the later bandpass and gain solves on this field, whatever refant you chose |
+| warning says `quality X in config ...` | If the observation is in that config, do not use this field as a calibrator. Pick another or stop and report |
+| `true`, COMPLETE | Bundled-catalogue source. Follow `CALIBRATOR_RESOLVED_WARNING` |
+| `false`, no warning | No `uvrange` |
+| UNAVAILABLE | Unknown structure; the note says why. Say so in the summary. If the source is known to be extended (3C84 is), pass a conservative `uvrange='>5klambda'` and record why |
 
 ---
 

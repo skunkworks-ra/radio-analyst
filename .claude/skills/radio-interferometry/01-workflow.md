@@ -65,8 +65,14 @@ tool's results make sense.
   - 1 science target
 - Mosaics: multiple fields with the same source_id → mosaic observation.
   Flag this — imaging strategy will differ from single-pointing.
-- `resolved_source.value == true` for any calibrator → resolved source warning
-  needed before proceeding. See `05-calibrator-science.md`.
+- `resolved_source.value == true` for any calibrator → check its flag.
+  COMPLETE is a bundled-catalogue source: follow `CALIBRATOR_RESOLVED_WARNING`
+  and `05-calibrator-science.md`. INFERRED comes from the VLA calibrator list:
+  the warning gives the `uvrange` for solves on that field. Name the field and
+  its `uvrange` in the report.
+- A warning that names `quality X in config ...` → the VLA calibrator list
+  grades the field unusable in that config. Report it if the observation is
+  in that config.
 - `resolved_source.flag == "UNAVAILABLE"` for any calibrator → nobody checked
   whether it is resolved. This is not a finding of "unresolved". Name the field
   and its catalogue match in the report as "resolved status unverified", so
