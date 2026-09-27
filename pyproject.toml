@@ -16,7 +16,7 @@ requires-python = ">=3.12"
 # casatools / casatasks are PyPI-only (NRAO wheels) — declared in pixi.toml
 # under [pypi-dependencies]. Do not add them here to avoid double-resolution.
 dependencies = [
-    "mcp[cli]>=1.0",
+    "mcp[cli]>=1.0,<2",  # 2.x renamed FastMCP (mcp.server.fastmcp is gone)
     "numpy>=1.26",
     "astropy>=6.0",
     "requests>=2.28",
