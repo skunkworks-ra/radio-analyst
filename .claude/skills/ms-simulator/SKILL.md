@@ -3,9 +3,18 @@ description: >
   Simulate arbitrary CASA Measurement Sets from conversational input.
   Auto-invoked when user asks to simulate, generate, or create synthetic
   visibility data for VLA/MeerKAT/uGMRT or custom arrays.
-allowed-tools: Bash, Read, Write, Edit, ms_observation_info, ms_field_list,
-               ms_scan_list, ms_scan_intent_summary, ms_spectral_window_list,
-               ms_correlator_config, ms_antenna_list, ms_baseline_lengths
+allowed-tools: Bash,
+               Read,
+               Write,
+               Edit,
+               mcp__plugin_radio-analyst_ms-inspect__ms_observation_info,
+               mcp__plugin_radio-analyst_ms-inspect__ms_field_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_scan_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_scan_intent_summary,
+               mcp__plugin_radio-analyst_ms-inspect__ms_spectral_window_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_correlator_config,
+               mcp__plugin_radio-analyst_ms-inspect__ms_antenna_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_baseline_lengths
 ---
 
 # MS Simulator Skill

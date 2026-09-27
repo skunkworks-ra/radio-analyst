@@ -108,6 +108,12 @@ radio-analyst/
 │   ├── serve.sh                   ← MCP plugin entry point (ms-inspect)
 │   ├── serve-modify.sh            ← MCP plugin entry point (ms-modify)
 │   └── serve-create.sh            ← MCP plugin entry point (ms-create)
+├── hooks/
+│   └── hooks.json                 ← plugin SessionStart hook → scripts/plugin/ensure-env.sh
+├── scripts/plugin/
+│   ├── env-lib.sh                 ← shared helpers: source hash, build lock, env paths
+│   ├── ensure-env.sh              ← builds the pixi env under ${CLAUDE_PLUGIN_DATA} (detached)
+│   └── launch.sh                  ← what bin/serve*.sh exec: run the server from that env
 ├── src/
 │   ├── ms_create/
 │   │   ├── __init__.py            ← version string

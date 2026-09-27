@@ -1,0 +1,17 @@
+{
+  "description": "Build the radio-analyst Python/CASA environment under ${CLAUDE_PLUGIN_DATA} in the background, so the MCP servers never install inside their startup timeout.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/plugin/ensure-env.sh", "--hook"],
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

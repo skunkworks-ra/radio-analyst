@@ -3,7 +3,8 @@ description: >
   Look up CASA task documentation and source code. Auto-invoked when a user
   asks a CASA task/parameter question directly, or when the radio-interferometry
   skill hits a question its own reference files do not answer.
-allowed-tools: ms_casa_task_lookup, WebFetch
+allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_casa_task_lookup,
+               WebFetch
 ---
 
 # CASA Documentation Lookup

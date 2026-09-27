@@ -1,10 +1,25 @@
 ---
 description: Full calibration solve for a pre-cal-complete CASA MS (initial phase → delay → bandpass → gain → fluxscale → applycal). Follows skill 07-calibration-execution.md.
-allowed-tools: ms_workflow_status, ms_field_list, ms_spectral_window_list,
-               ms_correlator_config, ms_antenna_list, ms_verify_priorcals,
-               ms_refant, ms_gaincal, ms_bandpass, ms_fluxscale, ms_applycal,
-               ms_calsol_stats, ms_calsol_stats_detail, ms_calsol_plot, ms_flag_summary,
-               ms_gaincal_snr_predict, ms_reduction_log, Bash, Read, Write
+allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
+               mcp__plugin_radio-analyst_ms-inspect__ms_field_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_spectral_window_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_correlator_config,
+               mcp__plugin_radio-analyst_ms-inspect__ms_antenna_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_verify_priorcals,
+               mcp__plugin_radio-analyst_ms-inspect__ms_refant,
+               mcp__plugin_radio-analyst_ms-modify__ms_gaincal,
+               mcp__plugin_radio-analyst_ms-modify__ms_bandpass,
+               mcp__plugin_radio-analyst_ms-modify__ms_fluxscale,
+               mcp__plugin_radio-analyst_ms-modify__ms_applycal,
+               mcp__plugin_radio-analyst_ms-inspect__ms_calsol_stats,
+               mcp__plugin_radio-analyst_ms-inspect__ms_calsol_stats_detail,
+               mcp__plugin_radio-analyst_ms-inspect__ms_calsol_plot,
+               mcp__plugin_radio-analyst_ms-inspect__ms_flag_summary,
+               mcp__plugin_radio-analyst_ms-inspect__ms_gaincal_snr_predict,
+               mcp__plugin_radio-analyst_ms-create__ms_reduction_log,
+               Bash,
+               Read,
+               Write
 ---
 
 Run the full calibration solve sequence on this MS: $ARGUMENTS

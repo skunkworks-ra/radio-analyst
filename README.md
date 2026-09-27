@@ -31,8 +31,16 @@ claude plugin install radio-analyst@radio-analyst
 
 After install, the `ms-inspect` and `ms-modify` MCP servers are registered
 globally, and the `/inspect` and `/simulate` commands are available in all
-projects. CASA tools are installed automatically on first use (~500 MB,
-Linux x86_64 and macOS arm64 only).
+projects.
+
+Requires [pixi](https://pixi.sh) on `PATH` (Linux x86_64 and macOS arm64
+only). On the first session after install, a `SessionStart` hook builds the
+Python/CASA environment in the background (~1 GB download including
+casatools; several minutes) under `~/.claude/plugins/data/`, where it persists
+across plugin updates. Progress goes to `build.log` in that directory. The MCP
+servers report that the build is in progress until it finishes; then reconnect
+them with `/mcp`. Later updates only re-sync the sources and reuse the
+installed packages unless `pixi.lock` changed.
 
 To remove:
 

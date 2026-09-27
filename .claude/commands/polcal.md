@@ -1,9 +1,18 @@
 ---
 description: Polarization calibration sequence on a calibrated MS (Kcross → D-terms → Xf → applycal-with-parang). Follows skill 09-polcal-execution.md.
-allowed-tools: ms_workflow_status, ms_pol_cal_conditions, ms_field_list,
-               ms_parallactic_angle_vs_time, ms_setjy_polcal, ms_gaincal,
-               ms_polcal, ms_applycal, ms_calsol_stats, ms_calsol_plot,
-               Bash, Read, Write
+allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
+               mcp__plugin_radio-analyst_ms-inspect__ms_pol_cal_conditions,
+               mcp__plugin_radio-analyst_ms-inspect__ms_field_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_parallactic_angle_vs_time,
+               mcp__plugin_radio-analyst_ms-modify__ms_setjy_polcal,
+               mcp__plugin_radio-analyst_ms-modify__ms_gaincal,
+               mcp__plugin_radio-analyst_ms-modify__ms_polcal,
+               mcp__plugin_radio-analyst_ms-modify__ms_applycal,
+               mcp__plugin_radio-analyst_ms-inspect__ms_calsol_stats,
+               mcp__plugin_radio-analyst_ms-inspect__ms_calsol_plot,
+               Bash,
+               Read,
+               Write
 ---
 
 Run polarization calibration on this MS: $ARGUMENTS
