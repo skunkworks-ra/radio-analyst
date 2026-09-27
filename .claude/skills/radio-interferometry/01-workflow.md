@@ -67,6 +67,10 @@ tool's results make sense.
   Flag this — imaging strategy will differ from single-pointing.
 - `resolved_source.value == true` for any calibrator → resolved source warning
   needed before proceeding. See `05-calibrator-science.md`.
+- `resolved_source.flag == "UNAVAILABLE"` for any calibrator → nobody checked
+  whether it is resolved. This is not a finding of "unresolved". Name the field
+  and its catalogue match in the report as "resolved status unverified", so
+  the calibration stages decide on a UV range for it.
 - `ra_j2000_deg.flag == "SUSPECT"` → broken UVFITS export. Elevation and
   PA cannot be computed for this field. Note which fields are affected.
 
