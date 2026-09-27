@@ -12,7 +12,7 @@
 #   app/.pixi/    the environment itself (unless pixi detached-environments)
 #   env.stamp     source hash the current environment was built from
 #   env.prefix    absolute path of the built environment prefix
-#   build.lock/   held while a build runs (portable mkdir lock; holds a pid)
+#   build.lock/   held while a build runs (portable mkdir lock; holds the owner pid + start time)
 #   build.log     output of the current or most recent build
 #   build.log.prev  output of the build before that
 
@@ -89,21 +89,41 @@ ra_ready() {
     [[ "$(cat "$RA_STAMP")" == "$(ra_source_hash)" ]]
 }
 
-# True while another process holds the build lock. A lock whose pid is gone
-# (killed build, reboot) is stale and is removed.
+# Identity of a live process: its pid plus its start time, so that a pid reused
+# after a reboot does not match. Prints nothing for a dead pid.
+ra_proc_token() {
+    kill -0 "$1" 2>/dev/null || return 0
+    printf '%s %s' "$1" "$(ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ')"
+}
+
+ra_lock_owner() {
+    cat "$RA_LOCK/owner" 2>/dev/null || true
+}
+
+# True while another process holds the build lock. A lock whose owner is gone
+# (killed build, reboot) is stale and is removed. Of several callers that see
+# the same stale lock, only the one whose rename succeeds returns false, so
+# only that caller starts a build.
 ra_build_running() {
-    local pid
+    local owner tmp
     [[ -d "$RA_LOCK" ]] || return 1
-    pid="$(cat "$RA_LOCK/pid" 2>/dev/null || true)"
-    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    owner="$(ra_lock_owner)"
+    if [[ -n "$owner" ]]; then
+        [[ "$(ra_proc_token "${owner%% *}")" == "$owner" ]] && return 0
+    # No owner yet: the holder is between mkdir and writing it. Only an
+    # owner-less lock older than two minutes is treated as stale.
+    elif [[ -z "$(find "$RA_LOCK" -maxdepth 0 -mmin +2 2>/dev/null)" ]]; then
         return 0
     fi
-    # No pid yet: the holder is between mkdir and writing it. Only a pid-less
-    # lock older than two minutes is treated as stale.
-    if [[ -z "$pid" ]] && [[ -z "$(find "$RA_LOCK" -maxdepth 0 -mmin +2 2>/dev/null)" ]]; then
+    # Break the lock by an atomic rename, then confirm that the renamed lock
+    # is the one judged stale. If a new holder took it in between, put it back.
+    tmp="$RA_LOCK.stale.$$"
+    mv "$RA_LOCK" "$tmp" 2>/dev/null || return 0
+    if [[ "$(cat "$tmp/owner" 2>/dev/null || true)" != "$owner" ]]; then
+        [[ -e "$RA_LOCK" ]] || mv "$tmp" "$RA_LOCK"
         return 0
     fi
-    rm -rf "$RA_LOCK"
+    rm -rf "$tmp"
     return 1
 }
 

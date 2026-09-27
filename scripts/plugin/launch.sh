@@ -73,6 +73,8 @@ while ((waited < ${RADIO_MCP_ENV_WAIT:-20})); do
     # just-spawned build a few seconds to take the lock first.)
     ra_build_running || ((waited < 3)) || break
 done
+# The build can finish between the two checks in the loop.
+ra_ready && exec_server
 
 if ra_build_running; then
     echo "[$SERVER] The radio-analyst environment is still being built in the background (first run or plugin update)." >&2

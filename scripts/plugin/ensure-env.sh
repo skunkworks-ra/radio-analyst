@@ -76,8 +76,11 @@ run_build() {
         fi
         mkdir "$RA_LOCK" 2>/dev/null || exit 0
     fi
-    echo $$ >"$RA_LOCK/pid"
-    trap 'rm -rf "$RA_LOCK"' EXIT
+    RA_OWNER="$(ra_proc_token $$)"
+    printf '%s\n' "$RA_OWNER" >"$RA_LOCK/owner.tmp"
+    mv "$RA_LOCK/owner.tmp" "$RA_LOCK/owner"
+    # Release only a lock this build still owns.
+    trap '[[ "$(ra_lock_owner)" == "$RA_OWNER" ]] && rm -rf "$RA_LOCK"' EXIT
 
     # One build per log: keep the previous build's log as build.log.prev and
     # start this one empty. Truncate rather than rename, because a spawned
@@ -97,6 +100,10 @@ run_build() {
     local hash prefix
     hash="$(ra_source_hash)"
 
+    # The environment is about to change in place. Until the new stamp is
+    # written at the end, no reader may treat it as ready.
+    rm -f "$RA_STAMP"
+
     # Sync the sources. app/.pixi is left in place so unchanged packages are
     # reused; src/ is replaced wholesale so deleted modules do not linger.
     mkdir -p "$RA_APP"
@@ -113,19 +120,23 @@ run_build() {
         python -c 'import sys; print(sys.prefix)')"
 
     # casatools is locked for linux-64 only; elsewhere install it with pip.
-    # The servers import it lazily and report CASA_NOT_AVAILABLE themselves,
-    # so a failure here is logged but does not block them from starting.
+    # An environment without casatools is a failed build: no stamp is
+    # written, so the next session retries.
     mkdir -p "$HOME/.casa/data"
     if ! "$prefix/bin/python" -c 'import casatools' 2>/dev/null; then
         echo "casatools not importable; trying pip install casatools casatasks"
         "$prefix/bin/python" -m pip install casatools casatasks --quiet ||
             echo "WARNING: pip install of casatools/casatasks failed"
         "$prefix/bin/python" -c 'import casatools' ||
-            echo "WARNING: casatools still not importable; CASA-backed tools will return CASA_NOT_AVAILABLE"
+            { echo "ERROR: casatools still not importable; build failed" >&2; exit 1; }
     fi
 
-    printf '%s\n' "$prefix" >"$RA_PREFIX_FILE"
-    printf '%s\n' "$hash" >"$RA_STAMP"
+    # Write each file whole, and the stamp last: the stamp marks the
+    # environment ready.
+    printf '%s\n' "$prefix" >"$RA_PREFIX_FILE.tmp"
+    mv "$RA_PREFIX_FILE.tmp" "$RA_PREFIX_FILE"
+    printf '%s\n' "$hash" >"$RA_STAMP.tmp"
+    mv "$RA_STAMP.tmp" "$RA_STAMP"
     echo "=== [$(date)] build complete: $prefix"
 }
 
