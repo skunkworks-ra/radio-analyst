@@ -21,6 +21,25 @@ jobs:
       - name: Lint and format check
         run: pixi run check
 
+  plugin-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Claude Code CLI
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # Exit non-zero on errors (bad paths, type mismatches), zero on warnings.
+      # Not --strict: the root CLAUDE.md is contributor context, and the
+      # validator warns that plugins do not load it.
+      - name: Validate plugin manifest
+        run: claude plugin validate .claude-plugin/plugin.json
+
+      - name: Validate marketplace manifest
+        run: claude plugin validate .
+
   test-unit:
     runs-on: ${{ matrix.os }}
     strategy:
