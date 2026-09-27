@@ -69,18 +69,10 @@ run_build() {
         { echo "unsupported platform $(ra_platform); supported: ${RA_SUPPORTED_PLATFORMS[*]}" >&2; exit 1; }
     mkdir -p "$RA_DATA"
 
-    if ! mkdir "$RA_LOCK" 2>/dev/null; then
-        if ra_build_running; then
-            echo "[$(date)] another build is already running; exiting"
-            exit 0
-        fi
-        mkdir "$RA_LOCK" 2>/dev/null || exit 0
-    fi
-    RA_OWNER="$(ra_proc_token $$)"
-    printf '%s\n' "$RA_OWNER" >"$RA_LOCK/owner.tmp"
-    mv "$RA_LOCK/owner.tmp" "$RA_LOCK/owner"
-    # Release only a lock this build still owns.
-    trap '[[ "$(ra_lock_owner)" == "$RA_OWNER" ]] && rm -rf "$RA_LOCK"' EXIT
+    # Held on descriptor 9 until this process exits. A second build waits here,
+    # then finds the environment ready below and exits.
+    exec 9>>"$RA_LOCK"
+    ra_lock 9
 
     # One build per log: keep the previous build's log as build.log.prev and
     # start this one empty. Truncate rather than rename, because a spawned
