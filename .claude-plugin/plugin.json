@@ -1,7 +1,6 @@
 {
   "name": "radio-analyst",
-  "version": "0.1.0",
-  "description": "Radio interferometric Measurement Set inspector — MCP tools + skills for VLA/MeerKAT/uGMRT",
+  "description": "CASA data reduction for radio interferometers (VLA, MeerKAT, uGMRT): 53 MCP tools, interferometrist skills, and inspect/precal/calibrate/polcal/image workflows",
   "author": {
     "name": "Srikrishna Sekhar and Preshanth Jagannathan",
     "url": "https://github.com/skunkworks-ra"
@@ -9,8 +8,39 @@
   "homepage": "https://github.com/skunkworks-ra/radio-analyst",
   "repository": "https://github.com/skunkworks-ra/radio-analyst",
   "license": "GPL-3.0",
-  "keywords": ["radio-astronomy", "interferometry", "CASA", "VLA", "MeerKAT", "uGMRT"],
-  "mcpServers": "./.mcp.json",
+  "keywords": [
+    "radio-astronomy",
+    "interferometry",
+    "CASA",
+    "VLA",
+    "MeerKAT",
+    "uGMRT"
+  ],
+  "mcpServers": {
+    "ms-inspect": {
+      "command": "bash",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/plugin/serve.sh"
+      ],
+      "description": "Radio interferometric MS inspector (stdio transport)"
+    },
+    "ms-modify": {
+      "command": "bash",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/plugin/serve-modify.sh"
+      ],
+      "description": "Radio interferometric MS modification utilities (stdio transport)"
+    },
+    "ms-create": {
+      "command": "bash",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/plugin/serve-create.sh"
+      ],
+      "description": "Radio interferometric MS ingestion utilities — ASDM import (stdio transport)"
+    }
+  },
   "skills": "./.claude/skills/",
-  "commands": ["./.claude/commands/"]
+  "commands": [
+    "./.claude/commands/"
+  ]
 }

@@ -142,13 +142,12 @@ sm.observe("phasecal", "spw0", starttime="-2.0h", stoptime="-1.97h")  # phase ca
 
 ## Execution
 
-Run the generated script via Bash using the project's Python environment:
+Run the generated script via Bash with a Python that has casatools:
 
-```bash
-/Users/ssekhar/soft/micromamba/envs/py312/bin/python /tmp/simulate_ms.py 2>&1
-```
-
-If `pixi` is configured, use `pixi run python /tmp/simulate_ms.py` instead.
+- Installed as a plugin: the interpreter named in this session's context by the
+  radio-analyst plugin (`.../bin/python` under `~/.claude/plugins/data/`):
+  `<that python> /tmp/simulate_ms.py 2>&1`
+- Working in a clone: `pixi run python /tmp/simulate_ms.py 2>&1`
 
 ## Validation
 

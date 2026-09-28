@@ -26,7 +26,7 @@ ruff       = ">=0.4"
 # ---------------------------------------------------------------------------
 [pypi-dependencies]
 ms-inspect       = { path = ".", editable = true }   # this package
-mcp              = { version = ">=1.0", extras = ["cli"] }
+mcp              = { version = ">=1.0,<2", extras = ["cli"] }   # 2.x removed mcp.server.fastmcp
 # casatools / casatasks: pinned for linux-64 below via [target.linux-64].
 # On osx-arm64, install manually (uv resolver doesn't handle macosx_15_0 tag).
 pytest-asyncio   = ">=0.23"
@@ -68,7 +68,7 @@ test-unit   = { cmd = "pytest tests/unit/ -v" }
 # Usage: RADIO_MCP_TEST_MS=/path/to/your.ms pixi run test-int
 test-int    = { cmd = "pytest tests/integration/ -v" }
 
-# Probe all 52 registered MCP tools (raw MCP stdio, no LLM, no tokens).
+# Probe all 53 registered MCP tools (raw MCP stdio, no LLM, no tokens).
 # Requires smoke.ms — generate with: pixi run python scripts/ci/generate_smoke_ms.py smoke.ms
 test-tool-probe     = { cmd = "python scripts/ci/run_all_tool_probes.py" }
 # Same, plus the optional LLM-driven layer (costs tokens, needs claude on PATH).
@@ -83,5 +83,5 @@ fmt-check   = { cmd = "ruff format --check src/ tests/" }
 check       = { cmd = "ruff check src/ tests/ && ruff format --check src/ tests/" }
 
 # Local MCP install / uninstall (user scope, bypasses plugin system)
-install-mcp   = { cmd = "bash bin/install-local.sh" }
-uninstall-mcp = { cmd = "bash bin/uninstall-local.sh" }
+install-mcp   = { cmd = "bash scripts/dev/install-local.sh" }
+uninstall-mcp = { cmd = "bash scripts/dev/uninstall-local.sh" }

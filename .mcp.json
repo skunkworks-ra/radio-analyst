@@ -2,17 +2,17 @@
   "mcpServers": {
     "ms-inspect": {
       "command": "bash",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/serve.sh"],
+      "args": ["scripts/plugin/serve.sh"],
       "description": "Radio interferometric MS inspector (stdio transport)"
     },
     "ms-modify": {
       "command": "bash",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/serve-modify.sh"],
+      "args": ["scripts/plugin/serve-modify.sh"],
       "description": "Radio interferometric MS modification utilities (stdio transport)"
     },
     "ms-create": {
       "command": "bash",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/serve-create.sh"],
+      "args": ["scripts/plugin/serve-create.sh"],
       "description": "Radio interferometric MS ingestion utilities — ASDM import (stdio transport)"
     }
   }

@@ -2,16 +2,25 @@
 description: Run a full Phase 1 (orientation) and Phase 2 (instrument sanity) analysis
              on a CASA Measurement Set using the ms_inspect MCP tools. Produces a
              structured data quality report with a go/no-go calibration recommendation.
-allowed-tools: ms_observation_info, ms_field_list, ms_scan_list, ms_scan_intent_summary,
-               ms_spectral_window_list, ms_correlator_config, ms_antenna_list,
-               ms_baseline_lengths, ms_elevation_vs_time, ms_parallactic_angle_vs_time,
-               ms_shadowing_report, ms_antenna_flag_fraction
+allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_observation_info,
+               mcp__plugin_radio-analyst_ms-inspect__ms_field_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_scan_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_scan_intent_summary,
+               mcp__plugin_radio-analyst_ms-inspect__ms_spectral_window_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_correlator_config,
+               mcp__plugin_radio-analyst_ms-inspect__ms_antenna_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_baseline_lengths,
+               mcp__plugin_radio-analyst_ms-inspect__ms_elevation_vs_time,
+               mcp__plugin_radio-analyst_ms-inspect__ms_parallactic_angle_vs_time,
+               mcp__plugin_radio-analyst_ms-inspect__ms_shadowing_report,
+               mcp__plugin_radio-analyst_ms-inspect__ms_antenna_flag_fraction
 ---
 
 Run a complete Phase 1 + Phase 2 interferometric data quality analysis on this
 Measurement Set: $ARGUMENTS
 
-Follow the workflow in the radio-interferometry skill exactly:
+Load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
+installed as a plugin) and follow its workflow exactly:
 
 **Phase 1 — run in this order:**
 1. ms_observation_info

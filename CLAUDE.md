@@ -11,7 +11,7 @@ This repository ships **three Model Context Protocol (MCP) servers** for an
 AI-assisted radio interferometric reduction pipeline targeting VLA/JVLA/EVLA,
 MeerKAT, and uGMRT:
 
-- **ms-inspect** — read-only inspection and diagnostics (33 tools, port 8000)
+- **ms-inspect** — read-only inspection and diagnostics (34 tools, port 8000)
 - **ms-modify** — calibration, flagging, and MS modification (16 tools, port 8001)
 - **ms-create** — ASDM ingestion and reduction logging (3 tools, port 8002)
 
@@ -93,9 +93,9 @@ radio-analyst/
 │   └── FLUX_STANDARD_DESIGN.md    ← per-field flux standard resolution
 ├── pixi.toml                      ← environment (conda-forge + casatools via PyPI)
 ├── pyproject.toml                 ← build metadata and tooling config
-├── .mcp.json                      ← MCP server definitions (all three servers)
+├── .mcp.json                      ← MCP servers for a clone (project scope, repo-relative paths)
 ├── .claude-plugin/
-│   ├── plugin.json                ← plugin manifest
+│   ├── plugin.json                ← plugin manifest; declares the plugin's MCP servers (${CLAUDE_PLUGIN_ROOT})
 │   └── marketplace.json           ← marketplace catalogue entry
 ├── .claude/
 │   ├── skills/
@@ -104,10 +104,18 @@ radio-analyst/
 │   │   └── ms-simulator/          ← SKILL.md + 01..05 knowledge files
 │   └── commands/                  ← inspect, precal, calibrate, polcal, image, simulate
 ├── docs/                          ← session context, tool survey, fix plan, handoff
-├── bin/
-│   ├── serve.sh                   ← MCP plugin entry point (ms-inspect)
-│   ├── serve-modify.sh            ← MCP plugin entry point (ms-modify)
-│   └── serve-create.sh            ← MCP plugin entry point (ms-create)
+├── hooks/
+│   └── hooks.json                 ← plugin SessionStart hook → scripts/plugin/ensure-env.sh
+├── scripts/
+│   ├── plugin/
+│   │   ├── serve.sh               ← MCP plugin entry point (ms-inspect)
+│   │   ├── serve-modify.sh        ← MCP plugin entry point (ms-modify)
+│   │   ├── serve-create.sh        ← MCP plugin entry point (ms-create)
+│   │   ├── launch.sh              ← what serve*.sh exec: run the server from the built env
+│   │   ├── ensure-env.sh          ← builds the pixi env under ${CLAUDE_PLUGIN_DATA} (detached)
+│   │   └── env-lib.sh             ← shared helpers: source hash, build lock, env paths
+│   ├── dev/                       ← install-local.sh / uninstall-local.sh (pixi run install-mcp)
+│   └── ci/                        ← smoke MS generator, MCP smoke + per-tool probes
 ├── src/
 │   ├── ms_create/
 │   │   ├── __init__.py            ← version string
@@ -239,6 +247,7 @@ Environment variable reference:
 | `RADIO_MCP_HOST` | `127.0.0.1` | HTTP bind address. No authentication on the HTTP transport — keep it on localhost unless the network is trusted |
 | `RADIO_MCP_PORT` | `8000` | HTTP port (ms-inspect); ms-modify uses 8001, ms-create uses 8002 |
 | `RADIO_MCP_WORKERS` | `4` | Parallel worker count for FLAG column reads (cap 8) |
+| `RADIO_MCP_ENV_WAIT` | `20` | Plugin install only: seconds `scripts/plugin/launch.sh` waits on an in-progress environment build before exiting |
 | `RADIO_MCP_TEST_MS` | — | Path to pre-extracted MS for integration tests |
 | `RADIO_MCP_TEST_MS_TGZ` | — | Path to `.ms.tgz` tarball; auto-extracted by conftest.py |
 | `RADIO_MCP_TEST_CALTABLE` | — | Path to a G or B caltable; the caltable integration tests in `tests/integration/test_tools.py` skip without it |

@@ -21,6 +21,25 @@ jobs:
       - name: Lint and format check
         run: pixi run check
 
+  plugin-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Claude Code CLI
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # Exit non-zero on errors (bad paths, type mismatches), zero on warnings.
+      # Not --strict: the root CLAUDE.md is contributor context, and the
+      # validator warns that plugins do not load it.
+      - name: Validate plugin manifest
+        run: claude plugin validate .claude-plugin/plugin.json
+
+      - name: Validate marketplace manifest
+        run: claude plugin validate .
+
   test-unit:
     runs-on: ${{ matrix.os }}
     strategy:
@@ -36,13 +55,26 @@ jobs:
           frozen: true
           cache: true
 
-      - name: Install casatools and casatasks
-        # Pinned: casatools/casatasks >=6.7.2 bundle a libldap.so.2 that requires
-        # EVP_md2 from OpenSSL <3.0. Ubuntu runners (and modern Fedora) ship
-        # OpenSSL 3.x without it, so importing casatools fails with
-        # "undefined symbol: EVP_md2, version OPENSSL_3.0.0". 6.7.0.31 does not
-        # hit this. Re-test before bumping.
-        run: pixi run pip install casatools==6.7.0.31 casatasks==6.7.0.31
+      # Test the casatools that users get. On linux-64 that is the version in
+      # pixi.lock (6.7.6.14), resolved by pixi alongside its own openssl; the
+      # old step pip-installed 6.7.0.31 over it, so CI tested a version no user
+      # ran. (6.7.0.31 was chosen because >=6.7.2 bundles a libldap.so.2 that
+      # needs EVP_md2, which failed to import on Ubuntu when casatools was
+      # pip-installed after activation; commit 1146093 fixed the plugin smoke
+      # test by resolving it through the lock instead.) osx-arm64 has no
+      # casatools in the lock, so install it with pip, as the plugin's
+      # environment build does on macOS.
+      - name: Install casatools and casatasks (macOS, as the plugin does)
+        if: runner.os == 'macOS'
+        run: pixi run pip install casatools casatasks
+
+      - name: Import casatools
+        # A failure here is a user-facing break, not a test problem: the
+        # plugin ships this exact environment. mkdir in the same block as
+        # pixi run, as below.
+        run: |
+          mkdir -p ~/.casa/data
+          pixi run python -c "import casatools, casatasks; print('casatools', casatools.version_string())"
 
       - name: Run unit tests
         # mkdir must be in the same run block as pixi run: separate steps put

@@ -3,19 +3,50 @@ description: >
   Radio interferometric data analysis for CASA Measurement Sets.
   Auto-invoked when working with .ms files, ms_inspect MCP tools,
   VLA/MeerKAT/uGMRT data, or any interferometry calibration/imaging task.
-allowed-tools: ms_observation_info, ms_field_list, ms_scan_list, ms_scan_intent_summary,
-               ms_spectral_window_list, ms_correlator_config, ms_antenna_list,
-               ms_baseline_lengths, ms_elevation_vs_time, ms_parallactic_angle_vs_time,
-               ms_shadowing_report, ms_antenna_flag_fraction,
-               ms_refant, ms_verify_caltables, ms_rfi_channel_stats, ms_flag_summary,
-               ms_pol_cal_conditions, ms_online_flag_stats, ms_verify_priorcals,
-               ms_residual_stats, ms_calsol_stats, ms_calsol_stats_detail, ms_calsol_plot,
-               ms_sdm_summary, ms_reduction_log,
-               ms_set_intents, ms_initial_bandpass, ms_apply_rflag, ms_apply_preflag,
-               ms_generate_priorcals, ms_setjy, ms_setjy_polcal, ms_apply_initial_rflag,
-               ms_gaincal, ms_bandpass, ms_fluxscale, ms_applycal,
-               ms_tclean, ms_image_stats, ms_phase_cal_lookup,
-               Bash, Read, Write, Edit
+allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_observation_info,
+               mcp__plugin_radio-analyst_ms-inspect__ms_field_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_scan_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_scan_intent_summary,
+               mcp__plugin_radio-analyst_ms-inspect__ms_spectral_window_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_correlator_config,
+               mcp__plugin_radio-analyst_ms-inspect__ms_antenna_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_baseline_lengths,
+               mcp__plugin_radio-analyst_ms-inspect__ms_elevation_vs_time,
+               mcp__plugin_radio-analyst_ms-inspect__ms_parallactic_angle_vs_time,
+               mcp__plugin_radio-analyst_ms-inspect__ms_shadowing_report,
+               mcp__plugin_radio-analyst_ms-inspect__ms_antenna_flag_fraction,
+               mcp__plugin_radio-analyst_ms-inspect__ms_refant,
+               mcp__plugin_radio-analyst_ms-inspect__ms_verify_caltables,
+               mcp__plugin_radio-analyst_ms-inspect__ms_rfi_channel_stats,
+               mcp__plugin_radio-analyst_ms-inspect__ms_flag_summary,
+               mcp__plugin_radio-analyst_ms-inspect__ms_pol_cal_conditions,
+               mcp__plugin_radio-analyst_ms-inspect__ms_online_flag_stats,
+               mcp__plugin_radio-analyst_ms-inspect__ms_verify_priorcals,
+               mcp__plugin_radio-analyst_ms-inspect__ms_residual_stats,
+               mcp__plugin_radio-analyst_ms-inspect__ms_calsol_stats,
+               mcp__plugin_radio-analyst_ms-inspect__ms_calsol_stats_detail,
+               mcp__plugin_radio-analyst_ms-inspect__ms_calsol_plot,
+               mcp__plugin_radio-analyst_ms-create__ms_sdm_summary,
+               mcp__plugin_radio-analyst_ms-create__ms_reduction_log,
+               mcp__plugin_radio-analyst_ms-modify__ms_set_intents,
+               mcp__plugin_radio-analyst_ms-modify__ms_initial_bandpass,
+               mcp__plugin_radio-analyst_ms-modify__ms_apply_rflag,
+               mcp__plugin_radio-analyst_ms-modify__ms_apply_preflag,
+               mcp__plugin_radio-analyst_ms-modify__ms_generate_priorcals,
+               mcp__plugin_radio-analyst_ms-modify__ms_setjy,
+               mcp__plugin_radio-analyst_ms-modify__ms_setjy_polcal,
+               mcp__plugin_radio-analyst_ms-modify__ms_apply_initial_rflag,
+               mcp__plugin_radio-analyst_ms-modify__ms_gaincal,
+               mcp__plugin_radio-analyst_ms-modify__ms_bandpass,
+               mcp__plugin_radio-analyst_ms-modify__ms_fluxscale,
+               mcp__plugin_radio-analyst_ms-modify__ms_applycal,
+               mcp__plugin_radio-analyst_ms-modify__ms_tclean,
+               mcp__plugin_radio-analyst_ms-inspect__ms_image_stats,
+               mcp__plugin_radio-analyst_ms-inspect__ms_phase_cal_lookup,
+               Bash,
+               Read,
+               Write,
+               Edit
 ---
 
 # Radio Interferometry Skill — ms-inspect Phase 1 & 2
@@ -39,6 +70,19 @@ Every file named below is a **sibling of this `SKILL.md`**, in the same
 directory. Resolve each name against this file's own directory, not against the
 working directory and not against any `.claude/skills/` path — installed as a
 plugin this skill lives in a cache directory that has neither.
+
+## Running generated scripts
+
+The ms-modify and ms-create tools default to `execute=False`: they write a
+CASA script into the workdir and return its `script_path`. Run it with a
+Python that has casatasks:
+
+- Installed as a plugin: the interpreter named in this session's context by the
+  radio-analyst plugin (`.../bin/python` under `~/.claude/plugins/data/`).
+- Working in a clone: `pixi run python <script_path>` from the repo root.
+
+If neither is available, stop and say so. Do not install casatools into
+another environment.
 
 ## Start here
 

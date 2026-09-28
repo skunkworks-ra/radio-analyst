@@ -1,18 +1,38 @@
 ---
 description: Pre-calibration workflow for a CASA Measurement Set (online flags → preflag → priorcals → setjy → refant → initial bandpass → residual rflag). Follows skill 10-precal-workflow.md.
-allowed-tools: ms_observation_info, ms_field_list, ms_scan_list, ms_scan_intent_summary,
-               ms_spectral_window_list, ms_correlator_config, ms_antenna_list,
-               ms_sdm_summary, ms_verify_import, ms_set_intents, ms_online_flag_stats,
-               ms_apply_preflag, ms_flag_summary, ms_generate_priorcals,
-               ms_verify_priorcals, ms_setjy, ms_refant, ms_initial_bandpass,
-               ms_verify_caltables, ms_residual_stats, ms_apply_initial_rflag,
-               ms_rfi_channel_stats, ms_workflow_status, ms_reduction_log,
-               Bash, Read, Write
+allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_observation_info,
+               mcp__plugin_radio-analyst_ms-inspect__ms_field_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_scan_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_scan_intent_summary,
+               mcp__plugin_radio-analyst_ms-inspect__ms_spectral_window_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_correlator_config,
+               mcp__plugin_radio-analyst_ms-inspect__ms_antenna_list,
+               mcp__plugin_radio-analyst_ms-create__ms_sdm_summary,
+               mcp__plugin_radio-analyst_ms-inspect__ms_verify_import,
+               mcp__plugin_radio-analyst_ms-modify__ms_set_intents,
+               mcp__plugin_radio-analyst_ms-inspect__ms_online_flag_stats,
+               mcp__plugin_radio-analyst_ms-modify__ms_apply_preflag,
+               mcp__plugin_radio-analyst_ms-inspect__ms_flag_summary,
+               mcp__plugin_radio-analyst_ms-modify__ms_generate_priorcals,
+               mcp__plugin_radio-analyst_ms-inspect__ms_verify_priorcals,
+               mcp__plugin_radio-analyst_ms-modify__ms_setjy,
+               mcp__plugin_radio-analyst_ms-inspect__ms_refant,
+               mcp__plugin_radio-analyst_ms-modify__ms_initial_bandpass,
+               mcp__plugin_radio-analyst_ms-inspect__ms_verify_caltables,
+               mcp__plugin_radio-analyst_ms-inspect__ms_residual_stats,
+               mcp__plugin_radio-analyst_ms-modify__ms_apply_initial_rflag,
+               mcp__plugin_radio-analyst_ms-inspect__ms_rfi_channel_stats,
+               mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
+               mcp__plugin_radio-analyst_ms-create__ms_reduction_log,
+               Bash,
+               Read,
+               Write
 ---
 
 Run the pre-calibration workflow on this MS: $ARGUMENTS
 
-Load the `radio-interferometry` skill, then read its `10-precal-workflow.md`
+Load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
+installed as a plugin), then read its `10-precal-workflow.md`
 supporting file (a sibling of that skill's `SKILL.md`) before starting.
 Execute the stages below in order; STOP and report if any stage fails its
 decision gate.

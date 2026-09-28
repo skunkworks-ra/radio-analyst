@@ -4,7 +4,7 @@
 # Run after: pixi install && pixi run pip install casatools casatasks
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PIXI_ENV="$REPO_ROOT/.pixi/envs/default/bin"
 SERVERS=(ms-inspect ms-modify ms-create)
 

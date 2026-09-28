@@ -1,13 +1,23 @@
 ---
 description: First-pass continuum or cube imaging of a calibrated CASA MS with derived tclean parameters and image-quality assessment. Follows skill 11-imaging.md.
-allowed-tools: ms_workflow_status, ms_field_list, ms_spectral_window_list,
-               ms_observation_info, ms_antenna_list, ms_baseline_lengths,
-               ms_scan_list, ms_tclean, ms_image_stats, Bash, Read, Write
+allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
+               mcp__plugin_radio-analyst_ms-inspect__ms_field_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_spectral_window_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_observation_info,
+               mcp__plugin_radio-analyst_ms-inspect__ms_antenna_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_baseline_lengths,
+               mcp__plugin_radio-analyst_ms-inspect__ms_scan_list,
+               mcp__plugin_radio-analyst_ms-modify__ms_tclean,
+               mcp__plugin_radio-analyst_ms-inspect__ms_image_stats,
+               Bash,
+               Read,
+               Write
 ---
 
 Run first-pass imaging on this calibrated MS: $ARGUMENTS
 
-Load the `radio-interferometry` skill, then read its `11-imaging.md` supporting
+Load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
+installed as a plugin), then read its `11-imaging.md` supporting
 file (a sibling of that skill's `SKILL.md`) before starting.
 Prerequisite: CORRECTED_DATA populated on the target field(s) — run
 `/calibrate` (and `/polcal` for IQUV) first if not.

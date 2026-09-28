@@ -1,5 +1,5 @@
 {
-  "_comment": "One entry per registered MCP tool (52 total: 33 ms-inspect + 16 ms-modify + 3 ms-create). 'args' is the params payload sent as {\"params\": args}. Where a tool needs an MS, we point at the real CI smoke.ms (path filled at run time via {SMOKE_MS}); everything else that needs a file (caltable/image/ASDM/npz) gets a deliberately nonexistent path so the tool fails cleanly inside its own error envelope instead of via schema validation. Write tools (ms_modify) omit 'execute' so it defaults to dry-run/False -- no real writes ever happen from this manifest.",
+  "_comment": "One entry per registered MCP tool (53 total: 34 ms-inspect + 16 ms-modify + 3 ms-create). 'args' is the params payload sent as {\"params\": args}. Where a tool needs an MS, we point at the real CI smoke.ms (path filled at run time via {SMOKE_MS}); everything else that needs a file (caltable/image/ASDM/npz) gets a deliberately nonexistent path so the tool fails cleanly inside its own error envelope instead of via schema validation. Write tools (ms_modify) omit 'execute' so it defaults to dry-run/False -- no real writes ever happen from this manifest.",
   "tools": {
     "ms-inspect": {
       "ms_observation_info": {"ms_path": "{SMOKE_MS}"},
@@ -34,7 +34,8 @@
       "ms_workflow_status": {"ms_path": "{SMOKE_MS}", "workdir": "/nonexistent/workdir"},
       "ms_gaincal_snr_predict": {"ms_path": "{SMOKE_MS}", "field": "0", "flux_jy": 1.0, "solint_seconds": 60},
       "ms_image_stats": {"image_path": "/nonexistent/image.image"},
-      "ms_phase_cal_lookup": {"ra_deg": 180.0, "dec_deg": 30.0}
+      "ms_phase_cal_lookup": {"ra_deg": 180.0, "dec_deg": 30.0},
+      "ms_casa_task_lookup": {"task_name": "tclean"}
     },
     "ms-modify": {
       "ms_set_intents": {"ms_path": "{SMOKE_MS}", "dry_run": true},

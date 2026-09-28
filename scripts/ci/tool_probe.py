@@ -48,7 +48,7 @@ def load_args(server: str, tool: str, smoke_ms: str) -> dict:
 async def probe(server: str, tool: str, args: dict, timeout_s: float) -> dict:
     params = StdioServerParameters(
         command="bash",
-        args=[os.path.join(REPO_ROOT, "bin", SERVE_SCRIPT[server])],
+        args=[os.path.join(REPO_ROOT, "scripts", "plugin", SERVE_SCRIPT[server])],
         env=dict(os.environ, RADIO_MCP_TRANSPORT="stdio"),
     )
 
