@@ -8,6 +8,7 @@ Covers:
 - Hz → human frequency string
 - Radians → degrees
 - ECEF XYZ → geodetic latitude/longitude
+- ECEF positions → baseline lengths
 - Correlation type integer codes → string labels
 - Frequency → band name (telescope-aware)
 """
@@ -16,6 +17,8 @@ from __future__ import annotations
 
 import math
 from datetime import UTC, datetime
+
+import numpy as np
 
 # ---------------------------------------------------------------------------
 # CASA correlation type codes → string labels
@@ -227,6 +230,29 @@ def ecef_to_geodetic(x: float, y: float, z: float) -> tuple[float, float, float]
 def baseline_length_m(pos1: tuple[float, float, float], pos2: tuple[float, float, float]) -> float:
     """Euclidean distance between two ECEF positions, in metres."""
     return math.sqrt(sum((a - b) ** 2 for a, b in zip(pos1, pos2, strict=False)))
+
+
+def baselines_m(positions) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    All antenna pairs and their physical lengths.
+
+    positions: ECEF metres, shape [3, n_ant]. Returns (ant_i, ant_j, length_m)
+    for every pair i < j, in the order of itertools.combinations.
+    """
+    pos = np.asarray(positions, dtype=float)
+    ant_i, ant_j = np.triu_indices(pos.shape[1], k=1)
+    return ant_i, ant_j, np.linalg.norm(pos[:, ant_i] - pos[:, ant_j], axis=0)
+
+
+def spherical_to_ecef(
+    lon_rad: float, lat_rad: float, radius_m: float
+) -> tuple[float, float, float]:
+    """ECEF XYZ in metres from geocentric longitude, latitude and radius."""
+    return (
+        radius_m * math.cos(lat_rad) * math.cos(lon_rad),
+        radius_m * math.cos(lat_rad) * math.sin(lon_rad),
+        radius_m * math.sin(lat_rad),
+    )
 
 
 # ---------------------------------------------------------------------------

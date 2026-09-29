@@ -14,6 +14,12 @@ import math
 
 import numpy as np
 
+from ms_inspect.util.array_config import (
+    array_baselines,
+    config_from_array,
+    config_from_execblock,
+    config_letters,
+)
 from ms_inspect.util.calibrators import (
     CalibratorEntry,
     infer_intents_from_role,
@@ -23,7 +29,12 @@ from ms_inspect.util.calibrators import (
 )
 from ms_inspect.util.calibrators import lookup as cal_lookup
 from ms_inspect.util.casa_context import open_msmd, validate_ms_path
-from ms_inspect.util.conversions import rad_to_deg, rad_to_dms, rad_to_hms
+from ms_inspect.util.conversions import (
+    baseline_length_klambda,
+    rad_to_deg,
+    rad_to_dms,
+    rad_to_hms,
+)
 from ms_inspect.util.formatting import field, response_envelope
 from ms_inspect.util.frequencies import field_frequencies
 from ms_inspect.util.phase_cal_catalog import cone_search as vla_cone_search
@@ -32,6 +43,10 @@ from ms_inspect.util.telescope import TelescopeProfile, resolve_telescope
 # Telescope-profile band codes that the VLA calibrator list spells differently.
 # The list has no S or Ka entries, so those bands find no band entry.
 _CALLIST_BAND_CODE = {"Ku": "U"}
+
+# CASA gaincal and bandpass default: an antenna with fewer baselines than this
+# gets no solution.
+_MINBLPERANT = 4
 
 TOOL_NAME = "ms_field_list"
 
@@ -122,6 +137,15 @@ def run(ms_path: str) -> dict:
         # is per FIELD — a field is only observed in the SpWs it was observed in.
         field_freqs = field_frequencies(msmd, n_fields)
         casa_calls.append("msmd.spwsforfield(field_id) + msmd.chanfreqs(spw) for each field")
+
+        # Baselines with data, for the UV-limit check on calibrators that
+        # take their limits from the VLA calibrator list.
+        array = array_baselines(msmd)
+        casa_calls.append("msmd.antennanames() + msmd.antennaposition(ant) + msmd.baselines()")
+
+    # Array configuration, for calibrators whose callist grade differs by
+    # configuration with no UV limit to explain it.
+    array_config = config_from_execblock(p) or config_from_array(array)
 
     # ------------------------------------------------------------------
     # Determine if we're in intent-inference mode
@@ -279,7 +303,7 @@ def run(ms_path: str) -> dict:
                 except Exception:
                     telescope = None
             cal_resolved, resolved_warning = _resolved_from_callist(
-                vla_cal_match_field, fq, telescope
+                vla_cal_match_field, fq, telescope, array, array_config
             )
             target_only = set(role_out["value"] or []) == {"target"}
             if resolved_warning and not target_only:
@@ -641,27 +665,63 @@ def _infer_roles_from_scan_pattern(
     return result
 
 
+def _uvrange_fit(
+    array: dict, freq_hz: float, uvmin_kl: float | None, uvmax_kl: float | None
+) -> tuple[int, int, int, list[str]]:
+    """
+    How the array fits a UV range at one frequency. Returns (baselines inside,
+    baselines with data, antennas with data, names of antennas with fewer than
+    _MINBLPERANT baselines inside). Physical lengths are an upper limit on
+    projected lengths, so the counts are upper limits too.
+    """
+    kl = baseline_length_klambda(array["length_m"], freq_hz)
+    inside = np.ones(kl.shape, dtype=bool)
+    if uvmin_kl is not None:
+        inside &= kl > uvmin_kl
+    if uvmax_kl is not None:
+        inside &= kl < uvmax_kl
+    n_names = len(array["names"])
+    ant_i, ant_j = array["ant_i"], array["ant_j"]
+    present = np.bincount(ant_i, minlength=n_names) + np.bincount(ant_j, minlength=n_names)
+    n_inside = np.bincount(ant_i[inside], minlength=n_names) + np.bincount(
+        ant_j[inside], minlength=n_names
+    )
+    lost = [
+        array["names"][a] for a in range(n_names) if present[a] > 0 and n_inside[a] < _MINBLPERANT
+    ]
+    return int(inside.sum()), int(kl.size), int((present > 0).sum()), lost
+
+
 def _resolved_from_callist(
     vla_match: dict,
     freq: dict | None,
     telescope: TelescopeProfile | None,
+    array: dict | None = None,
+    array_config: dict | None = None,
 ) -> tuple[dict, str | None]:
     """
     Resolved status from the VLA calibrator list, for a field the bundled
     catalogue does not know. Returns (field, warning or None).
 
-    The list gives, per band, a quality code for each VLA configuration and
-    UV limits: ``uvmin_kl`` (structure at short spacings) and ``uvmax_kl``
-    (resolved at long spacings). The band is the one at the field's centre
-    frequency. A limit there means the source has structure, so value is True
-    and the warning carries the uvrange. No limit gives False. Both are
-    INFERRED: the list is a catalogue view, not a measurement of this
-    observation.
+    The list gives, per band, UV limits: ``uvmin_kl`` (structure at short
+    spacings) and ``uvmax_kl`` (resolved at long spacings). The band is the one
+    at the field's centre frequency. A limit there means the source has
+    structure, so value is True. No limit gives False. Both are INFERRED: the
+    list is a catalogue view, not a measurement of this observation.
+
+    Whether the uvrange leaves usable data depends on the array, not the band.
+    With ``array`` (from util.array_config.array_baselines) the warning says whether any
+    antenna keeps _MINBLPERANT baselines inside the uvrange, and names the
+    antennas that do not. X in all four configurations gives a do-not-use
+    warning whatever the array.
+
+    X in some configurations with no UV limit needs the configuration of this
+    MS (``array_config``, from util.array_config). X at that configuration, or
+    at either half of a hybrid, gives a do-not-use warning. An unknown
+    configuration gives a warning that names the X configurations.
 
     UNAVAILABLE results carry the reason in the note and give no warning.
-    The quality codes describe the VLA only, so another telescope gets
-    UNAVAILABLE. The configuration is not known here, so all four codes are
-    reported and an X grade in any of them is named in the warning.
+    The list describes the VLA only, so another telescope gets UNAVAILABLE.
     """
     match = vla_match.get("value")
     if match is None:
@@ -715,23 +775,73 @@ def _resolved_from_callist(
     else:
         uvrange = None
     quals = "/".join(b[f"qual_{c}"] for c in "ABCD")
-    bad = "".join(c for c in "ABCD" if b[f"qual_{c}"] == "X")
 
     note = (
         f"From the VLA calibrator list ({match['name']}) at band {code}: "
         f"quality A/B/C/D {quals}, " + (f"uvrange='{uvrange}'" if uvrange else "no UV limits") + "."
     )
-    problems = []
-    if uvrange:
-        problems.append(f"pass uvrange='{uvrange}' to solves on this field")
-    if bad:
-        problems.append(f"quality X in config {bad}: do not use it as a calibrator there")
-    warning = None
-    if problems:
-        warning = (
-            f"VLA calibrator list ({match['name']}) at band {code}: " + "; ".join(problems) + "."
+    prefix = f"VLA calibrator list ({match['name']}) at band {code}: "
+    # X in every configuration makes the source unusable at this band in any
+    # array, with or without a UV limit.
+    all_x = all(b[f"qual_{c}"] == "X" for c in "ABCD")
+    all_x_warning = (
+        prefix + "graded X in every configuration: do not use this field as a calibrator."
+    )
+    if uvrange is None:
+        return field(False, flag="INFERRED", note=note), _partial_x_warning(
+            b, prefix, all_x_warning if all_x else None, array_config
         )
-    return field(uvrange is not None, flag="INFERRED", note=note), warning
+
+    pass_it = f"pass uvrange='{uvrange}' to solves on this field"
+    if array is None:
+        note += " No antenna positions, so the baselines inside it were not counted."
+        warning = prefix + pass_it + "."
+    else:
+        n_in, n_bl, n_ant, lost = _uvrange_fit(array, freq["centre_ghz"] * 1e9, uvmin, uvmax)
+        note += (
+            f" {n_in} of {n_bl} baselines fall inside it at the centre frequency"
+            " (an upper limit: physical, not projected, lengths)."
+        )
+        if len(lost) == n_ant:
+            warning = (
+                prefix + f"uvrange='{uvrange}' leaves no antenna with {_MINBLPERANT} "
+                "baselines: do not use this field as a calibrator."
+            )
+        elif lost:
+            warning = (
+                prefix + pass_it + f"; {len(lost)} of {n_ant} antennas have fewer than "
+                f"{_MINBLPERANT} baselines inside it and get no solution: {', '.join(lost)}."
+            )
+        else:
+            warning = prefix + pass_it + "."
+    if all_x:
+        warning = all_x_warning
+    return field(True, flag="INFERRED", note=note), warning
+
+
+def _partial_x_warning(
+    band: dict, prefix: str, all_x_warning: str | None, array_config: dict | None
+) -> str | None:
+    """Warning for a band entry with no UV limit, from its grade at this MS's configuration."""
+    if all_x_warning:
+        return all_x_warning
+    x_configs = [c for c in "ABCD" if band[f"qual_{c}"] == "X"]
+    if not x_configs:
+        return None
+    name = array_config["value"] if array_config else None
+    letters = config_letters(name)
+    if letters is None:
+        return (
+            prefix + f"graded X in configuration {'/'.join(x_configs)} and the configuration "
+            "of this MS is unknown: confirm it before using this field as a calibrator."
+        )
+    bad = [c for c in letters if c in x_configs]
+    if not bad:
+        return None
+    return (
+        prefix + f"graded X in configuration {'/'.join(bad)}, and this MS is in "
+        f"{name} ({array_config['flag']}): do not use this field as a calibrator."
+    )
 
 
 def _vla_positional_match(

@@ -38,6 +38,7 @@ class TestBuildScript:
         assert "savecmds=True" in script
         assert "applyflags=False" in script
         assert "with_pointing_correction=False" in script
+        assert 'asis="ExecBlock"' in script
 
     def test_pointing_correction_flag(self):
         script = _build_script("/data/obs.asdm", "/work/obs.ms", "/work/obs.flagonline.txt", True)
@@ -90,6 +91,7 @@ class TestRun:
         assert result["data"]["ocorr_mode"]["value"] == "co"
         assert result["data"]["savecmds"]["value"] is True
         assert result["data"]["applyflags"]["value"] is False
+        assert result["data"]["asis"]["value"] == "ExecBlock"
 
     def test_custom_ms_name(self, tmp_path):
         asdm = tmp_path / "obs.asdm"

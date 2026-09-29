@@ -8,6 +8,9 @@ Fixed parameters (not exposed — scientifically motivated defaults):
   savecmds=True       Online flags written to <ms_name>.flagonline.txt.
   applyflags=False    Online flags are NOT applied during import.
                       ms_apply_preflag owns all flagging in a single auditable pass.
+  asis='ExecBlock'    Copies the ASDM ExecBlock table into the MS as the
+                      ASDM_EXECBLOCK subtable. Its configName is the array
+                      configuration, which the MS schema has no column for.
 
 The tool always writes import_asdm.py to workdir. When execute=True it also
 runs importasdm in-process and returns the resolved ms_path and online_flag_file.
@@ -64,6 +67,7 @@ importasdm(
     outfile=online_flag_file,
     applyflags=False,
     overwrite=False,
+    asis="ExecBlock",
 )
 # The MS this writes is the input to every later stage, and the loop learns
 # where it is from this stage alone — so the raising form, and record the
@@ -146,6 +150,7 @@ def run(
         "with_pointing_correction": fmt_field(with_pointing_correction),
         "savecmds": fmt_field(True),
         "applyflags": fmt_field(False),
+        "asis": fmt_field("ExecBlock"),
     }
 
     if not execute:
@@ -180,7 +185,7 @@ def run(
 
     casa_calls.append(
         f"casatasks.importasdm(asdm='{asdm}', vis='{ms_out}', ocorr_mode='co', "
-        f"savecmds=True, applyflags=False)"
+        f"savecmds=True, applyflags=False, asis='ExecBlock')"
     )
     try:
         importasdm(
@@ -192,6 +197,7 @@ def run(
             outfile=str(flag_file),
             applyflags=False,
             overwrite=False,
+            asis="ExecBlock",
         )
     except Exception as exc:
         raise ImportFailedError(

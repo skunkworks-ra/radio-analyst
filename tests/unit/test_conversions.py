@@ -13,6 +13,7 @@ from ms_inspect.util.conversions import (
     angular_resolution_arcsec,
     baseline_length_klambda,
     baseline_length_m,
+    baselines_m,
     corr_codes_to_labels,
     deg_to_rad,
     ecef_to_geodetic,
@@ -26,6 +27,7 @@ from ms_inspect.util.conversions import (
     rad_to_dms,
     rad_to_hms,
     seconds_to_human,
+    spherical_to_ecef,
 )
 
 # ---------------------------------------------------------------------------
@@ -212,6 +214,33 @@ class TestBaselineLengthM:
     def test_3d(self):
         d = baseline_length_m((1, 2, 3), (4, 6, 3))
         assert abs(d - 5.0) < 1e-10
+
+
+class TestBaselinesM:
+    def test_pairs_follow_combinations_order(self):
+        import itertools
+
+        pos = [[0, 3, 0, 1], [0, 4, 6, 2], [0, 0, 8, 3]]
+        ant_i, ant_j, lengths = baselines_m(pos)
+        assert list(zip(ant_i.tolist(), ant_j.tolist(), strict=True)) == list(
+            itertools.combinations(range(4), 2)
+        )
+        for i, j, d in zip(ant_i, ant_j, lengths, strict=True):
+            a = tuple(p[i] for p in pos)
+            b = tuple(p[j] for p in pos)
+            assert abs(d - baseline_length_m(a, b)) < 1e-12
+
+    def test_one_antenna_has_no_baselines(self):
+        _, _, lengths = baselines_m([[1.0], [2.0], [3.0]])
+        assert lengths.size == 0
+
+
+class TestSphericalToEcef:
+    def test_axes(self):
+        x, y, z = spherical_to_ecef(0.0, 0.0, 10.0)
+        assert (x, y, z) == (10.0, 0.0, 0.0)
+        x, y, z = spherical_to_ecef(0.0, math.pi / 2, 10.0)
+        assert abs(x) < 1e-12 and abs(z - 10.0) < 1e-12
 
 
 # ---------------------------------------------------------------------------
