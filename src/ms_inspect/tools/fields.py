@@ -31,6 +31,8 @@ from ms_inspect.util.calibrators import lookup as cal_lookup
 from ms_inspect.util.casa_context import open_msmd, validate_ms_path
 from ms_inspect.util.conversions import (
     baseline_length_klambda,
+    mjd_seconds_to_utc,
+    projected_uv_m,
     rad_to_deg,
     rad_to_dms,
     rad_to_hms,
@@ -47,6 +49,11 @@ _CALLIST_BAND_CODE = {"Ku": "U"}
 # CASA gaincal and bandpass default: an antenna with fewer baselines than this
 # gets no solution.
 _MINBLPERANT = 4
+
+# A calibrator with a list uvrange is usable only if at least this percent of
+# the antennas with data keep _MINBLPERANT baselines inside it at every sample
+# time. An integer percent keeps the boundary exact.
+_MIN_ANTENNA_PERCENT = 70
 
 TOOL_NAME = "ms_field_list"
 
@@ -117,19 +124,26 @@ def run(ms_path: str) -> dict:
         except Exception:
             source_ids = list(range(n_fields))
 
-        # Scan sequence for pattern-based role inference (cheap; used only in heuristic mode)
+        # Scan sequence for pattern-based role inference (cheap; used only in
+        # heuristic mode). The same scan times give each field's sample times
+        # (start, middle and end of each scan) for projected baselines.
         scan_sequence: list[tuple[int, int, float]] = []  # (scan_num, field_id, duration_s)
+        field_times: dict[int, list[float]] = {}
         try:
             for snum in sorted(msmd.scannumbers()):
                 fids = list(msmd.fieldsforscan(snum))
                 if not fids:
                     continue
                 times = msmd.timesforscans([snum])
-                dur = float(max(times) - min(times)) if len(times) > 1 else 0.0
+                t0, t1 = float(min(times)), float(max(times))
+                dur = t1 - t0 if len(times) > 1 else 0.0
                 scan_sequence.append((snum, int(fids[0]), dur))
+                for f in fids:
+                    field_times.setdefault(int(f), []).extend([t0, 0.5 * (t0 + t1), t1])
             casa_calls.append("msmd.scannumbers/fieldsforscan/timesforscans (scan pattern)")
         except Exception:
             scan_sequence = []
+            field_times = {}
 
         # Observing frequency per field. This tool was field-only until now; the
         # read is here because frequency is what decides whether a flux standard
@@ -302,8 +316,13 @@ def run(ms_path: str) -> dict:
                     telescope = resolve_telescope(str(p))
                 except Exception:
                     telescope = None
+            track = (
+                (ra_rad, dec_rad, field_times[fid])
+                if ra_rad is not None and dec_rad is not None and field_times.get(fid)
+                else None
+            )
             cal_resolved, resolved_warning = _resolved_from_callist(
-                vla_cal_match_field, fq, telescope, array, array_config
+                vla_cal_match_field, fq, telescope, array, array_config, track
             )
             target_only = set(role_out["value"] or []) == {"target"}
             if resolved_warning and not target_only:
@@ -666,30 +685,55 @@ def _infer_roles_from_scan_pattern(
 
 
 def _uvrange_fit(
-    array: dict, freq_hz: float, uvmin_kl: float | None, uvmax_kl: float | None
-) -> tuple[int, int, int, list[str]]:
+    array: dict,
+    freq_hz: float,
+    uvmin_kl: float | None,
+    uvmax_kl: float | None,
+    track: tuple[float, float, list[float]] | None = None,
+) -> dict:
     """
-    How the array fits a UV range at one frequency. Returns (baselines inside,
-    baselines with data, antennas with data, names of antennas with fewer than
-    _MINBLPERANT baselines inside). Physical lengths are an upper limit on
-    projected lengths, so the counts are upper limits too.
+    How the array fits a UV range at one frequency.
+
+    With ``track`` (J2000 RA and Dec in radians, sample times in MJD seconds)
+    the lengths are projected at each sample time. Without it they are
+    physical lengths, an upper limit on projected ones.
+
+    Returns the sample with the fewest antennas keeping _MINBLPERANT baselines
+    inside (n_kept, n_inside, worst_time: None without a track), the totals
+    (n_ant with data, n_baselines, n_samples), and ``lost``: every antenna
+    below _MINBLPERANT at one or more samples.
     """
-    kl = baseline_length_klambda(array["length_m"], freq_hz)
+    if track is None:
+        times = [None]
+        length_m = array["length_m"][None, :]
+    else:
+        ra, dec, times = track
+        length_m = projected_uv_m(array["vector_m"], ra, dec, times)
+    kl = baseline_length_klambda(length_m, freq_hz)
     inside = np.ones(kl.shape, dtype=bool)
     if uvmin_kl is not None:
         inside &= kl > uvmin_kl
     if uvmax_kl is not None:
         inside &= kl < uvmax_kl
-    n_names = len(array["names"])
-    ant_i, ant_j = array["ant_i"], array["ant_j"]
-    present = np.bincount(ant_i, minlength=n_names) + np.bincount(ant_j, minlength=n_names)
-    n_inside = np.bincount(ant_i[inside], minlength=n_names) + np.bincount(
-        ant_j[inside], minlength=n_names
-    )
-    lost = [
-        array["names"][a] for a in range(n_names) if present[a] > 0 and n_inside[a] < _MINBLPERANT
-    ]
-    return int(inside.sum()), int(kl.size), int((present > 0).sum()), lost
+
+    n_names, n_bl = len(array["names"]), kl.shape[1]
+    ends = np.zeros((n_bl, n_names), dtype=int)
+    ends[np.arange(n_bl), array["ant_i"]] = 1
+    ends[np.arange(n_bl), array["ant_j"]] = 1
+    present = ends.sum(axis=0) > 0
+    below = (inside.astype(int) @ ends < _MINBLPERANT) & present  # [n_samples, n_names]
+    n_ant = int(present.sum())
+    kept = n_ant - below.sum(axis=1)
+    worst = int(np.argmin(kept))
+    return {
+        "n_kept": int(kept[worst]),
+        "n_inside": int(inside[worst].sum()),
+        "worst_time": times[worst],
+        "n_ant": n_ant,
+        "n_baselines": n_bl,
+        "n_samples": len(times),
+        "lost": [array["names"][a] for a in range(n_names) if below[:, a].any()],
+    }
 
 
 def _resolved_from_callist(
@@ -698,6 +742,7 @@ def _resolved_from_callist(
     telescope: TelescopeProfile | None,
     array: dict | None = None,
     array_config: dict | None = None,
+    track: tuple[float, float, list[float]] | None = None,
 ) -> tuple[dict, str | None]:
     """
     Resolved status from the VLA calibrator list, for a field the bundled
@@ -710,10 +755,14 @@ def _resolved_from_callist(
     list is a catalogue view, not a measurement of this observation.
 
     Whether the uvrange leaves usable data depends on the array, not the band.
-    With ``array`` (from util.array_config.array_baselines) the warning says whether any
-    antenna keeps _MINBLPERANT baselines inside the uvrange, and names the
-    antennas that do not. X in all four configurations gives a do-not-use
-    warning whatever the array.
+    With ``array`` (from util.array_config.array_baselines) the tool counts,
+    per antenna, the baselines inside the uvrange. With ``track`` (J2000 RA,
+    Dec and the field's sample times) the lengths are projected at each sample;
+    without it they are physical, an upper limit. Fewer than
+    _MIN_ANTENNA_PERCENT of the antennas keeping _MINBLPERANT baselines at any
+    sample gives a do-not-use warning; otherwise the warning names the antennas
+    that fall below at some sample. X in all four configurations gives a
+    do-not-use warning whatever the array.
 
     X in some configurations with no UV limit needs the configuration of this
     MS (``array_config``, from util.array_config). X at that configuration, or
@@ -797,20 +846,32 @@ def _resolved_from_callist(
         note += " No antenna positions, so the baselines inside it were not counted."
         warning = prefix + pass_it + "."
     else:
-        n_in, n_bl, n_ant, lost = _uvrange_fit(array, freq["centre_ghz"] * 1e9, uvmin, uvmax)
-        note += (
-            f" {n_in} of {n_bl} baselines fall inside it at the centre frequency"
-            " (an upper limit: physical, not projected, lengths)."
-        )
-        if len(lost) == n_ant:
-            warning = (
-                prefix + f"uvrange='{uvrange}' leaves no antenna with {_MINBLPERANT} "
-                "baselines: do not use this field as a calibrator."
+        fit = _uvrange_fit(array, freq["centre_ghz"] * 1e9, uvmin, uvmax, track)
+        worst = fit["worst_time"]
+        at_worst = f" at {mjd_seconds_to_utc(worst)}" if worst is not None else ""
+        if worst is None:
+            basis = "an upper limit: physical, not projected, lengths"
+        else:
+            basis = (
+                f"projected at the start, middle and end of each scan, {fit['n_samples']} "
+                f"sample times; the fewest{at_worst}"
             )
-        elif lost:
+        note += (
+            f" {fit['n_inside']} of {fit['n_baselines']} baselines fall inside it at the "
+            f"centre frequency ({basis})."
+        )
+        some_time = " at one or more sample times" if worst is not None else ""
+        if 100 * fit["n_kept"] < _MIN_ANTENNA_PERCENT * fit["n_ant"]:
+            warning = prefix + (
+                f"uvrange='{uvrange}' leaves {fit['n_kept']} of {fit['n_ant']} antennas with "
+                f"{_MINBLPERANT} baselines{at_worst}, below {_MIN_ANTENNA_PERCENT}%: "
+                "do not use this field as a calibrator."
+            )
+        elif fit["lost"]:
             warning = (
-                prefix + pass_it + f"; {len(lost)} of {n_ant} antennas have fewer than "
-                f"{_MINBLPERANT} baselines inside it and get no solution: {', '.join(lost)}."
+                prefix + pass_it + f"; {len(fit['lost'])} of {fit['n_ant']} antennas have "
+                f"fewer than {_MINBLPERANT} baselines inside it{some_time} and get no "
+                f"solution: {', '.join(fit['lost'])}."
             )
         else:
             warning = prefix + pass_it + "."

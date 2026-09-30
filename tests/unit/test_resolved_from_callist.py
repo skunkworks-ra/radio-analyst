@@ -110,12 +110,71 @@ def test_l_band_d_like_array_leaves_no_data():
     assert "pass uvrange" not in warn
 
 
-def test_l_band_c_like_array_names_lost_antennas():
+def test_l_band_c_like_array_says_do_not_use():
+    # Only the outer antenna of each arm keeps 4 baselines: 3 of 27 is below 70%.
     res, warn = _resolved_from_callist(MATCH_3C84, _freq(1.0, 2.0), VLA, C_LIKE)
+    assert "leaves 3 of 27 antennas with 4 baselines, below 70%" in warn
+    assert "do not use this field as a calibrator" in warn
+    assert "pass uvrange" not in warn
+
+
+def _two_tier_array(n_long, n_short):
+    """
+    n_long antennas 10 km apart from each other; n_short more 100 m from every
+    antenna. At L band a '>12klambda' cut keeps only the long baselines, so
+    exactly n_long antennas keep 4 baselines (for n_long >= 5).
+    """
+    n = n_long + n_short
+    ant_i, ant_j = np.triu_indices(n, k=1)
+    length_m = np.where(ant_j < n_long, 10000.0, 100.0)
+    return {
+        "names": [f"ea{a + 1:02d}" for a in range(n)],
+        "ant_i": ant_i,
+        "ant_j": ant_j,
+        "length_m": length_m,
+        "vector_m": np.zeros((ant_i.size, 3)),
+    }
+
+
+def test_seventy_percent_kept_passes_and_names_the_lost():
+    _, warn = _resolved_from_callist(MATCH_3C84, _freq(1.0, 2.0), VLA, _two_tier_array(7, 3))
     assert "pass uvrange='>12klambda'" in warn
-    assert "24 of 27 antennas have fewer than 4 baselines" in warn
-    # The outer antenna of each arm keeps its baselines; the inner ones do not.
-    assert "ea09" not in warn and "ea01" in warn
+    assert "3 of 10 antennas have fewer than 4 baselines inside it and get no solution" in warn
+    assert "ea08, ea09, ea10" in warn
+
+
+def test_below_seventy_percent_says_do_not_use():
+    _, warn = _resolved_from_callist(MATCH_3C84, _freq(1.0, 2.0), VLA, _two_tier_array(6, 4))
+    assert "leaves 6 of 10 antennas with 4 baselines, below 70%" in warn
+    assert "do not use this field as a calibrator" in warn
+
+
+def test_projection_fails_a_field_that_physical_lengths_pass():
+    # A baseline along ITRF Z (the Earth's axis) projects to |Bz| cos(dec):
+    # its full length toward the celestial equator, zero toward the pole.
+    arr = _two_tier_array(7, 3)
+    arr["vector_m"] = np.outer(arr["length_m"], [0.0, 0.0, 1.0])
+    times = [5.0e9, 5.0e9 + 3600.0]
+    _, warn_phys = _resolved_from_callist(MATCH_3C84, _freq(1.0, 2.0), VLA, arr)
+    _, warn_equator = _resolved_from_callist(
+        MATCH_3C84, _freq(1.0, 2.0), VLA, arr, None, (0.0, 0.0, times)
+    )
+    _, warn_pole = _resolved_from_callist(
+        MATCH_3C84, _freq(1.0, 2.0), VLA, arr, None, (0.0, math.pi / 2, times)
+    )
+    assert "pass uvrange" in warn_phys and "pass uvrange" in warn_equator
+    assert "leaves 0 of 10 antennas" in warn_pole and " UTC, below 70%" in warn_pole
+
+
+def test_projected_note_names_the_samples():
+    arr = _two_tier_array(7, 3)
+    arr["vector_m"] = np.outer(arr["length_m"], [1.0, 0.0, 0.0])
+    res, warn = _resolved_from_callist(
+        MATCH_3C84, _freq(1.0, 2.0), VLA, arr, None, (0.0, math.pi / 2, [5.0e9, 5.0e9 + 60.0])
+    )
+    assert "projected at the start, middle and end of each scan, 2 sample times" in res["note"]
+    assert "physical" not in res["note"]
+    assert "inside it at one or more sample times and get no solution" in warn
 
 
 def test_l_band_a_like_array_keeps_every_antenna():
@@ -135,12 +194,12 @@ def test_baselines_without_data_are_not_counted():
             n = 27
             return [[i != 0 and j != 0 for j in range(n)] for i in range(n)]
 
-    # In the C-like array ea01 is a lost antenna; without data it is not one.
+    # ea01 has no data, so the count is over the other 26 antennas.
     array = _array_baselines(HalfDead([], antenna_ecef=_y_array(1900.0)))
     assert array["length_m"].size == 26 * 25 // 2
+    assert array["vector_m"].shape == (26 * 25 // 2, 3)
     _, warn = _resolved_from_callist(MATCH_3C84, _freq(1.0, 2.0), VLA, array)
-    assert "23 of 26 antennas" in warn
-    assert "ea01" not in warn
+    assert "leaves 3 of 26 antennas" in warn
 
 
 def test_array_positions_round_trip_through_msmd():
@@ -279,6 +338,17 @@ def test_run_d_like_array_says_do_not_use(monkeypatch):
     )
     result = field_list_run("fake.ms")
     assert any("do not use this field" in w for w in result["warnings"])
+
+
+def test_run_projects_at_the_scan_times(monkeypatch):
+    _patch(
+        monkeypatch,
+        [("3C84", ["CALIBRATE_BANDPASS#ON_SOURCE"], *_3C84_POS)],
+        antenna_ecef=_y_array(21000.0),
+        **_L_BAND,
+    )
+    note = _rec(field_list_run("fake.ms"), "3C84")["resolved_source"]["note"]
+    assert "projected at the start, middle and end of each scan, 3 sample times" in note
 
 
 def test_run_partial_x_uses_the_inferred_config(monkeypatch):

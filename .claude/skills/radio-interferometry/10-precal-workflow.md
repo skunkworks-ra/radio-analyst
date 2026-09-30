@@ -233,15 +233,18 @@ the next cross-field candidate before changing other parameters.
 `resolved_source` and warnings in `ms_field_list`. For a field outside the
 bundled catalogue, the tool takes them from the VLA calibrator list at the
 band of the field's centre frequency. The limits are band-specific: 3C84 has
-`uvmin 12 klambda` at L-band and no limit at C-band. The tool counts the
-baselines with data inside the `uvrange`, from the antenna positions. The
-counts are upper limits: projected baselines are shorter than physical ones.
+`uvmin 12 klambda` at L-band and no limit at C-band. The tool projects the
+baselines with data toward the field at the start, middle and end of each of
+its scans, and counts, per antenna, the baselines inside the `uvrange`. The
+field is usable only if at least 70% of the antennas keep 4 baselines at every
+one of those times. The note gives the time with the fewest. Without scan
+times the tool counts physical lengths, an upper limit, and the note says so.
 
 | `ms_field_list` for the bandpass field | Action |
 |---|---|
 | warning says `pass uvrange='...'` | Pass that `uvrange` to `ms_initial_bandpass` and the later bandpass and gain solves on this field, whatever refant you chose |
-| warning also names antennas with fewer than 4 baselines | Those antennas get no solution on this field. Pass the `uvrange` anyway. Name them in the summary; do not pick one as refant |
-| warning says `do not use this field as a calibrator` | The list grades it X in every configuration, or X in this MS's configuration (`ms_observation_info` `array_config`), or the `uvrange` leaves no usable data in this array. Pick another bandpass calibrator or stop and report |
+| warning also names antennas with fewer than 4 baselines | Those antennas get no solution on this field at one or more scan times. Pass the `uvrange` anyway. Name them in the summary; do not pick one as refant |
+| warning says `do not use this field as a calibrator` | The list grades it X in every configuration, or X in this MS's configuration (`ms_observation_info` `array_config`), or the `uvrange` leaves fewer than 70% of the antennas with 4 baselines at one or more scan times. Pick another bandpass calibrator or stop and report |
 | warning says `configuration of this MS is unknown` | The list grades it X in the named configurations. Check the configuration from the observation's proposal or the SDM `configName`. If it is one of them, treat it as the row above |
 | `true`, COMPLETE | Bundled-catalogue source. Follow `CALIBRATOR_RESOLVED_WARNING` |
 | `false`, no warning | No `uvrange` |

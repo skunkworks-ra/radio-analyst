@@ -71,9 +71,11 @@ tool's results make sense.
   the warning gives the `uvrange` for solves on that field. Name the field and
   its `uvrange` in the report.
 - A warning that says `do not use this field as a calibrator` → the list
-  grades it X in every configuration, or the `uvrange` leaves no antenna with
-  4 baselines in this array. Report the field as unusable here. A warning that names antennas with fewer than 4 baselines →
-  those antennas get no solution on this field. Name them in the report.
+  grades it X in every configuration, or the `uvrange` leaves fewer than 70%
+  of the antennas with 4 baselines at one or more scan times. Report the field
+  as unusable here. A warning that names antennas with fewer than 4 baselines →
+  those antennas get no solution on this field at those times. Name them in
+  the report.
 - A warning that says `graded X in configuration ...` with `configuration of
   this MS is unknown` → `ms_observation_info` could not find the array
   configuration. Report the field as "usable only outside the X

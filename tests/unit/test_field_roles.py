@@ -102,7 +102,8 @@ class FakeMsmd:
         return [snum - 1]
 
     def timesforscans(self, snums):
-        base = snums[0] * 1000.0
+        # MJD seconds in 2017, so sidereal time sees a real epoch.
+        base = 5.0e9 + snums[0] * 1000.0
         return [base, base + 300.0]
 
 

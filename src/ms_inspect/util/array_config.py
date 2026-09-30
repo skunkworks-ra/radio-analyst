@@ -45,8 +45,9 @@ def config_letters(name: str | None) -> list[str] | None:
 
 def array_baselines(msmd) -> dict | None:
     """
-    Cross baselines that have data in the MS: antenna names, pair indices and
-    physical lengths in metres. None when msmd gives no ITRF positions.
+    Cross baselines that have data in the MS: antenna names, pair indices,
+    physical lengths and ITRF vectors (ant_j - ant_i) in metres. None when
+    msmd gives no ITRF positions.
     """
     try:
         names = list(msmd.antennanames())
@@ -63,13 +64,15 @@ def array_baselines(msmd) -> dict | None:
         has_data = np.asarray(msmd.baselines(), dtype=bool)
     except Exception:
         return None
-    ant_i, ant_j, length_m = baselines_m(np.array(positions).T)
+    xyz = np.array(positions)
+    ant_i, ant_j, length_m = baselines_m(xyz.T)
     keep = has_data[ant_i, ant_j]
     return {
         "names": names,
         "ant_i": ant_i[keep],
         "ant_j": ant_j[keep],
         "length_m": length_m[keep],
+        "vector_m": (xyz[ant_j] - xyz[ant_i])[keep],
     }
 
 
