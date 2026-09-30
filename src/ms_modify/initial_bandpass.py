@@ -180,7 +180,8 @@ def run(
         all_spw:        CASA SpW selection string (empty = all SpWs).
         priorcals:      Prior calibration tables to pre-apply (e.g. requantiser, Tsys).
         min_bl_per_ant: minblperant for gaincal and bandpass (default 4).
-        uvrange:        UV range restriction (set for 3C84 to exclude extended emission).
+        uvrange:        UV range restriction: the uvrange in the ms_field_list
+                        warning for this field (for example 3C84 at L band).
         applymode:      applycal mode for Step 3 (default 'calflagstrict').
                         Fall back to 'calflag' if strict flagging is too aggressive.
         target_fields:  Optional CASA field selection for the science-target /

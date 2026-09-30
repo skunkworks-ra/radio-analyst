@@ -248,7 +248,7 @@ times the tool counts physical lengths, an upper limit, and the note says so.
 | warning says `configuration of this MS is unknown` | The list grades it X in the named configurations. Check the configuration from the observation's proposal or the SDM `configName`. If it is one of them, treat it as the row above |
 | `true`, COMPLETE | Bundled-catalogue source. Follow `CALIBRATOR_RESOLVED_WARNING` |
 | `false`, no warning | No `uvrange` |
-| UNAVAILABLE | Unknown structure; the note says why. Say so in the summary. If the source is known to be extended (3C84 is), pass a conservative `uvrange='>5klambda'` and record why |
+| UNAVAILABLE | Unknown structure; the note says why. Say so in the summary. Do not invent a `uvrange`: in interactive mode ask the user; hands-off, pick another bandpass calibrator or stop and report |
 
 ---
 
