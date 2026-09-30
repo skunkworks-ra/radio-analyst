@@ -53,7 +53,22 @@ def test_both_limits_row():
     assert (b.uvmin_kl, b.uvmax_kl) == (100.0, 400.0)
 
 
+def _grades(band) -> str:
+    return "".join(getattr(band, f"quality_{c}") for c in "ABCD")
+
+
+def test_grades_per_configuration():
+    # One grade per array configuration A/B/C/D, in column order. 3C84 is
+    # unusable (X) in the compact configurations at P and L band, where its
+    # UVMIN cuts most baselines, and in A at Q band.
+    bands = _bands(BLOCK_3C84)
+    grades = {code: _grades(bands[code]) for code in ("P", "L", "C", "Q")}
+    assert grades == {"P": "SXXX", "L": "PPXX", "C": "PPPP", "Q": "XSSS"}
+
+
 def test_bundled_file_3c84():
     bands = _get_catalog()["0319+415"].bands
     assert (bands["L"].uvmin_kl, bands["L"].uvmax_kl) == (12.0, None)
     assert (bands["Q"].uvmin_kl, bands["Q"].uvmax_kl) == (None, 1800.0)
+    assert _grades(bands["L"]) == "PPXX"
+    assert _grades(bands["K"]) == "XSSS"
