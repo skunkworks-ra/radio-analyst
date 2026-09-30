@@ -22,7 +22,7 @@ import math
 from typing import Any
 
 from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
-from ms_inspect.util.conversions import ecef_to_geodetic, mjd_seconds_to_unix
+from ms_inspect.util.conversions import bundled_iers, ecef_to_geodetic, mjd_seconds_to_unix
 from ms_inspect.util.formatting import field, offload_detail, response_envelope
 
 TOOL_EL = "ms_elevation_vs_time"
@@ -158,7 +158,8 @@ def _compute_el_pa(
 
     Returns (elevation_deg, pa_sky_deg).
 
-    Uses astropy AltAz frame.
+    Uses astropy AltAz frame, with the IERS tables astropy bundles
+    (conversions.bundled_iers), so recent dates work with no network.
     """
     import astropy.units as u
     from astropy.coordinates import AltAz, EarthLocation, SkyCoord
@@ -169,7 +170,8 @@ def _compute_el_pa(
     frame = AltAz(obstime=t, location=location)
 
     coord = SkyCoord(ra=ra_rad * u.rad, dec=dec_rad * u.rad, frame="icrs")
-    altaz = coord.transform_to(frame)
+    with bundled_iers():
+        altaz = coord.transform_to(frame)
 
     el_deg = float(altaz.alt.deg)
 
@@ -181,7 +183,9 @@ def _compute_el_pa(
     # Compute PA using the standard formula via hour angle
     lat_rad = math.radians(lat_deg)
     dec_rad_local = dec_rad
-    ha_rad = float(t.sidereal_time("apparent", lon_deg * u.deg).rad) - ra_rad
+    with bundled_iers():
+        lst = t.sidereal_time("apparent", lon_deg * u.deg, model="IAU2000B")
+    ha_rad = float(lst.rad) - ra_rad
 
     pa_sky = math.degrees(
         math.atan2(
