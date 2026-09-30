@@ -988,7 +988,7 @@ downstream calibration tools see real intents.
 
 **Intent assignment pipeline:**
 1. Primary calibrator catalogue match (`calibrators.lookup`) → flux/bandpass intents
-2. VLA calibrator positional cross-match (`vla_calibrators.cone_search`, 5 arcsec radius) → phase intent
+2. VLA calibrator positional cross-match (`phase_cal_catalog.cone_search`, 5 arcsec radius) → phase intent
 3. No match → `OBSERVE_TARGET#ON_SOURCE`
 
 **Guard:** If ≥50% of fields already have non-empty intents, raises

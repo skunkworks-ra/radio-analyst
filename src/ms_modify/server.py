@@ -148,7 +148,8 @@ class InitialBandpassInput(BaseModel):
     uvrange: str = Field(
         default="",
         description=(
-            "UV range restriction (e.g. '>1klambda'). Set for 3C84 to exclude extended emission."
+            "UV range restriction (e.g. '>1klambda'). Set it to the uvrange in the "
+            "ms_field_list warning for this field (for example 3C84 at L band)."
         ),
     )
     applymode: str = Field(
@@ -866,7 +867,7 @@ async def ms_generate_priorcals(params: GeneratePriorcalsInput) -> str:
         "Set Stokes I flux models for catalogued flux calibrators, resolving the "
         "standard PER FIELD from its observing frequency. A field observed outside "
         "its model's validity range is skipped, not mis-scaled. "
-        "Warns on 3C84 (resolved), 3C138/3C48 (variable). "
+        "Warns on catalogue sources flagged resolved, and on 3C138/3C48 (variable). "
         "Use ms_setjy_polcal for full polarization models."
     ),
     annotations={
@@ -890,8 +891,9 @@ async def ms_setjy(params: SetjyInput) -> str:
     skipped with a warning naming both the range and the observed span. It is
     never given a different standard as a fallback.
 
-    Warns if 3C84 (resolved) or 3C138/3C48 (variable/partially polarized) are
-    present. Does NOT set polarization angle models (see CALPOL.md tools).
+    Warns on catalogue sources flagged resolved, and on 3C138/3C48
+    (variable/partially polarized). Does NOT set polarization angle models
+    (see CALPOL.md tools).
 
     Args:
         params.ms_path:   Path to calibrators.ms.

@@ -122,7 +122,7 @@ exceeds the source-type threshold (e.g., > 8% for bright cal, > 12% for phase ca
 
 2. **Check if the source is resolved:**
    - Use `ms_field_list` output and source catalogues (e.g., VLA calibrator manual)
-   - Resolved sources (Cas A, Cyg A, Tau A, 3C84) are sensitive to UV range
+   - Resolved sources (Cas A, Cyg A, Tau A; 3C84 at P, L and Q band) are sensitive to UV range
    - **If resolved:** retry with tighter UV range
      ```
      # Add to gaincal call: uvrange='0~1000k' (or equivalent baseline limit)

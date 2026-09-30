@@ -164,7 +164,7 @@ it is an override that skips the frequency check.
 | Warning | Action |
 |---------|--------|
 | `CALIBRATOR_RESOLVED_WARNING` | Use the component model listed in the warning, not a point source model |
-| 3C84 present | Set `uvrange='>5klambda'` in initial bandpass to exclude extended emission |
+| Bandpass calibrator has a UV limit | See "UV limits on the bandpass calibrator" at the end of Step 5 |
 | 3C138 present at K/Ka/Q | Source was in flare in early 2025 — note in summary; flux scale may be affected |
 | 3C48 present below 4 GHz | PA is unstable at these frequencies — viable for Stokes I only |
 
@@ -229,9 +229,26 @@ Record the top 3 cross-field candidates. If a solve fails or a gain solve flags
 heavily, first check whether the refant is weak on that solve's field, then try
 the next cross-field candidate before changing other parameters.
 
-For 3C84 observations: pass `uvrange='>5klambda'` to `ms_initial_bandpass`
-regardless of refant choice. The extended emission contaminates solutions on
-short baselines independent of the reference antenna.
+**UV limits on the bandpass calibrator.** Read the bandpass field's
+`resolved_source` and warnings in `ms_field_list`. For a field outside the
+bundled catalogue, the tool takes them from the VLA calibrator list at the
+band of the field's centre frequency. The limits are band-specific: 3C84 has
+`uvmin 12 klambda` at L-band and no limit at C-band. The tool projects the
+baselines with data toward the field at the start, middle and end of each of
+its scans, and counts, per antenna, the baselines inside the `uvrange`. The
+field is usable only if at least 70% of the antennas keep 4 baselines at every
+one of those times. The note gives the time with the fewest. Without scan
+times the tool counts physical lengths, an upper limit, and the note says so.
+
+| `ms_field_list` for the bandpass field | Action |
+|---|---|
+| warning says `pass uvrange='...'` | Pass that `uvrange` to `ms_initial_bandpass` and the later bandpass and gain solves on this field, whatever refant you chose |
+| warning also names antennas with fewer than 4 baselines | Those antennas get no solution on this field at one or more scan times. Pass the `uvrange` anyway. Name them in the summary; do not pick one as refant |
+| warning says `do not use this field as a calibrator` | The list grades it X in every configuration, or X in this MS's configuration (`ms_observation_info` `array_config`), or the `uvrange` leaves fewer than 70% of the antennas with 4 baselines at one or more scan times. Pick another bandpass calibrator or stop and report |
+| warning says `configuration of this MS is unknown` | The list grades it X in the named configurations. Check the configuration from the observation's proposal or the SDM `configName`. If it is one of them, treat it as the row above |
+| `true`, COMPLETE | Bundled-catalogue source. Follow `CALIBRATOR_RESOLVED_WARNING` |
+| `false`, no warning | No `uvrange` |
+| UNAVAILABLE | Unknown structure; the note says why. Say so in the summary. Do not invent a `uvrange`: in interactive mode ask the user; hands-off, pick another bandpass calibrator or stop and report |
 
 ---
 

@@ -8,6 +8,8 @@ Covers:
 - Hz → human frequency string
 - Radians → degrees
 - ECEF XYZ → geodetic latitude/longitude
+- ECEF positions → baseline lengths
+- ITRF baselines + direction + time → projected baseline lengths
 - Correlation type integer codes → string labels
 - Frequency → band name (telescope-aware)
 """
@@ -15,7 +17,11 @@ Covers:
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
+
+import numpy as np
 
 # ---------------------------------------------------------------------------
 # CASA correlation type codes → string labels
@@ -227,6 +233,78 @@ def ecef_to_geodetic(x: float, y: float, z: float) -> tuple[float, float, float]
 def baseline_length_m(pos1: tuple[float, float, float], pos2: tuple[float, float, float]) -> float:
     """Euclidean distance between two ECEF positions, in metres."""
     return math.sqrt(sum((a - b) ** 2 for a, b in zip(pos1, pos2, strict=False)))
+
+
+def baselines_m(positions) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    All antenna pairs and their physical lengths.
+
+    positions: ECEF metres, shape [3, n_ant]. Returns (ant_i, ant_j, length_m)
+    for every pair i < j, in the order of itertools.combinations.
+    """
+    pos = np.asarray(positions, dtype=float)
+    ant_i, ant_j = np.triu_indices(pos.shape[1], k=1)
+    return ant_i, ant_j, np.linalg.norm(pos[:, ant_i] - pos[:, ant_j], axis=0)
+
+
+def spherical_to_ecef(
+    lon_rad: float, lat_rad: float, radius_m: float
+) -> tuple[float, float, float]:
+    """ECEF XYZ in metres from geocentric longitude, latitude and radius."""
+    return (
+        radius_m * math.cos(lat_rad) * math.cos(lon_rad),
+        radius_m * math.cos(lat_rad) * math.sin(lon_rad),
+        radius_m * math.sin(lat_rad),
+    )
+
+
+@contextmanager
+def bundled_iers() -> Iterator[None]:
+    """
+    Make astropy use only the IERS tables it bundles, for the enclosed block.
+
+    Predicted UT1-UTC is used however old, then UT1 = UTC past the end of the
+    predictions (under 1 s of time). Nothing is downloaded, so a machine with
+    no network gets an answer instead of a ValueError for recent dates.
+    """
+    from astropy.utils import iers
+
+    with (
+        iers.conf.set_temp("auto_download", False),
+        iers.conf.set_temp("auto_max_age", None),
+        iers.conf.set_temp("iers_degraded_accuracy", "ignore"),
+    ):
+        yield
+
+
+def greenwich_sidereal_rad(mjd_seconds) -> np.ndarray:
+    """
+    Greenwich apparent sidereal time in radians for UTC MJD seconds (the MS
+    TIME column), from astropy with the IAU2000B nutation model and the
+    bundled IERS tables (bundled_iers).
+    """
+    from astropy.time import Time
+
+    with bundled_iers():
+        t = Time(np.asarray(mjd_seconds, dtype=float) / 86400.0, format="mjd", scale="utc")
+        return np.asarray(t.sidereal_time("apparent", "greenwich", model="IAU2000B").rad)
+
+
+def projected_uv_m(baseline_ecef_m, ra_rad: float, dec_rad: float, mjd_seconds) -> np.ndarray:
+    """
+    Projected baseline length sqrt(u^2 + v^2) in metres, shape [ntime, nbaseline].
+
+    baseline_ecef_m: ITRF baseline vectors, shape [nbaseline, 3]. The direction
+    is J2000. Thompson, Moran & Swenson eq. 4.1, with the Greenwich hour angle
+    because ITRF X points at the Greenwich meridian.
+    """
+    b = np.asarray(baseline_ecef_m, dtype=float)
+    h = greenwich_sidereal_rad(np.atleast_1d(mjd_seconds))[:, None] - ra_rad
+    bx, by, bz = b[:, 0][None, :], b[:, 1][None, :], b[:, 2][None, :]
+    sin_d, cos_d = math.sin(dec_rad), math.cos(dec_rad)
+    u = np.sin(h) * bx + np.cos(h) * by
+    v = -sin_d * np.cos(h) * bx + sin_d * np.sin(h) * by + cos_d * bz
+    return np.hypot(u, v)
 
 
 # ---------------------------------------------------------------------------

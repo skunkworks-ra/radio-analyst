@@ -185,10 +185,9 @@ radio-analyst/
 │           ├── conversions.py     ← MJD→UTC, Hz→GHz, ECEF→geodetic, corr codes, etc.
 │           ├── telescope.py       ← TelescopeProfile: per-telescope constants
 │           ├── calibrators.py     ← bundled flux/BP calibrator catalogue
-│           ├── vla_calibrators.py ← VLA calibrator cone search
 │           ├── pol_calibrators.py ← polarisation calibrator catalogue
 │           ├── polcal_setjy_fit.py ← polarised model fitting for ms_setjy_polcal
-│           ├── phase_cal_catalog.py ← ms_phase_cal_lookup (reads PhaseCalList.txt)
+│           ├── phase_cal_catalog.py ← NRAO callist: ms_phase_cal_lookup + the cone search used by ms_field_list/ms_set_intents
 │           ├── PhaseCalList.txt   ← NRAO VLA phase-calibrator catalogue (data file)
 │           └── spw_coverage.py    ← SpW frequency-coverage helpers
 └── tests/

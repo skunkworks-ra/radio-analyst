@@ -3,16 +3,19 @@ tools/observation.py — ms_observation_info
 
 Layer 1, Tool 1: Who observed this, when, with what telescope, for how long?
 
-CASA access: tb → OBSERVATION subtable
+CASA access: tb → OBSERVATION subtable; for the VLA, tb → ASDM_EXECBLOCK or
+msmd antenna positions (array configuration)
 Raises InsufficientMetadataError if TELESCOPE_NAME is missing/unknown.
 """
 
 from __future__ import annotations
 
 from ms_inspect.exceptions import InsufficientMetadataError
+from ms_inspect.util.array_config import resolve_array_config
 from ms_inspect.util.casa_context import open_table, validate_ms_path, validate_subtable
 from ms_inspect.util.conversions import mjd_seconds_to_utc, seconds_to_human
 from ms_inspect.util.formatting import field, response_envelope
+from ms_inspect.util.telescope import profile_from_name
 
 TOOL_NAME = "ms_observation_info"
 
@@ -24,7 +27,8 @@ def run(ms_path: str) -> dict:
     Retrieve observation-level metadata from the OBSERVATION subtable.
 
     Returns telescope name, observer, project code, UTC time range,
-    total duration, and a count of HISTORY table entries.
+    total duration, a count of HISTORY table entries, and for the VLA the
+    array configuration (util.array_config.resolve_array_config).
 
     Raises InsufficientMetadataError if TELESCOPE_NAME is absent or unrecognised.
     """
@@ -126,6 +130,19 @@ def run(ms_path: str) -> dict:
         warnings.append("HISTORY subtable absent or unreadable.")
 
     # ------------------------------------------------------------------
+    # Array configuration (VLA only: the configuration letters are VLA's)
+    # ------------------------------------------------------------------
+    profile = profile_from_name(primary_telescope)
+    if profile is not None and profile.canonical == "VLA":
+        casa_calls.append("tb.open(ASDM_EXECBLOCK).getcol('configName'), else msmd baselines")
+        try:
+            array_config = resolve_array_config(p)
+        except Exception as exc:
+            array_config = field(None, flag="UNAVAILABLE", note=f"Read failed: {exc}")
+    else:
+        array_config = field(None, flag="UNAVAILABLE", note="Array configurations are VLA only.")
+
+    # ------------------------------------------------------------------
     # Assemble result
     # ------------------------------------------------------------------
     data = {
@@ -144,6 +161,7 @@ def run(ms_path: str) -> dict:
         "total_duration_human": seconds_to_human(total_s),
         "n_observation_rows": n_rows,
         "history_entries": field(history_count, flag=history_flag),
+        "array_config": array_config,
     }
 
     if n_rows > 1:

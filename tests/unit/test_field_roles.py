@@ -20,12 +20,15 @@ from contextlib import contextmanager
 
 from ms_inspect.tools import fields as fields_mod
 from ms_inspect.tools.fields import run as field_list_run
+from ms_inspect.util.telescope import profile_from_name
 
 
 class FakeMsmd:
     """Minimal stand-in for casatools.msmetadata, for ms_field_list only."""
 
-    def __init__(self, specs, spws_for_field=None, chan_freqs=None, wvr_spws=None):
+    def __init__(
+        self, specs, spws_for_field=None, chan_freqs=None, wvr_spws=None, antenna_ecef=None
+    ):
         # specs: list of (name, intents, ra_deg, dec_deg) indexed by field id
         self._specs = specs
         # Frequency support is opt-in. When it is absent the accessors raise, as
@@ -34,6 +37,28 @@ class FakeMsmd:
         self._spws_for_field = spws_for_field
         self._chan_freqs = chan_freqs or {}
         self._wvr_spws = wvr_spws
+        # ECEF metres, shape [3, n_ant]. Opt-in like frequency: when absent the
+        # antenna accessors raise and the baseline count degrades.
+        self._antenna_ecef = antenna_ecef
+
+    def antennanames(self):
+        if self._antenna_ecef is None:
+            raise AttributeError("antennanames")
+        return [f"ea{a + 1:02d}" for a in range(len(self._antenna_ecef[0]))]
+
+    def antennaposition(self, ant):
+        x, y, z = (float(self._antenna_ecef[k][ant]) for k in range(3))
+        return {
+            "type": "position",
+            "refer": "ITRF",
+            "m0": {"unit": "rad", "value": math.atan2(y, x)},
+            "m1": {"unit": "rad", "value": math.atan2(z, math.hypot(x, y))},
+            "m2": {"unit": "m", "value": math.sqrt(x * x + y * y + z * z)},
+        }
+
+    def baselines(self):
+        n = len(self._antenna_ecef[0])
+        return [[True] * n for _ in range(n)]
 
     def spwsforfield(self, fid):
         if self._spws_for_field is None:
@@ -77,17 +102,19 @@ class FakeMsmd:
         return [snum - 1]
 
     def timesforscans(self, snums):
-        base = snums[0] * 1000.0
+        # MJD seconds in 2017, so sidereal time sees a real epoch.
+        base = 5.0e9 + snums[0] * 1000.0
         return [base, base + 300.0]
 
 
-def _patch(monkeypatch, specs, **msmd_kwargs):
+def _patch(monkeypatch, specs, telescope="EVLA", **msmd_kwargs):
     @contextmanager
     def fake_open(_ms_path):
         yield FakeMsmd(specs, **msmd_kwargs)
 
     monkeypatch.setattr(fields_mod, "open_msmd", fake_open)
     monkeypatch.setattr(fields_mod, "validate_ms_path", lambda p: p)
+    monkeypatch.setattr(fields_mod, "resolve_telescope", lambda p: profile_from_name(telescope))
 
 
 def _rec(result, name):

@@ -65,8 +65,25 @@ tool's results make sense.
   - 1 science target
 - Mosaics: multiple fields with the same source_id → mosaic observation.
   Flag this — imaging strategy will differ from single-pointing.
-- `resolved_source.value == true` for any calibrator → resolved source warning
-  needed before proceeding. See `05-calibrator-science.md`.
+- `resolved_source.value == true` for any calibrator → check its flag.
+  COMPLETE is a bundled-catalogue source: follow `CALIBRATOR_RESOLVED_WARNING`
+  and `05-calibrator-science.md`. INFERRED comes from the VLA calibrator list:
+  the warning gives the `uvrange` for solves on that field. Name the field and
+  its `uvrange` in the report.
+- A warning that says `do not use this field as a calibrator` → the list
+  grades it X in every configuration, or the `uvrange` leaves fewer than 70%
+  of the antennas with 4 baselines at one or more scan times. Report the field
+  as unusable here. A warning that names antennas with fewer than 4 baselines →
+  those antennas get no solution on this field at those times. Name them in
+  the report.
+- A warning that says `graded X in configuration ...` with `configuration of
+  this MS is unknown` → `ms_observation_info` could not find the array
+  configuration. Report the field as "usable only outside the X
+  configurations", so the calibration stages confirm the configuration.
+- `resolved_source.flag == "UNAVAILABLE"` for any calibrator → nobody checked
+  whether it is resolved. This is not a finding of "unresolved". Name the field
+  and its catalogue match in the report as "resolved status unverified", so
+  the calibration stages decide on a UV range for it.
 - `ra_j2000_deg.flag == "SUSPECT"` → broken UVFITS export. Elevation and
   PA cannot be computed for this field. Note which fields are affected.
 

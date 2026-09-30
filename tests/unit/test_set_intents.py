@@ -64,12 +64,19 @@ class TestComputeIntentMap:
     @patch("ms_modify.intents.vla_cone_search")
     def test_vla_cone_search_match(self, mock_cone):
         """VLA cone search match → CALIBRATE_PHASE."""
-        from unittest.mock import MagicMock
+        from ms_inspect.util.phase_cal_catalog import PhaseCalEntry, PhaseCalMatch
 
-        mock_result = MagicMock()
-        mock_result.name = "J1407+2827"
-        mock_result.alt_name = "OQ208"
-        mock_cone.return_value = mock_result
+        entry = PhaseCalEntry(
+            iau_name="1407+284",
+            ra_deg=211.75,
+            dec_deg=28.45,
+            pos_accuracy="A",
+            pos_ref=None,
+            alt_name="OQ208",
+        )
+        mock_cone.return_value = PhaseCalMatch(
+            entry=entry, separation_deg=0.0, band=None, quality=None
+        )
 
         fields = [_make_field(0, "UNKNOWN_SOURCE", ra=211.75, dec=28.45)]
         result = _compute_intent_map(fields)
@@ -99,6 +106,27 @@ class TestComputeIntentMap:
 
         assert result[0]["source"] == "default_target"
         assert result[0]["intents"] == ["OBSERVE_TARGET#ON_SOURCE"]
+
+    def test_bundled_callist_identifies_phase_cal_by_position(self):
+        """No mock: the real bundled catalogue must match J1822-0938 to 1822-096.
+
+        The 3C391 tutorial MS names this field only by J2000 name, which the
+        primary catalogue does not know; the position is the only identity."""
+        fields = [_make_field(0, "J1822-0938", ra=275.619601, dec=-9.649121)]
+        result = _compute_intent_map(fields)
+
+        assert result[0]["source"] == "vla_cone_search"
+        assert result[0]["intents"] == ["CALIBRATE_PHASE#ON_SOURCE"]
+
+    def test_bundled_callist_and_phase_cal_lookup_agree(self):
+        """ms_set_intents and ms_phase_cal_lookup read one catalogue, so a
+        field one of them identifies the other identifies too."""
+        from ms_inspect.util.phase_cal_catalog import cone_search, lookup_nearest
+
+        near = lookup_nearest(275.619601, -9.649121)
+        cone = cone_search(275.619601, -9.649121, radius_arcsec=5.0)
+        assert near is not None and cone is not None
+        assert near.entry.iau_name == cone.entry.iau_name == "1822-096"
 
     def test_no_coordinates(self):
         """Field with no coordinates → default target (skips cone search)."""

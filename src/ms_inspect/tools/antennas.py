@@ -13,8 +13,6 @@ numeric-only names are combined with unusable ECEF positions.
 
 from __future__ import annotations
 
-import itertools
-
 import numpy as np
 
 from ms_inspect.exceptions import InsufficientMetadataError
@@ -22,7 +20,7 @@ from ms_inspect.util.casa_context import open_table, validate_ms_path, validate_
 from ms_inspect.util.conversions import (
     angular_resolution_arcsec,
     baseline_length_klambda,
-    baseline_length_m,
+    baselines_m,
     ecef_to_geodetic,
     largest_angular_scale_arcsec,
 )
@@ -301,16 +299,9 @@ def run_baseline_lengths(ms_path: str, spw_centre_freqs_hz: list[float] | None =
                 ms_path=ms_path,
             )
 
-    # Compute all pairwise baseline lengths
-    lengths_m: list[tuple[int, int, float]] = []  # (ant_i, ant_j, length_m)
+    ant_i, ant_j, all_lengths = baselines_m(positions)
 
-    for i, j in itertools.combinations(range(n_ant), 2):
-        pos_i = (float(positions[0, i]), float(positions[1, i]), float(positions[2, i]))
-        pos_j = (float(positions[0, j]), float(positions[1, j]), float(positions[2, j]))
-        length = baseline_length_m(pos_i, pos_j)
-        lengths_m.append((i, j, length))
-
-    if not lengths_m:
+    if all_lengths.size == 0:
         warnings.append("Only one antenna present — no baselines can be formed.")
         return response_envelope(
             tool_name=TOOL_BASELINES,
@@ -320,8 +311,6 @@ def run_baseline_lengths(ms_path: str, spw_centre_freqs_hz: list[float] | None =
             casa_calls=casa_calls,
         )
 
-    all_lengths = np.array([length for _, _, length in lengths_m])
-
     min_len = float(all_lengths.min())
     max_len = float(all_lengths.max())
     med_len = float(np.median(all_lengths))
@@ -330,8 +319,8 @@ def run_baseline_lengths(ms_path: str, spw_centre_freqs_hz: list[float] | None =
     # Shortest and longest baseline antenna pairs
     min_idx = int(all_lengths.argmin())
     max_idx = int(all_lengths.argmax())
-    min_pair = (names[lengths_m[min_idx][0]], names[lengths_m[min_idx][1]])
-    max_pair = (names[lengths_m[max_idx][0]], names[lengths_m[max_idx][1]])
+    min_pair = (names[ant_i[min_idx]], names[ant_j[min_idx]])
+    max_pair = (names[ant_i[max_idx]], names[ant_j[max_idx]])
 
     # Get SpW frequencies if not provided
     if spw_centre_freqs_hz is None:
@@ -368,7 +357,7 @@ def run_baseline_lengths(ms_path: str, spw_centre_freqs_hz: list[float] | None =
         )
 
     data = {
-        "n_baselines": len(lengths_m),
+        "n_baselines": int(all_lengths.size),
         "min_baseline_m": field(round(min_len, 2)),
         "max_baseline_m": field(round(max_len, 2)),
         "median_baseline_m": field(round(med_len, 2)),

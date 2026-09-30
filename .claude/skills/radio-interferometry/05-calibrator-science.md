@@ -168,7 +168,7 @@ ms_phase_cal_lookup(
     ra_deg=<field RA from ms_field_list>,
     dec_deg=<field Dec from ms_field_list>,
     band_code='L',          # from ms_spectral_window_list centre frequency
-    array_config='B',       # from ms_observation_info or antenna spacing
+    array_config='B',       # from ms_observation_info array_config
     max_sep_deg=0.5,
     min_quality='S',        # raise to 'P' for amplitude calibration
 )

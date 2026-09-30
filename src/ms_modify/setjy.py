@@ -9,7 +9,8 @@ Logic:
   2. Cross-match against the bundled calibrator catalogue.
   3. Resolve a standard PER FIELD via calibrators.resolve_flux_standard().
   4. Write one setjy() call per field, each with its own standard.
-  5. Warn if 3C84 (resolved), 3C138, or 3C48 (variable/partially polarized).
+  5. Warn on catalogue sources flagged resolved, and on 3C138 or 3C48
+     (variable/partially polarized).
 
 Why per field: an MS can need two standards at once. The ALMA case is exactly
 that — Ceres on a solar-system model plus a quasar on Perley-Butler — and a
@@ -39,7 +40,6 @@ from ms_inspect.util.stage_log import record_stage
 TOOL_NAME = "ms_setjy"
 
 # Calibrators requiring special treatment
-_RESOLVED_WARN = {"3C84", "3C286", "3C147", "3C48"}  # may be resolved
 _VARIABLE_WARN = {"3C84", "3C138", "3C48"}  # variable or partially pol
 # Empty means "resolve per field from the observing frequency". A non-empty
 # value is a deliberate whole-run OVERRIDE and skips the frequency gate.
@@ -228,7 +228,7 @@ def run(
 
     Returns:
         Standard response envelope with flux_fields, skipped_fields,
-        warnings (3C84/3C138/3C48 advisory), and script_path.
+        warnings (resolved-source and 3C138/3C48 advisories), and script_path.
     """
     p = validate_ms_path(ms_path)
     ms_str = str(p)

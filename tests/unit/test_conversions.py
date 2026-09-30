@@ -9,23 +9,30 @@ from __future__ import annotations
 import math
 from datetime import UTC
 
+import numpy as np
+import pytest
+
 from ms_inspect.util.conversions import (
     angular_resolution_arcsec,
     baseline_length_klambda,
     baseline_length_m,
+    baselines_m,
     corr_codes_to_labels,
     deg_to_rad,
     ecef_to_geodetic,
+    greenwich_sidereal_rad,
     hz_to_human,
     is_full_stokes,
     largest_angular_scale_arcsec,
     mjd_seconds_to_unix,
     mjd_seconds_to_utc,
     polarization_basis,
+    projected_uv_m,
     rad_to_deg,
     rad_to_dms,
     rad_to_hms,
     seconds_to_human,
+    spherical_to_ecef,
 )
 
 # ---------------------------------------------------------------------------
@@ -212,6 +219,73 @@ class TestBaselineLengthM:
     def test_3d(self):
         d = baseline_length_m((1, 2, 3), (4, 6, 3))
         assert abs(d - 5.0) < 1e-10
+
+
+class TestBaselinesM:
+    def test_pairs_follow_combinations_order(self):
+        import itertools
+
+        pos = [[0, 3, 0, 1], [0, 4, 6, 2], [0, 0, 8, 3]]
+        ant_i, ant_j, lengths = baselines_m(pos)
+        assert list(zip(ant_i.tolist(), ant_j.tolist(), strict=True)) == list(
+            itertools.combinations(range(4), 2)
+        )
+        for i, j, d in zip(ant_i, ant_j, lengths, strict=True):
+            a = tuple(p[i] for p in pos)
+            b = tuple(p[j] for p in pos)
+            assert abs(d - baseline_length_m(a, b)) < 1e-12
+
+    def test_one_antenna_has_no_baselines(self):
+        _, _, lengths = baselines_m([[1.0], [2.0], [3.0]])
+        assert lengths.size == 0
+
+
+class TestSphericalToEcef:
+    def test_axes(self):
+        x, y, z = spherical_to_ecef(0.0, 0.0, 10.0)
+        assert (x, y, z) == (10.0, 0.0, 0.0)
+        x, y, z = spherical_to_ecef(0.0, math.pi / 2, 10.0)
+        assert abs(x) < 1e-12 and abs(z - 10.0) < 1e-12
+
+
+_J2000_MJD_S = 51544.5 * 86400.0  # 2000-01-01 12:00 UTC
+_SIX_SIDEREAL_HOURS_S = 6 * 3600.0 / 1.00273790935
+
+
+class TestGreenwichSidereal:
+    def test_j2000_epoch(self):
+        # GMST at J2000.0 is 280.46061837 deg. UT1-UTC (0.36 s) and the
+        # equation of the equinoxes (under 1.2 s) keep GAST within 0.01 deg.
+        deg = math.degrees(float(greenwich_sidereal_rad([_J2000_MJD_S])[0]))
+        assert abs(deg - 280.46061837) < 0.01
+
+    @pytest.mark.filterwarnings("ignore:ERFA function")
+    def test_past_the_bundled_iers_tables(self):
+        # 2050: no IERS data. Takes UT1 = UTC instead of raising.
+        rad = greenwich_sidereal_rad([70000.0 * 86400.0])
+        assert 0.0 <= float(rad[0]) < 2 * math.pi
+
+
+class TestProjectedUv:
+    def test_toward_the_pole_keeps_the_equatorial_part(self):
+        b = np.array([[300.0, 400.0, 1000.0]])
+        times = _J2000_MJD_S + np.array([0.0, 7200.0, 30000.0])
+        uv = projected_uv_m(b, 1.0, math.pi / 2, times)
+        assert uv.shape == (3, 1)
+        assert np.allclose(uv, 500.0)
+
+    def test_polar_baseline_scales_with_cos_dec(self):
+        b = np.array([[0.0, 0.0, 1000.0]])
+        uv = projected_uv_m(b, 0.3, math.radians(60.0), [_J2000_MJD_S])
+        assert abs(float(uv[0, 0]) - 500.0) < 1e-9
+
+    def test_east_west_baseline_rotates_with_hour_angle(self):
+        # At dec 0 an ITRF-Y baseline projects to |B cos H|; six sidereal
+        # hours later to |B sin H|. The squares add up to B^2.
+        b = np.array([[0.0, 1000.0, 0.0]])
+        times = [_J2000_MJD_S + 1234.0, _J2000_MJD_S + 1234.0 + _SIX_SIDEREAL_HOURS_S]
+        uv = projected_uv_m(b, 0.7, 0.0, times)[:, 0]
+        assert abs(uv[0] ** 2 + uv[1] ** 2 - 1.0e6) < 1.0
 
 
 # ---------------------------------------------------------------------------
