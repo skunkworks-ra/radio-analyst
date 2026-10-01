@@ -1,25 +1,35 @@
-# 13 — Post-Calibration RFI Flagging & SpW Triage
+# 13 — Post-Calibration RFI Flagging & Channel Triage
 
 ## Purpose
 
-After the final applycal, flag residual RFI on the phase calibrator AND the
-science target, and decide which SpWs are RFI-dominated (drop) versus
-salvageable (flag and keep). The pre-cal pipeline (Skill 10) flags calibrators
-only; this stage extends flagging to the fields that were never cleaned, and
-makes the salvage-vs-drop call per SpW.
-
-Time-resolved RFI (intermittent-vs-persistent within a channel) is NOT covered
-by the severity tool — it pools over time. Handle that with a focused
-time-resolved pass on the grey-tier SpWs, after first-pass imaging.
+After the final applycal, remove residual RFI from the phase calibrator and the
+science target, and decide which **channels** are RFI-dominated (flag) versus
+clean (keep). The decision is made per channel and per half-SpW, never per SpW
+from a band-wide median: a SpW whose median looks bad can still hold clean
+channels, and a SpW whose median looks fine can hide a few channels that stripe
+the image.
 
 ---
 
-## Core principle
+## Core principles
 
-**The tool measures. This skill decides the cut.** `ms_spw_amp_severity`
-returns robust numbers; the drop/flag decisions and the empirical
-image-and-compare step live here. There are no hardcoded thresholds — every cut
-is read off the shape of *this dataset's* own distribution.
+**The tools measure. This skill decides the cut.** Every cutoff is read off this
+dataset's own numbers; the values quoted below are starting points from one
+L-band run, not constants.
+
+**Amplitude clipping only against a known model.** A clip on |CORRECTED| of a
+field with real sky clips the sky, and a threshold pooled across fields is set by
+the brightest one. So:
+
+| Field type | Has a model? | Allowed amplitude flagging |
+|---|---|---|
+| Primary flux / polarization calibrators (3C147, 3C138, 3C286, 3C48 …) | Yes — setjy / setjy_polcal | Residual clip (CORRECTED − MODEL) at N × thermal floor |
+| Phase calibrator | No (MODEL is the 1 Jy default) | None. tfcrop / rflag only, if needed |
+| Science target | No | None. Channel decisions from per-channel noise (Step 3); tfcrop / rflag only, if needed |
+
+`ms_postcal_flag` enforces this: any `clip_sigma` / `clipmax` requires
+`datacolumn='residual'` and a real MODEL on every selected field, and raises
+otherwise.
 
 ---
 
@@ -27,104 +37,108 @@ is read off the shape of *this dataset's* own distribution.
 
 | Requirement | Why |
 |---|---|
-| Final applycal complete | Severity is measured on CORRECTED_DATA |
-| `applycal` run with `applymode='calonly'` | Our flagging owns the FLAG column; calibration flags must not pre-empt it |
-| CORRECTED populated on all fields | We measure all fields, including target + phase cal |
-
-If applycal was run in default mode, caltable flags have already been folded in.
-Re-run in `calonly` so the post-cal flag decisions here are the sole authority
-over the FLAG column.
+| Final applycal complete on all fields | Residuals and per-channel noise are measured on CORRECTED |
+| setjy / setjy_polcal models on the primaries (`usescratch=True`) | The residual clip needs a physical MODEL_DATA column |
+| `ms_verify_model` on the primaries | Confirms the models are not the 1 Jy default |
 
 ---
 
-## Step 1 — Measure SpW severity
+## Step 1 — Residual clip on the primary calibrators
 
-Run `ms_spw_amp_severity(ms_path, datacolumn='CORRECTED_DATA')` (all fields).
+Calibrate the primaries robustly before clipping their residuals: per-integration
+**phase** plus per-scan **amplitude**, not per-integration amplitude+phase. Heavy
+flags starve per-integration amplitude solves, the failed solves leave data badly
+calibrated, its residual explodes, and the next clip flags it — a runaway
+(observed on 24A-376: flagged fraction climbed every round while the residual
+sigma in the dirty SpWs got *worse*).
 
-Key returned fields, per SpW:
+```
+ms_postcal_flag(
+    ms_path    = calibrators.ms,
+    field      = '<flux cal>,<pol angle cal>',     # primaries only
+    datacolumn = 'residual',
+    clip_sigma = N,                                 # 24A-376: 7
+    floor_spw  = '<clean SpWs>',                    # thermal floor from known-clean windows
+    keep_spw   = '<all candidate SpWs>',
+)
+```
 
-| Field | Meaning |
+Why `floor_spw`: the SpW's own robust sigma inflates once RFI occupies most of the
+SpW (24A-376: 8–15 Jy in the worst SpWs against a 0.2 Jy floor), so a clip at
+N × its own sigma removes nothing. The floor from the clean SpWs equals the
+thermal noise there — check that it does (3C147: 0.19–0.21 Jy against ~0.19 Jy
+predicted).
+
+**Iterate from the base flags, not cumulatively.** Re-solve on the clipped flags,
+restore the pre-clip flag version, clip again with the better solutions. Stop when
+per-SpW flag fractions change by less than ~1 %. Between rounds, compare the
+bandpass and gain flag fractions per SpW: a jump means solves are failing (often
+a single refant flagged in those channels) — keep the previous round's flags and
+pass a refant list.
+
+**Read the result per channel**, from `flagdata(mode='summary', spwchan=True)` on
+the primaries:
+
+| Pattern across a SpW | Meaning |
 |---|---|
-| `band_floor` | Robust SpW floor (median of per-channel medians) |
-| `clean_floor_anchor` | Robust floor reference taken from the quietest SpWs |
-| `severity` | `band_floor` normalised to the clean reference. The drop signal. |
-| `estimated_discardable_frac` | Fraction of unflagged elements above floor+Nσ. The localized-RFI magnitude. |
-| `per_chan[].discardable_frac` | Same, per channel — localizes the contamination |
-
-`severity` is anchored to the *clean* SpWs, so it stays correct even when much
-of the band is contaminated (a contaminated overall median would understate it).
+| Spikes on a low floor | Channel-localized RFI. Those channels go. |
+| Flat plateau (every channel ~ the same fraction) | Time / antenna structure (lost scans, failed solves). **Not** channel RFI — do not transfer it. |
+| Every channel ≳ 90 % | SpW unusable on the primaries → no bandpass → drop it everywhere. |
 
 ---
 
-## Step 2 — Triage by severity
+## Step 2 — Re-solve and apply
 
-Do NOT use fixed severity cutoffs. The clean SpWs cluster near severity ≈ 1 by
-construction (they define the anchor). Read the triage off the *shape of the
-distribution* for this dataset:
+Re-run the full solve chain on the cleaned primaries (skill 07 / 09), apply to all
+fields. SpWs with no bandpass solutions are flagged by applycal on every field;
+that is the only whole-SpW drop this skill makes.
 
-| Where the SpW sits | Interpretation | Action |
+---
+
+## Step 3 — Channel triage on the target (no clip)
+
+Measure per-channel robust noise on the target: sigma = 1.4826 × MAD of
+Re(CORRECTED), parallel hands, pooled over target fields, against the median
+sigma of the clean SpWs (the floor). The target's visibilities are noise-dominated
+(its sources wash out per visibility), so this is a clean RFI gauge — check it:
+the clean-SpW median |V| should be ≈ 1.18 × the thermal sigma.
+
+| Cut | Action | 24A-376 starting value |
 |---|---|---|
-| Clear outlier, far above the clean cluster | Uniformly RFI-dominated | **Drop** |
-| Between the cluster and the outliers, no clear gap | Grey tier | **Defer** — image first (Step 4) |
-| In the clean cluster | Defines the anchor | Keep |
+| Single channel above the spike cutoff | Flag that channel | sigma > 3 × floor |
+| Half-SpW (channels 0–31 / 32–63) whose median sigma is above the broad cutoff | Flag that half | median > 1.5 × floor |
+| Everything else | Keep | — |
 
-The robust call is the *gap*: sort SpWs by severity and look for the break
-between the bulk that sits near 1 and the handful that stand off well above it.
-Those standing off are the drop tier, however large or small the numbers are in
-this band. A dataset with no clear gap has no clear drop tier — say so rather
-than forcing a cut.
+Report what stays and what goes **before** applying: channels kept per SpW, and
+the kept fraction of the currently unflagged data. On 24A-376 these cuts kept 75 %
+of the unflagged target data (31 % of the full continuum band).
 
-`estimated_discardable_frac` is read the same way — relative to the spread
-across this dataset's SpWs, not against an absolute threshold.
+Caveat: elevated sigma across a whole SpW at a band edge can be a hotter receiver,
+not RFI — MAD cannot tell them apart. Say so when cutting such a SpW.
 
-> Illustration only (not thresholds). On one L-band dataset the sorted
-> severities showed a clean cluster near 1, a grey tier a few× above, and three
-> SpWs standing far off — those three were dropped and the image improved. The
-> numbers are dataset-specific; the *gap* is what drove the decision.
+Primary-calibrator channel flags may be transferred to the target only where they
+are channel-structured (spikes in Step 1's table), never plateaus.
 
----
-
-## Step 3 — Flag localized RFI on the keepers
-
-For SpWs you keep, `estimated_discardable_frac` and per-channel
-`discardable_frac` show where the contamination sits. Flag those channels
-(or run rflag/tfcrop on CORRECTED for the phase cal + target) rather than
-dropping the SpW — this preserves bandwidth and SNR.
-
-`ms_postcal_flag` applies, in one pass: a per-SpW robust clip
-(`clip_sigma`, default 5 → ceiling = median + 5·1.4826·MAD per SpW), then
-tfcrop + rflag, then the manual SpW drop. The robust clip is the principled
-replacement for a flat clip ceiling: it adapts to each SpW's own floor and
-removes the single strong outliers that imprint sinusoidal **ripples/striping**
-across the image (one bad uv sample = one 2-D sine wave). If you see regular
-stripes in a low-noise image, suspect a surviving strong-amplitude outlier and
-tighten the clip.
-
-> **Extended-source warning.** The robust clip is **uv-blind**. On an extended
-> source the per-SpW median is noise-dominated, so a 5σ ceiling can land near
-> the genuine short-spacing flux and clip real emission — watch the image peak
-> before/after. Scope the clip to long baselines with `uvrange` (e.g.
-> `'>2klambda'`) so the short spacings are left to rflag, or raise `clip_sigma`.
-> On a faint/compact field this caveat does not apply.
+Re-run `statwt` after the channel cuts: it computes weights across each SpW, so
+RFI channels had been down-weighting the clean data in the same rows.
 
 ---
 
-## Step 4 — Image, then revisit the grey tier
+## Step 4 — Image per SpW and look
 
-Image with the clear-drop SpWs (Step 2) excluded. Dropping RFI-dominated
-bandwidth typically *raises* sensitivity despite the lost channels: a uniformly
-contaminated SpW adds more noise than the signal its bandwidth contributes.
-
-Then, for the grey tier, compare images with/without each grey SpW, or run the
-time-resolved per-channel pass on just those SpWs to separate intermittent
-bursts (rflag in time, keep most data) from persistent contamination (flag the
-channel). Take the call from evidence, not from severity alone.
+Dirty (or lightly cleaned) mosaic per SpW in IQUV. Stokes I is limited by dirty-beam
+sidelobes, so use **Q, U, V noise** as the RFI gauge (compare to the radiometer
+estimate), and look for **straight stripes** — a few bad visibilities, each
+imprinting a 2-D sine wave. Localize stripes from their orientation (uv
+direction → baselines / times) and flag those visibilities; do not cut more
+channels for them.
 
 ---
 
-## Known limitation
+## Known limitations
 
-`ms_spw_amp_severity` has no time axis. A channel that is bad 5% of the time
-and one bad 100% of the time produce the same `discardable_frac`. The
-intermittent-vs-persistent distinction requires binning on the TIME column;
-that is a separate tool, run only on the grey-tier SpWs to keep it cheap.
+- `ms_spw_amp_severity` pools all four correlations and has no time axis; on a
+  bright calibrator its medians are meaningless. Use residual / per-channel MAD
+  measurements as above until it is fixed.
+- No tool yet returns per-channel target MAD; it is a short script over
+  CORRECTED (parallel hands, sampled rows).

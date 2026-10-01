@@ -697,19 +697,32 @@ class PostcalFlagInput(BaseModel):
         description="Drop-tier SpWs — fully flagged via manual command. Empty = drop nothing.",
     )
     datacolumn: str = Field(
-        default="corrected", description="Column to flag on (default 'corrected')."
+        default="corrected",
+        description="Column to flag on (default 'corrected'). Must be 'residual' when any clip is requested.",
     )
     clip_sigma: float | None = Field(
-        default=5.0,
-        description="Per-SpW robust clip ceiling = median + clip_sigma*1.4826*MAD, computed per kept SpW. None disables.",
+        default=None,
+        description=(
+            "Residual clip: ceiling = clip_sigma*1.4826*MAD(Re(CORRECTED-MODEL)) per field / kept SpW / "
+            "parallel-hand correlation. Default None (no clip). Requires datacolumn='residual' and a real "
+            "MODEL (not the 1 Jy default) on every selected field; raises otherwise. Never clip a phase "
+            "calibrator or target without a model."
+        ),
     )
     clipmax: float | None = Field(
         default=None,
-        description="Flat |data| ceiling fallback, used only when clip_sigma is None.",
+        description="Flat |residual| ceiling, used only when clip_sigma is None. Same residual/model requirement.",
+    )
+    floor_spw: str = Field(
+        default="",
+        description=(
+            "Optional known-clean SpWs. If set, each (field, corr) uses the median residual sigma over these "
+            "SpWs as a thermal floor for every kept SpW (robust when RFI fills most of a SpW)."
+        ),
     )
     uvrange: str = Field(
         default="",
-        description="Optional CASA uvrange applied to the clip only (e.g. '>2klambda') to protect short-spacing flux on extended sources.",
+        description="Optional CASA uvrange applied to the clip only (e.g. '>2klambda').",
     )
     timedevscale: float = Field(default=5.0, description="rflag time deviation threshold.", gt=0.0)
     freqdevscale: float = Field(
@@ -1045,9 +1058,10 @@ async def ms_apply_initial_rflag(params: ApplyInitialRflagInput) -> str:
     name="ms_postcal_flag",
     description=(
         "Post-calibration RFI flagging on the phase calibrator and science target. "
-        "Ordered direct flagdata(action='apply') passes on CORRECTED: optional clip, "
-        "then tfcrop + rflag on the kept SpWs (salvage localized RFI), then a manual "
-        "flag of the drop-tier SpWs. Consumes the SpW triage from ms_spw_amp_severity."
+        "Ordered direct flagdata(action='apply') passes: optional residual clip (only on "
+        "fields with a real MODEL, datacolumn='residual'), then tfcrop + rflag on the kept "
+        "SpWs, then a manual flag of the drop-tier SpWs. Field selection accepts names, "
+        "wildcards, ids and id ranges; an unmatched token raises."
     ),
     annotations={
         "title": "Post-Calibration RFI Flagging",
@@ -1072,8 +1086,10 @@ async def ms_postcal_flag(params: PostcalFlagInput) -> str:
         params.field:        REQUIRED. Phase cal and/or target with valid CORRECTED.
         params.keep_spw:     SpWs to salvage (tfcrop + rflag). Empty = all.
         params.drop_spw:     Drop-tier SpWs to fully flag. Empty = none.
-        params.datacolumn:   Column to flag on (default 'corrected').
-        params.clipmax:      Optional |CORRECTED| ceiling applied first.
+        params.datacolumn:   Column to flag on (default 'corrected'; 'residual' for a clip).
+        params.clip_sigma:   Residual clip in robust sigma (modelled fields only). Default None.
+        params.clipmax:      Flat |residual| ceiling (modelled fields only).
+        params.floor_spw:    Clean SpWs whose sigma sets the clip floor.
         params.timedevscale/freqdevscale: rflag thresholds (default 5.0).
         params.timecutoff/freqcutoff:     tfcrop thresholds (default 4.0).
         params.execute:      Generate scripts only (False) or run in-process (True).
@@ -1091,6 +1107,7 @@ async def ms_postcal_flag(params: PostcalFlagInput) -> str:
         params.datacolumn,
         params.clip_sigma,
         params.clipmax,
+        params.floor_spw,
         params.uvrange,
         params.timedevscale,
         params.freqdevscale,

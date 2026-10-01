@@ -6,13 +6,20 @@ the final applycal. The pre-cal pipeline flags calibrators only; this routine
 extends flagging to the fields that were never cleaned, and bakes the SpW-triage
 decision (from ms_spw_amp_severity, reasoned in skill 13) into the FLAG column.
 
-An ordered sequence of direct flagdata(action='apply') passes over the
-CORRECTED column, preceded by a single flagmanager save:
-  1. clip      — optional ceiling on |CORRECTED| to kill egregious outliers
-                 before the autoflaggers compute their statistics
+An ordered sequence of direct flagdata(action='apply') passes, preceded by a
+single flagmanager save:
+  1. clip      — optional ceiling on |CORRECTED - MODEL| (datacolumn='residual'),
+                 per field / SpW / parallel-hand correlation
   2. tfcrop    — on the SpWs being KEPT (salvage localized RFI, preserve bandwidth)
   3. rflag     — likewise
   4. manual    — fully flag the drop-tier SpWs (so all downstream steps respect it)
+
+Amplitude clipping is only meaningful against a known model. A clip on
+|CORRECTED| of a field with real sky (phase calibrator, science target) clips
+against the sky, not the noise, and a threshold pooled over fields is set by the
+brightest one. So any clip (clip_sigma or clipmax) requires
+datacolumn='residual' AND a real MODEL on every selected field (not the 1 Jy
+default); otherwise the tool raises. tfcrop/rflag carry no such requirement.
 
 Why direct passes, not flagdata(mode='list'): CASA 6.7.5 aborts the list-mode
 report-aggregation path with KeyError 'nreport' after the flags are computed
@@ -45,6 +52,13 @@ _DATACOL_MAP = {
     "model": "MODEL_DATA",
 }
 
+# CASA Stokes enum → name, parallel hands only (the clip never touches cross-hands).
+_PARALLEL_CORR = {5: "RR", 8: "LL", 9: "XX", 12: "YY"}
+
+# A MODEL pinned at the CASA default: amplitude ~1 Jy with flat phase.
+_DEFAULT_MODEL_AMP_TOL = 0.05
+_DEFAULT_MODEL_PHASE_RMS_DEG = 1.0
+
 
 def _parse_spw_ids(spw_sel: str) -> list[int]:
     """Parse a comma-separated SpW selection into whole-SpW ints.
@@ -72,79 +86,181 @@ def _parse_spw_ids(spw_sel: str) -> list[int]:
     return sorted(ids)
 
 
+def match_field_names(names: list[str], field_sel: str) -> list[int]:
+    """Resolve a CASA-style field selection against FIELD names. CASA-free.
+
+    Tokens (comma-separated): exact name, shell wildcard ('PER_FIELD_*'),
+    integer id ('3') or inclusive id range ('3~7'). Every token must match at
+    least one field — an unmatched token raises ValueError rather than silently
+    widening the selection to every field.
+    """
+    import fnmatch
+
+    ids: set[int] = set()
+    for raw in field_sel.split(","):
+        tok = raw.strip()
+        if not tok:
+            continue
+        hit: set[int] = set()
+        if tok.isdigit():
+            if int(tok) < len(names):
+                hit.add(int(tok))
+        elif "~" in tok and all(p.strip().isdigit() for p in tok.split("~", 1)):
+            lo, hi = (int(p) for p in tok.split("~", 1))
+            hit.update(i for i in range(lo, hi + 1) if i < len(names))
+        elif any(c in tok for c in "*?["):
+            hit.update(i for i, nm in enumerate(names) if fnmatch.fnmatchcase(nm, tok))
+        else:
+            hit.update(i for i, nm in enumerate(names) if nm == tok)
+        if not hit:
+            raise ValueError(f"field token {tok!r} matches no field in the MS")
+        ids |= hit
+    if not ids:
+        raise ValueError(f"field selection {field_sel!r} is empty")
+    return sorted(ids)
+
+
+def check_clip_policy(datacolumn: str, clip_sigma: float | None, clipmax: float | None) -> None:
+    """Raise ValueError if an amplitude clip is requested on a non-residual column."""
+    if clip_sigma is None and clipmax is None:
+        return
+    if datacolumn.lower() not in ("residual", "residual_data"):
+        raise ValueError(
+            f"amplitude clip requested on datacolumn={datacolumn!r}. A clip is only "
+            "meaningful on the residual (CORRECTED - MODEL) of a field with a real model; "
+            "on CORRECTED it clips the sky. Use datacolumn='residual' on modelled fields, "
+            "or set clip_sigma=None and clipmax=None and rely on tfcrop/rflag."
+        )
+
+
+def model_is_default(par_amp: float, par_phase_rms_deg: float) -> bool:
+    """True if a field's MODEL looks like the unwritten 1 Jy CASA default. CASA-free."""
+    return (
+        abs(par_amp - 1.0) <= _DEFAULT_MODEL_AMP_TOL
+        and par_phase_rms_deg <= _DEFAULT_MODEL_PHASE_RMS_DEG
+    )
+
+
+def _parallel_corr_by_ddid(ms_str: str) -> list[list[tuple[int, str]]]:
+    """For each DATA_DESC_ID, the (index, name) of its parallel-hand correlations,
+    read from the POLARIZATION row that DATA_DESCRIPTION actually points to."""
+    from ms_inspect.util.casa_context import open_table
+
+    with open_table(ms_str + "/POLARIZATION") as tb:
+        corr = [[int(c) for c in tb.getcell("CORR_TYPE", r)] for r in range(tb.nrows())]
+    with open_table(ms_str + "/DATA_DESCRIPTION") as tb:
+        pol_ids = [int(x) for x in tb.getcol("POLARIZATION_ID")]
+    return [
+        [(i, _PARALLEL_CORR[c]) for i, c in enumerate(corr[pid]) if c in _PARALLEL_CORR]
+        for pid in pol_ids
+    ]
+
+
 def _robust_clip_thresholds(
     ms_str: str,
     field_sel: str,
     keep_spw_ids: list[int],
-    datacolumn: str,
     clip_sigma: float,
-    max_samples: int = 5000,
-    row_chunk: int = 20_000,
-) -> tuple[dict[int, float], list[str]]:
-    """Per-SpW robust clip ceiling = median + clip_sigma * 1.4826 * MAD.
+    floor_spw_ids: list[int] | None = None,
+    max_samples: int = 20_000,
+) -> tuple[dict, dict, list[str]]:
+    """Per-(field, SpW, corr) clip ceiling on |CORRECTED - MODEL|.
 
-    Memory-bounded: one reservoir sample of |datacolumn| per SpW (pooled over
-    channels/correlations), scoped to the selected fields and kept SpWs.
-    Returns (thresholds_by_spw, warnings).
+    sigma = 1.4826 * MAD of Re(residual) on unflagged samples (parallel hands,
+    rows sampled to ~max_samples per field/SpW). Ceiling = clip_sigma * sigma.
+    With floor_spw_ids, each (field, corr) uses the median sigma over those SpWs
+    (a thermal floor from known-clean windows) for every kept SpW instead of the
+    SpW's own sigma, which inflates when RFI occupies most of the SpW.
+
+    Raises ValueError if the selection matches nothing or any selected field's
+    MODEL is the unwritten 1 Jy default. Returns (thresholds, sigmas, warnings),
+    keyed 'field|spw|corr'.
     """
     import numpy as np
 
-    from ms_inspect.tools.spw_amp_severity import _ChanReservoir
     from ms_inspect.util.casa_context import open_table
 
     warnings: list[str] = []
-    col = _DATACOL_MAP.get(datacolumn.lower(), datacolumn)
-    rng = np.random.default_rng(1234)
-
-    # field selection → ids
     with open_table(ms_str + "/FIELD") as tb:
-        names = list(tb.getcol("NAME"))
-    wanted = {n.strip() for n in field_sel.split(",") if n.strip()}
-    field_ids: list[int] = []
-    for sel in wanted:
-        if sel.isdigit():
-            field_ids.append(int(sel))
-        else:
-            field_ids.extend(i for i, nm in enumerate(names) if nm == sel)
-
+        names = [str(n) for n in tb.getcol("NAME")]
+    field_ids = match_field_names(names, field_sel)
     with open_table(ms_str + "/DATA_DESCRIPTION") as tb:
         dd_to_spw = [int(x) for x in tb.getcol("SPECTRAL_WINDOW_ID")]
+    corr_by_dd = _parallel_corr_by_ddid(ms_str)
+    want = set(keep_spw_ids) | set(floor_spw_ids or [])
 
-    keep = set(keep_spw_ids)
-    reservoirs: dict[int, _ChanReservoir] = {s: _ChanReservoir(max_samples) for s in keep}
-    fid_clause = ""
-    if field_ids:
-        fid_clause = " && FIELD_ID IN [" + ",".join(str(i) for i in sorted(set(field_ids))) + "]"
-
+    sigmas: dict[tuple[str, int, str], float] = {}
+    no_model: list[str] = []
     with open_table(ms_str) as tb:
-        if col not in set(tb.colnames()):
-            warnings.append(f"{col} not present; robust clip skipped.")
-            return {}, warnings
-        for ddid, spw in enumerate(dd_to_spw):
-            if spw not in keep:
-                continue
-            sub = tb.query(f"DATA_DESC_ID == {ddid}{fid_clause}")
-            try:
-                n = int(sub.nrows())
-                if n == 0:
+        cols = set(tb.colnames())
+        for need in ("CORRECTED_DATA", "MODEL_DATA"):
+            if need not in cols:
+                raise ValueError(
+                    f"{need} not present; a residual clip needs both CORRECTED and MODEL."
+                )
+        for fid in field_ids:
+            par_amps: list[float] = []
+            phase_rms: list[float] = []
+            for ddid, spw in enumerate(dd_to_spw):
+                if spw not in want or not corr_by_dd[ddid]:
                     continue
-                for start in range(0, n, row_chunk):
-                    nr = min(row_chunk, n - start)
-                    amp = np.abs(sub.getcol(col, startrow=start, nrow=nr))
-                    flg = sub.getcol("FLAG", startrow=start, nrow=nr).astype(bool)
-                    vals = amp[(~flg) & (amp > 0)]
-                    reservoirs[spw].add(vals.ravel(), rng)
-            finally:
-                sub.close()
+                sub = tb.query(
+                    f"DATA_DESC_ID == {ddid} && FIELD_ID == {fid} && ANTENNA1 != ANTENNA2"
+                )
+                try:
+                    n = int(sub.nrows())
+                    if n == 0:
+                        continue
+                    step = max(1, n // max(1, max_samples // 64))
+                    c = sub.getcol("CORRECTED_DATA", startrow=0, nrow=-1, rowincr=step)
+                    m = sub.getcol("MODEL_DATA", startrow=0, nrow=-1, rowincr=step)
+                    f = sub.getcol("FLAG", startrow=0, nrow=-1, rowincr=step).astype(bool)
+                finally:
+                    sub.close()
+                for ci, cname in corr_by_dd[ddid]:
+                    mod = m[ci]
+                    par_amps.append(float(np.median(np.abs(mod))))
+                    phase_rms.append(float(np.degrees(np.std(np.angle(mod)))))
+                    r = (c[ci] - mod)[~f[ci]].real
+                    if r.size < 100:
+                        continue
+                    sigmas[(names[fid], spw, cname)] = float(
+                        1.4826 * np.median(np.abs(r - np.median(r)))
+                    )
+            if par_amps and model_is_default(
+                float(np.median(par_amps)), float(np.median(phase_rms))
+            ):
+                no_model.append(names[fid])
+    if no_model:
+        raise ValueError(
+            f"field(s) {no_model} have MODEL at the 1 Jy default (no real model); a residual "
+            "clip there clips the sky. Restrict the clip to fields with a setjy/polcal model."
+        )
 
-    thresholds: dict[int, float] = {}
-    for spw, res in reservoirs.items():
-        st = res.stats()
-        if st is None:
-            warnings.append(f"SpW {spw} had no unflagged {col}; robust clip skipped for it.")
-            continue
-        thresholds[spw] = round(st["median"] + clip_sigma * st["robust_sigma"], 6)
-    return thresholds, warnings
+    thresholds: dict[str, float] = {}
+    sig_out: dict[str, float] = {}
+    for fid in field_ids:
+        fname = names[fid]
+        for cname in sorted({k[2] for k in sigmas if k[0] == fname}):
+            floor = None
+            if floor_spw_ids:
+                fl = [
+                    sigmas[(fname, s, cname)] for s in floor_spw_ids if (fname, s, cname) in sigmas
+                ]
+                if fl:
+                    floor = float(np.median(fl))
+                else:
+                    warnings.append(f"{fname}/{cname}: no floor_spw data; using per-SpW sigma.")
+            for spw in sorted(keep_spw_ids):
+                own = sigmas.get((fname, spw, cname))
+                sg = floor if floor is not None else own
+                if sg is None:
+                    warnings.append(f"{fname} SpW {spw} {cname}: no unflagged residual; no clip.")
+                    continue
+                key = f"{fname}|{spw}|{cname}"
+                thresholds[key] = round(clip_sigma * sg, 6)
+                sig_out[key] = round(own, 6) if own is not None else None
+    return thresholds, sig_out, warnings
 
 
 def _build_flag_calls(
@@ -153,7 +269,7 @@ def _build_flag_calls(
     drop_spw: str,
     datacolumn: str,
     clipmax: float | None,
-    clip_thresholds: dict[int, float] | None,
+    clip_thresholds: dict[str, float] | None,
     uvrange: str,
     timedevscale: float,
     freqdevscale: float,
@@ -163,21 +279,23 @@ def _build_flag_calls(
     """Build the ordered list of flagdata call kwargs (one dict per pass).
 
     Order is significant: clip(s) first so tfcrop/rflag compute statistics on
-    clipped data, then the manual drop-tier flag last. Every call carries
+    clipped data, then the manual drop-tier flag last. clip_thresholds is keyed
+    'field|spw|corr' (from _robust_clip_thresholds). Every call carries
     action='apply' and flagbackup=False (one shared flagmanager save is issued
     by the caller). Rendered to script text and executed from the same spec.
     """
     calls: list[dict] = []
     if clip_thresholds:
-        # Per-SpW robust clip: median + clip_sigma*robust_sigma, computed per SpW.
-        for spw_id in sorted(clip_thresholds):
-            thr = clip_thresholds[spw_id]
+        # One clip per 'field|spw|corr' key, each with its own ceiling.
+        for key in sorted(clip_thresholds):
+            fname, spw_id, corr = key.split("|")
             kw = {
                 "mode": "clip",
-                "field": field,
-                "spw": str(spw_id),
+                "field": fname,
+                "spw": spw_id,
+                "correlation": corr,
                 "datacolumn": datacolumn,
-                "clipminmax": [0.0, thr],
+                "clipminmax": [0.0, clip_thresholds[key]],
                 "clipoutside": True,
             }
             if uvrange:
@@ -245,8 +363,8 @@ Auto-generated by ms_postcal_flag (ms_modify).
 Run with: python postcal_flag.py
 
 Requires: CORRECTED populated on the selected fields (final applycal done).
-For the SpW-drop decisions to be honoured everywhere, run applycal with
-applymode='calonly' so caltable flags do not pre-empt these decisions.
+Any clip below runs on the residual (CORRECTED - MODEL) of fields with a real
+model only; thresholds are per field / SpW / parallel-hand correlation.
 
 Direct flagdata(action='apply') passes rather than one mode='list' pass:
 CASA 6.7.5 aborts list mode with KeyError 'nreport'. A single flagmanager
@@ -285,8 +403,9 @@ def run(
     keep_spw: str = "",
     drop_spw: str = "",
     datacolumn: str = "corrected",
-    clip_sigma: float | None = 5.0,
+    clip_sigma: float | None = None,
     clipmax: float | None = None,
+    floor_spw: str = "",
     uvrange: str = "",
     timedevscale: float = 5.0,
     freqdevscale: float = 5.0,
@@ -309,12 +428,17 @@ def run(
         drop_spw:     CASA SpW selection for the drop-tier SpWs — fully flagged via a
                       manual command so downstream imaging/calibration respects it.
                       Empty = drop nothing.
-        datacolumn:   Column to flag on (default 'corrected').
-        clip_sigma:   Per-SpW robust clip: ceiling = median + clip_sigma*1.4826*MAD,
-                      computed per kept SpW from the current data (default 5.0). This
-                      is the principled, dataset-adaptive replacement for a flat clip.
-                      Set None to disable (then clipmax is used if given).
-        clipmax:      Flat |data| ceiling fallback, used only when clip_sigma is None.
+        datacolumn:   Column to flag on (default 'corrected'). Must be 'residual'
+                      when any clip is requested.
+        clip_sigma:   Residual clip: ceiling = clip_sigma * 1.4826*MAD(Re residual),
+                      per field / kept SpW / parallel-hand correlation. Default None
+                      (no clip). Requires datacolumn='residual' and a real MODEL on
+                      every selected field; raises otherwise.
+        clipmax:      Flat |residual| ceiling, used only when clip_sigma is None. Same
+                      residual/model requirement.
+        floor_spw:    Optional SpW selection of known-clean windows. If set, each
+                      (field, corr) uses the median sigma over these SpWs as a thermal
+                      floor for every kept SpW (robust when RFI fills most of a SpW).
         uvrange:      Optional CASA uvrange applied to the clip only (e.g. '>2klambda').
                       The robust clip is uv-blind; on an extended source scope it to
                       longer baselines so real short-spacing flux is not clipped.
@@ -357,27 +481,43 @@ def run(
 
     script_path = str(workdir_path / "postcal_flag.py")
 
-    # Per-SpW robust clip thresholds (median + clip_sigma*robust_sigma), computed
-    # from the current data. Takes precedence over the flat clipmax fallback.
-    clip_thresholds: dict[int, float] | None = None
+    from ms_inspect.exceptions import ComputationError
+
+    try:
+        check_clip_policy(datacolumn, clip_sigma, clipmax)
+    except ValueError as exc:
+        raise ComputationError(str(exc), ms_path=ms_path) from None
+
+    # Residual clip thresholds per field / SpW / parallel-hand correlation.
+    # Takes precedence over the flat clipmax fallback.
+    clip_thresholds: dict[str, float] | None = None
+    clip_sigmas: dict[str, float] | None = None
     if clip_sigma is not None:
         keep_ids = _parse_spw_ids(keep_spw)
         if not keep_ids:
-            warnings.append(
-                "clip_sigma set but keep_spw is empty or not a plain SpW-id list; "
-                "robust per-SpW clip skipped (use clipmax for a flat clip)."
+            raise ComputationError(
+                "clip_sigma set but keep_spw is empty or not a plain SpW-id list; the "
+                "residual clip is computed per kept SpW.",
+                ms_path=ms_path,
             )
-        else:
-            try:
-                clip_thresholds, clip_warn = _robust_clip_thresholds(
-                    ms_str, field, keep_ids, datacolumn, clip_sigma
-                )
-                warnings.extend(clip_warn)
-                casa_calls.append(
-                    f"robust clip: per-SpW median + {clip_sigma}*1.4826*MAD over {field!r}"
-                )
-            except Exception as exc:  # noqa: BLE001 - surface, do not abort script write
-                warnings.append(f"Robust clip computation failed ({exc}); no clip emitted.")
+        floor_ids = _parse_spw_ids(normalize_spw_sel(floor_spw)) or None
+        try:
+            clip_thresholds, clip_sigmas, clip_warn = _robust_clip_thresholds(
+                ms_str, field, keep_ids, clip_sigma, floor_ids
+            )
+        except ValueError as exc:
+            raise ComputationError(str(exc), ms_path=ms_path) from None
+        warnings.extend(clip_warn)
+        casa_calls.append(
+            f"residual clip: {clip_sigma} x 1.4826*MAD(Re(CORRECTED-MODEL)) per field/SpW/corr "
+            f"over {field!r}" + (f", floor from SpWs {floor_ids}" if floor_ids else "")
+        )
+    elif clipmax is not None:
+        # Flat residual clip: still needs real models on every selected field.
+        try:
+            _robust_clip_thresholds(ms_str, field, _parse_spw_ids(keep_spw) or [0], 1.0)
+        except ValueError as exc:
+            raise ComputationError(str(exc), ms_path=ms_path) from None
 
     flag_calls = _build_flag_calls(
         field,
@@ -405,6 +545,8 @@ def run(
         "datacolumn": datacolumn,
         "clip_sigma": clip_sigma,
         "clip_thresholds": clip_thresholds,
+        "clip_residual_sigma": clip_sigmas,
+        "floor_spw": floor_spw,
         "clipmax": clipmax,
         "uvrange": uvrange,
         "rflag_timedevscale": timedevscale,
@@ -416,8 +558,7 @@ def run(
     if not execute:
         warnings.append(
             f"Script written to {workdir}. Ensure the final applycal has populated "
-            "CORRECTED on the selected fields (run applycal with applymode='calonly' so "
-            "these SpW-drop decisions own the FLAG column). Then run postcal_flag.py "
+            "CORRECTED on the selected fields. Then run postcal_flag.py "
             "externally and call ms_flag_summary to capture the delta."
         )
         return response_envelope(
@@ -437,8 +578,6 @@ def run(
             "casatasks is not installed or cannot be imported.",
             ms_path=ms_path,
         ) from None
-
-    from ms_inspect.exceptions import ComputationError
 
     try:
         # One versioned backup, then a direct action='apply' pass per command —
