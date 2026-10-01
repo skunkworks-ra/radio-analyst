@@ -14,7 +14,12 @@ from pathlib import Path
 import pytest
 
 from ms_inspect.exceptions import ComputationError
-from ms_modify.flag_caltable import _build_script, _resolve_mode
+from ms_modify.flag_caltable import (
+    _build_script,
+    _resolve_mode,
+    check_intervals,
+    summarize_intervals,
+)
 
 # ---------------------------------------------------------------------------
 # _resolve_mode
@@ -149,6 +154,7 @@ class TestRunScriptGen:
         import ms_modify.flag_caltable as mod
 
         monkeypatch.setattr(mod, "_read_viscal_type", lambda _p: "B")
+        monkeypatch.setattr(mod, "_read_intervals", lambda _p: summarize_intervals([], [], [], []))
         ct = self._make_caltable(tmp_path, ".B")
         workdir = tmp_path / "work"
         workdir.mkdir()
@@ -167,3 +173,54 @@ class TestRunScriptGen:
         workdir.mkdir()
         with pytest.raises(ComputationError, match="delay/position"):
             mod.run(str(ct), str(workdir), execute=False)
+
+
+# ---------------------------------------------------------------------------
+# solution-interval counting and the gain-table gate
+# ---------------------------------------------------------------------------
+
+FEW = {"min": 2, "median": 2.0, "max": 3, "n_groups": 26}
+MANY = {"min": 120, "median": 140.0, "max": 160, "n_groups": 26}
+
+
+class TestIntervals:
+    def test_summarize_counts_distinct_times_per_group(self):
+        # field 0: ant 0 has 3 intervals, ant 1 has 2; field 1 ant 0 has 1
+        f = [0, 0, 0, 0, 0, 1]
+        s = [0, 0, 0, 0, 0, 0]
+        a = [0, 0, 0, 1, 1, 0]
+        t = [1.0, 2.0, 3.0, 1.0, 2.0, 9.0]
+        out = summarize_intervals(f, s, a, t)
+        assert out == {"min": 1, "median": 2.0, "max": 3, "n_groups": 3}
+
+    def test_summarize_empty(self):
+        assert summarize_intervals([], [], [], [])["median"] is None
+
+    def test_gain_few_intervals_refused_when_auto_routed(self):
+        with pytest.raises(ComputationError, match="min_intervals=10"):
+            check_intervals("G", None, FEW, 10)
+
+    def test_gain_few_intervals_explicit_mode_warns(self):
+        w = check_intervals("G", "rflag", FEW, 10)
+        assert w and "median of 2" in w and "explicitly" in w
+
+    def test_gain_many_intervals_passes(self):
+        assert check_intervals("G", None, MANY, 10) is None
+
+    def test_bandpass_and_dterms_not_gated(self):
+        # B and D vary along frequency, not time: interval count is irrelevant
+        assert check_intervals("B", None, FEW, 10) is None
+        assert check_intervals("Df", None, FEW, 10) is None
+
+    def test_run_refuses_gain_table_with_two_scans(self, tmp_path, monkeypatch):
+        import ms_modify.flag_caltable as mod
+
+        monkeypatch.setattr(mod, "_read_viscal_type", lambda _p: "G")
+        monkeypatch.setattr(mod, "_read_intervals", lambda _p: FEW)
+        ct = tmp_path / "gain.G"
+        ct.mkdir()
+        (ct / "table.info").write_text("Type = Calibration\n")
+        work = tmp_path / "work"
+        work.mkdir()
+        with pytest.raises(ComputationError, match="solution intervals"):
+            mod.run(str(ct), str(work), execute=False)

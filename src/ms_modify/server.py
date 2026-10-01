@@ -770,6 +770,15 @@ class FlagCaltableInput(BaseModel):
         default=True,
         description="Save a .flagversions backup of the caltable before flagging (default True).",
     )
+    min_intervals: int = Field(
+        default=10,
+        description=(
+            "Gain tables (G, T): minimum median solution intervals per (field, SpW, antenna) "
+            "for autoflagging along time. Below it auto-routing refuses; an explicit mode runs "
+            "with a warning. Interval counts are always reported."
+        ),
+        ge=0,
+    )
     execute: bool = Field(
         default=False,
         description=(
@@ -1149,6 +1158,7 @@ async def ms_flag_caltable(params: FlagCaltableInput) -> str:
         params.mode:          'rflag'/'tfcrop' override, or None to auto-route.
         params.datacolumn:    Solution column (default 'CPARAM').
         params.flagbackup:    Save a .flagversions backup first (default True).
+        params.min_intervals: Gain tables: min median solution intervals per antenna (default 10).
         params.execute:       Generate script only (False) or run in-process (True).
 
     Returns:
@@ -1163,6 +1173,7 @@ async def ms_flag_caltable(params: FlagCaltableInput) -> str:
         params.mode,
         params.datacolumn,
         params.flagbackup,
+        params.min_intervals,
         params.execute,
     )
 

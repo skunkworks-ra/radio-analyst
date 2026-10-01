@@ -15,6 +15,14 @@ ms_calsol_stats reads):
     K, Kcross, KAntPos   → refused  — one value per antenna; autoflag is not
                                       meaningful on a delay/position table
 
+Gain tables (G, T) are flagged along time, so rflag needs enough solution
+intervals per antenna to have neighbours to compare against. With solint='inf'
+and a handful of scans there are only 2-3 points per antenna per field, and rflag
+flags real solutions (24A-376: 3C147 went 16% -> 28% flagged on 2 scans). The
+tool counts solution intervals per (field, SpW, antenna) and reports them; when
+the median is below min_intervals (default 10) auto-routing refuses, and an
+explicit mode= override runs with a warning quoting the counts.
+
 A single sigma knob (default 5.0; 6.0 is more conservative) maps to the relevant
 flagdata thresholds per mode. The tool reports the flagged fraction before and
 after so the caller (skill) can apply its own go/no-go logic — e.g. > 30%
@@ -48,6 +56,9 @@ _MODE_BY_TYPE: dict[str, str] = {
 # Delay / antenna-position tables: one value per antenna, nothing to autoflag.
 _REFUSED_TYPES = {"K", "Kcross", "KAntPos"}
 
+# Types flagged along the time axis: need enough solution intervals per antenna.
+_TIME_AXIS_TYPES = {"G", "T"}
+
 
 def _validate_caltable_path(caltable_path: str) -> Path:
     """Resolve and validate a CASA calibration-table path (exists + table.info)."""
@@ -69,6 +80,64 @@ def _read_viscal_type(caltable_path: str) -> str:
     with open_table(caltable_path) as tb:
         viscal = tb.getkeywords().get("VisCal", "")
     return viscal.replace(" Jones", "").strip()
+
+
+def summarize_intervals(field_ids, spw_ids, ant_ids, times) -> dict:
+    """Solution intervals (distinct TIME values) per (field, SpW, antenna). CASA-free.
+
+    Returns {'min', 'median', 'max', 'n_groups'}; all None when the table is empty.
+    """
+    import numpy as np
+
+    groups: dict[tuple[int, int, int], set[float]] = {}
+    for f, s, a, t in zip(field_ids, spw_ids, ant_ids, times, strict=True):
+        groups.setdefault((int(f), int(s), int(a)), set()).add(round(float(t), 3))
+    if not groups:
+        return {"min": None, "median": None, "max": None, "n_groups": 0}
+    counts = np.array([len(v) for v in groups.values()])
+    return {
+        "min": int(counts.min()),
+        "median": float(np.median(counts)),
+        "max": int(counts.max()),
+        "n_groups": int(counts.size),
+    }
+
+
+def _read_intervals(caltable_path: str) -> dict:
+    """Count solution intervals per (field, SpW, antenna) in a caltable."""
+    with open_table(caltable_path) as tb:
+        return summarize_intervals(
+            tb.getcol("FIELD_ID"),
+            tb.getcol("SPECTRAL_WINDOW_ID"),
+            tb.getcol("ANTENNA1"),
+            tb.getcol("TIME"),
+        )
+
+
+def check_intervals(
+    viscal_type: str, mode_override: str | None, intervals: dict, min_intervals: int
+) -> str | None:
+    """Raise (auto-routed) or return a warning (explicit mode) when a time-axis
+    table has too few solution intervals per antenna for rflag/tfcrop to judge."""
+    from ms_inspect.exceptions import ComputationError
+
+    first = viscal_type.split()[0] if viscal_type else ""
+    med = intervals.get("median")
+    if first not in _TIME_AXIS_TYPES or med is None or med >= min_intervals:
+        return None
+    msg = (
+        f"{viscal_type} table has a median of {med:g} solution intervals per "
+        f"(field, SpW, antenna) (min {intervals['min']}, max {intervals['max']}), "
+        f"below min_intervals={min_intervals}. Autoflagging along time with so few "
+        "points flags real solutions."
+    )
+    if mode_override is None:
+        raise ComputationError(
+            msg + " Inspect with ms_calsol_stats and flag bad antennas explicitly, or "
+            "pass mode= explicitly to override.",
+            ms_path="",
+        )
+    return msg + " Running anyway because mode was passed explicitly."
 
 
 def _resolve_mode(viscal_type: str, mode_override: str | None) -> str:
@@ -160,6 +229,7 @@ def run(
     mode: str | None = None,
     datacolumn: str = "CPARAM",
     flagbackup: bool = True,
+    min_intervals: int = 10,
     execute: bool = False,
 ) -> dict:
     """
@@ -177,6 +247,10 @@ def run(
                        solutions: B, G, D). Use 'FPARAM' only for real-valued
                        tables.
         flagbackup:    Save a .flagversions backup of the caltable first (default True).
+        min_intervals: For gain tables (G, T): minimum median number of solution
+                       intervals per (field, SpW, antenna) for autoflagging. Below
+                       it, auto-routing refuses; an explicit mode runs with a
+                       warning (default 10).
         execute:       If False (default), write flag_caltable.py and return.
                        If True, run the summary→apply→summary sequence in-process
                        and report flagged_frac_before/after/delta.
@@ -206,6 +280,11 @@ def run(
     viscal_type = _read_viscal_type(caltable_str)
     casa_calls.append(f"tb.getkeywords() → VisCal='{viscal_type} Jones'")
     resolved_mode = _resolve_mode(viscal_type, mode)
+    intervals = _read_intervals(caltable_str)
+    casa_calls.append("tb.getcol(FIELD_ID, SPECTRAL_WINDOW_ID, ANTENNA1, TIME) → intervals")
+    interval_warn = check_intervals(viscal_type, mode, intervals, min_intervals)
+    if interval_warn:
+        warnings.append(interval_warn)
 
     script_path = str(workdir_path / "flag_caltable.py")
     script_content = _build_script(
@@ -224,6 +303,8 @@ def run(
         "mode": fmt_field(resolved_mode),
         "datacolumn": datacolumn,
         "sigma": sigma,
+        "solution_intervals": intervals,
+        "min_intervals": min_intervals,
     }
 
     if not execute:

@@ -155,13 +155,24 @@ solutions from propagating into every downstream solve.
 | Table | When | mode (auto) | sigma |
 |---|---|---|---|
 | `bandpass.B` | after Step 3, before Step 4 gain solve | tfcrop | 5.0 |
-| `gain.G` | after Step 4, before fluxscale | rflag | 5.0 |
+| `gain.G` | after Step 4, before fluxscale — **only if ≥ 10 solution intervals per antenna per field** (see below) | rflag | 5.0 |
 | `dterms.D` (polcal) | after the D-term solve (skill 09) | rflag | 5.0 |
 | `delay.K` | — | — | **do not flag** — one value per antenna; inspect with `ms_calsol_stats` and flag bad antennas explicitly instead |
 
 `ms_flag_caltable` auto-routes the mode from the table's VisCal type, so you
 normally pass only `caltable_path`, `workdir`, and `sigma`. Default `sigma=5.0`
 is gentle — it catches the worst outliers without over-flagging.
+
+**Gain tables need enough time samples.** rflag judges each gain solution against
+its neighbours in time. With `solint='inf'` on a few calibrator scans there are
+only 2–3 points per antenna per field, and rflag flags real solutions (24A-376:
+3C147 on 2 scans went 16 % → 28 % flagged, other fields untouched).
+`ms_flag_caltable` reports `solution_intervals` (min / median / max per field,
+SpW, antenna) and refuses to auto-route a G/T table whose median is below
+`min_intervals` (default 10). In that case inspect with `ms_calsol_stats` and
+flag specific antennas/scans explicitly; do not force `mode='rflag'` unless the
+counts justify it. Bandpass and D-term tables vary along frequency and are not
+affected.
 
 **Read the reported flagged fraction:**
 
@@ -489,9 +500,11 @@ ms_calsol_stats(caltable_path = {WORKDIR}/gain.G)
 The `gain.G` table contains solutions for both flux and phase calibrators. Use
 `field_names` from the output to identify which field index corresponds to each.
 
-**Before fluxscale (Step 6), flag the `gain.G` solutions** with `ms_flag_caltable`
-(rflag, sigma=5.0) — see "Caltable solution flagging" above. Outlier gain
-solutions left in place will bias the fluxscale transfer.
+**Before fluxscale (Step 6), flag outlier `gain.G` solutions** — with
+`ms_flag_caltable` (rflag, sigma=5.0) only when it reports ≥ 10 solution
+intervals per antenna per field; otherwise from `ms_calsol_stats` outliers, by
+hand (see "Caltable solution flagging" above). Outlier gain solutions left in
+place will bias the fluxscale transfer.
 
 | Field | Index | Threshold | Action if exceeded |
 |---|---|---|---|
