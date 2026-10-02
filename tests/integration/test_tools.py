@@ -546,6 +546,20 @@ class TestFlagSummaryReal:
 
 
 @_SKIP
+class TestSmearingLimitsReal:
+    """Integration test for ms_smearing_limits against a real MS."""
+
+    def test_basic_run(self):
+        from ms_inspect.tools.smearing import run
+
+        result = run(_TEST_MS)
+        assert result["status"] == "ok"
+        assert result["data"]["x"]["value"] > 0
+        assert result["data"]["suggested_timebin_s"]["value"] <= 30.0
+        assert result["data"]["per_spw"]
+
+
+@_SKIP
 class TestApplyRflagReal:
     """Integration tests for ms_apply_rflag against a real MS."""
 

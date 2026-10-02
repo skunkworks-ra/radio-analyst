@@ -76,6 +76,7 @@ _RUN_REGISTRY: dict[str, str] = {
     "ms_applycal": "ms_modify.applycal",
     "ms_apply_rflag": "ms_modify.rflag",
     "ms_flag_caltable": "ms_modify.flag_caltable",
+    "ms_split_average": "ms_modify.split_average",
     "ms_tclean": "ms_modify.tclean",
 }
 

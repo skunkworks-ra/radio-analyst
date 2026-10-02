@@ -11,6 +11,7 @@ allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_observation_info,
                mcp__plugin_radio-analyst_ms-inspect__ms_correlator_config,
                mcp__plugin_radio-analyst_ms-inspect__ms_antenna_list,
                mcp__plugin_radio-analyst_ms-inspect__ms_baseline_lengths,
+               mcp__plugin_radio-analyst_ms-inspect__ms_smearing_limits,
                mcp__plugin_radio-analyst_ms-inspect__ms_elevation_vs_time,
                mcp__plugin_radio-analyst_ms-inspect__ms_parallactic_angle_vs_time,
                mcp__plugin_radio-analyst_ms-inspect__ms_shadowing_report,
@@ -40,6 +41,7 @@ allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_observation_info,
                mcp__plugin_radio-analyst_ms-modify__ms_bandpass,
                mcp__plugin_radio-analyst_ms-modify__ms_fluxscale,
                mcp__plugin_radio-analyst_ms-modify__ms_applycal,
+               mcp__plugin_radio-analyst_ms-modify__ms_split_average,
                mcp__plugin_radio-analyst_ms-modify__ms_tclean,
                mcp__plugin_radio-analyst_ms-inspect__ms_image_stats,
                mcp__plugin_radio-analyst_ms-inspect__ms_phase_cal_lookup,
@@ -110,3 +112,4 @@ Read each file with the Read tool only when you reach that stage:
 - `11-imaging.md`
 - `12-selfcal.md`
 - `13-postcal-rfi-flagging.md`
+- `15-averaging.md` (after the final applycal, before imaging)

@@ -15,7 +15,7 @@ All placeholders are populated from Phase 1–2 tool outputs before calling `ms_
 
 | Placeholder | Source tool | What to extract |
 |---|---|---|
-| `{VIS}` | provided | full MS path (not calibrators.ms) |
+| `{VIS}` | provided | the averaged target MS from `15-averaging.md` if one exists, else the full MS (never calibrators.ms) |
 | `{TARGET_FIELD}` | user confirmed (see Step 0) | CASA field selection string, e.g. `'2~8'` or `'3C391_C1'` |
 | `{IS_MOSAIC}` | user confirmed (see Step 0) | True if imaging multiple pointings together |
 | `{STOKES}` | user confirmed | default `'I'`; `'IQUV'` etc. accepted |
@@ -71,6 +71,14 @@ ms_corrected_stats(field='{PHASE_FIELD},{TARGET_FIELD}', chan_start=..., chan_en
 
 A failed gate means the Step 9 verdict will read `marginal`/FAIL: that is
 calibration failure, not a faint source. Do not report the peak as a detection.
+
+---
+
+## Step 0.75 — Average first
+
+If no averaged target MS exists yet, read `15-averaging.md` and make one
+before deriving parameters. Run the Step 0.5 gate on the full MS; run every
+later step on the averaged MS.
 
 ---
 

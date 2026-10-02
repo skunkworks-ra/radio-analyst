@@ -7,6 +7,8 @@ allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
                mcp__plugin_radio-analyst_ms-inspect__ms_antenna_list,
                mcp__plugin_radio-analyst_ms-inspect__ms_baseline_lengths,
                mcp__plugin_radio-analyst_ms-inspect__ms_scan_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_smearing_limits,
+               mcp__plugin_radio-analyst_ms-modify__ms_split_average,
                mcp__plugin_radio-analyst_ms-modify__ms_tclean,
                mcp__plugin_radio-analyst_ms-inspect__ms_image_stats,
                Bash,
@@ -30,7 +32,11 @@ Prerequisite: CORRECTED_DATA populated on the target field(s) — run
    Never assume mosaic vs. single pointing. Default Stokes='I' unless
    polcal is complete and the user wants IQUV.
 
-3. Gather placeholders from tool outputs (no hand math):
+3. If no averaged target MS exists, read `15-averaging.md`:
+   `ms_smearing_limits` → `ms_split_average` → run the script → verify.
+   Use the averaged MS as `ms_path` from here on.
+
+3a. Gather placeholders from tool outputs (no hand math):
    - `ms_observation_info(ms_path)` → telescope, center_freq_hz
    - `ms_spectral_window_list(ms_path)` → bandwidth_hz
    - `ms_antenna_list(ms_path)` → dish_diameter_m, n_ant

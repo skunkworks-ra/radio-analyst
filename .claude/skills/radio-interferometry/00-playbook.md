@@ -14,6 +14,7 @@ Find your current state in the left column. Run the right-column tool
 | Pre-cal complete (rflag done, CORRECTED populated) | Run `/calibrate` or read `07-calibration-execution.md` |
 | Calibration solve done (G/B/K/fluxscale) | For pol: `/polcal` or read `09-polcal-execution.md`; else `/image` |
 | Polcal done | `/image` with stokes='IQUV' or read `11-imaging.md` |
+| Final applycal + post-cal flagging done, before imaging | Read `15-averaging.md` — smearing-limited channel/time averaging to a target-only MS |
 | First-pass image done | Read `12-selfcal.md` — one-pass phase selfcal with before/after assessment |
 | Final applycal done, RFI on target/phase cal | Read `13-postcal-rfi-flagging.md` — SpW severity triage + post-cal flagging |
 
@@ -56,5 +57,6 @@ as the record is concerned.
 - 11-imaging.md — first-pass imaging
 - 12-selfcal.md — single-pass phase selfcal with before/after DR comparison
 - 13-postcal-rfi-flagging.md — SpW severity triage (drop vs salvage) + post-cal flagging on target/phase cal
+- 15-averaging.md — smearing-limited channel/time averaging before imaging (time bin ≤ 30 s)
 
 Read each file with the Read tool when you reach that stage — do not load everything up front.

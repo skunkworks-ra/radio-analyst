@@ -18,7 +18,7 @@ Before starting, confirm all of the following:
 
 | Requirement | How to verify |
 |---|---|
-| `CORRECTED_DATA` populated | `ms_workflow_status` returns `selfcal_or_done` |
+| `CORRECTED_DATA` populated | `ms_workflow_status` returns `selfcal_or_done`. On an averaged MS (`15-averaging.md`) the calibrated data are in DATA; this check does not apply there |
 | `MODEL_DATA` populated | `ms_tclean` was run with `savemodel='modelcolumn'` |
 | First-pass image exists on disk | `{WORKDIR}/{imagename}.image.pbcor` present |
 | First-pass `ms_image_stats` result available | Has `rms_jy`, `dynamic_range`, `peak_jy` values |

@@ -32,6 +32,7 @@ from ms_modify import (
     rflag,
     setjy,
     setjy_polcal,
+    split_average,
     tclean,
 )
 
@@ -766,6 +767,46 @@ class FlagCaltableInput(BaseModel):
     )
 
 
+class SplitAverageInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to the calibrated Measurement Set.", min_length=1)
+    workdir: str = Field(
+        ..., description="Existing directory; output_ms must be inside it.", min_length=1
+    )
+    field: str = Field(
+        ..., description="CASA field selection for the target field(s).", min_length=1
+    )
+    output_ms: str = Field(
+        ..., description="Path of the new averaged MS. Must not exist.", min_length=1
+    )
+    width: list[int] = Field(
+        default=[1],
+        description=(
+            "Channels to average: one value for all SpWs, or one per selected SpW. "
+            "Take it from ms_smearing_limits per_spw suggested_width_channels."
+        ),
+    )
+    timebin_s: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=30.0,
+        description=(
+            "Time bin in seconds (0 = no time averaging; at most 30). "
+            "Take it from ms_smearing_limits suggested_timebin_s."
+        ),
+    )
+    spw: str = Field(default="", description="CASA SpW selection ('' = all).")
+    datacolumn: str = Field(
+        default="corrected", description="Column to split (default 'corrected').", min_length=1
+    )
+    execute: bool = Field(
+        default=False,
+        description=(
+            "If False (default), write split_average.py and return. If True, run split in-process."
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tools — Preflag
 # ---------------------------------------------------------------------------
@@ -1146,6 +1187,37 @@ async def ms_flag_caltable(params: FlagCaltableInput) -> str:
         params.mode,
         params.datacolumn,
         params.flagbackup,
+        params.execute,
+    )
+
+
+@mcp.tool(
+    name="ms_split_average",
+    description=(
+        "Split calibrated target data (CORRECTED_DATA) to a new MS with channel "
+        "(width) and time (timebin_s, at most 30 s) averaging, for imaging. "
+        "Never averages across scans. Refuses to overwrite an existing MS."
+    ),
+    annotations={
+        "title": "Split With Averaging",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_split_average(params: SplitAverageInput) -> str:
+    """Split target data to a channel- and time-averaged MS."""
+    return await _run_tool(
+        split_average.run,
+        params.ms_path,
+        params.workdir,
+        params.field,
+        params.output_ms,
+        params.width,
+        params.timebin_s,
+        params.spw,
+        params.datacolumn,
         params.execute,
     )
 
