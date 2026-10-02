@@ -920,7 +920,7 @@ On tool error:
 
 | Tool | What it returns |
 |------|----------------|
-| `ms_workflow_status` | State probe over MS + workdir: which pipeline stages are complete + `next_recommended_step` |
+| `ms_workflow_status` | State probe over MS + workdir: which pipeline stages are complete + `next_recommended_step` (`average_target` between `applycal_target` and `first_image`; an averaged target MS reads as calibrated in DATA) |
 
 ### Documentation
 

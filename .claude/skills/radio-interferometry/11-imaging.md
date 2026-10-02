@@ -76,9 +76,10 @@ calibration failure, not a faint source. Do not report the peak as a detection.
 
 ## Step 0.75 — Average first
 
-If no averaged target MS exists yet, read `15-averaging.md` and make one
-before deriving parameters. Run the Step 0.5 gate on the full MS; run every
-later step on the averaged MS.
+The `average_target` stage (`15-averaging.md`) must have run. If
+`ms_workflow_status` returns `average_target`, run it now. Run the Step 0.5
+gate on the full MS; run every later step on the `image_ms` the stage
+returned (the averaged MS, or the full MS if no averaging was needed).
 
 ---
 

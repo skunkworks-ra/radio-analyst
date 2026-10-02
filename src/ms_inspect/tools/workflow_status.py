@@ -16,6 +16,10 @@ Two kinds of fact, kept apart on purpose:
 - The MS probes (intents, CORRECTED_DATA) say what is TRUE NOW. A live read
   beats a log line if someone deleted a column after the fact.
 
+An MS that the split_average stage recorded as an averaged product holds
+calibrated target data in DATA, not CORRECTED_DATA. For that MS the stage log,
+not the column probe, says the target is calibrated.
+
 A workdir with no stage log reads as nothing done. That is deliberate: the
 system assumes the reduction is driven end to end by these tools. It does mean
 a workdir created before the stage log existed cannot be resumed here.
@@ -39,6 +43,7 @@ _PRIORCALS = "priorcals"
 _INITIAL_BANDPASS = "initial_bandpass"
 _INITIAL_RFLAG = "initial_rflag"
 _APPLYCAL = "applycal"
+_SPLIT_AVERAGE = "split_average"
 _TCLEAN = "tclean"
 
 #: Final-solve stages. The reduction has a delay, a bandpass and a gain when
@@ -58,6 +63,28 @@ def _probe_corrected(ms_str: str) -> tuple[bool | None, str | None]:
             return "CORRECTED_DATA" in set(tb.colnames()), None
     except Exception as exc:
         return None, f"{type(exc).__name__}: {exc}"
+
+
+def _averaged_products(entries: list[dict]) -> set[str]:
+    """Resolved paths of MSs the split_average stage wrote with averaging."""
+    return set(_averaged_sources(entries))
+
+
+def _averaged_sources(entries: list[dict]) -> dict[str, str | None]:
+    """Averaged MS path -> resolved source MS path, from split_average lines."""
+    return {
+        str(Path(e["product"]).expanduser().resolve()): (
+            str(Path(e["measurement"]["source_ms"]).expanduser().resolve())
+            if e["measurement"].get("source_ms")
+            else None
+        )
+        for e in entries
+        if e.get("stage") == _SPLIT_AVERAGE
+        and e.get("exists") is True
+        and isinstance(e.get("measurement"), dict)
+        and e["measurement"].get("averaged") is True
+        and e.get("product")
+    }
 
 
 def run(ms_path: str, workdir: str) -> dict:
@@ -82,6 +109,9 @@ def run(ms_path: str, workdir: str) -> dict:
     # ---------------------------------------------------------------- history
     entries = read_stage_log(wd)
     done = completed_stages(entries)
+    averaged_sources = _averaged_sources(entries)
+    is_averaged_ms = ms_str in averaged_sources
+    averaged_from_this = sorted(avg for avg, src in averaged_sources.items() if src == ms_str)
     if not entries:
         warnings.append(
             f"No {STAGE_LOG_NAME} in {wd}. Every stage reads as not yet run."
@@ -149,8 +179,10 @@ def run(ms_path: str, workdir: str) -> dict:
         next_step = "delay_bandpass_gain"
     elif corrected_target is None:
         next_step = "probe_failed_corrected_target"
-    elif _APPLYCAL not in done or not corrected_target:
+    elif not is_averaged_ms and (_APPLYCAL not in done or not corrected_target):
         next_step = "applycal_target"
+    elif _SPLIT_AVERAGE not in done:
+        next_step = "average_target"
     elif _TCLEAN not in done:
         next_step = "first_image"
     else:
@@ -168,10 +200,17 @@ def run(ms_path: str, workdir: str) -> dict:
     # The log is history and the MS is now. Where they disagree, say so rather
     # than pick a winner: a stage recorded complete whose product no longer
     # shows in the MS is a real event the next reader needs to see.
-    if _APPLYCAL in done and corrected_target is False:
+    if _APPLYCAL in done and corrected_target is False and not is_averaged_ms:
         warnings.append(
             "applycal is recorded complete in the stage log, but CORRECTED_DATA is not"
             f" present on {ms_str}. The log is history; the MS is current state."
+        )
+
+    # Imaging and selfcal belong on the averaged product, not on its source.
+    if averaged_from_this and next_step in ("first_image", "selfcal_or_done"):
+        warnings.append(
+            f"The split_average stage averaged this MS into {', '.join(averaged_from_this)}."
+            " Run imaging and selfcal on that MS, not on this one."
         )
 
     data = {
@@ -198,6 +237,12 @@ def run(ms_path: str, workdir: str) -> dict:
             )
             if corrected_calibrators is None
             else field(corrected_calibrators)
+        ),
+        "averaged_target_ms": field(
+            is_averaged_ms, note="recorded as an averaged product of the split_average stage"
+        ),
+        "calibrated_column": (
+            "CORRECTED_DATA" if corrected_target else "DATA" if is_averaged_ms else None
         ),
         "final_solves_completed": final_solves_done,
         "workdir": str(wd),

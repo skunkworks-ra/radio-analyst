@@ -777,7 +777,11 @@ class SplitAverageInput(BaseModel):
         ..., description="CASA field selection for the target field(s).", min_length=1
     )
     output_ms: str = Field(
-        ..., description="Path of the new averaged MS. Must not exist.", min_length=1
+        default="",
+        description=(
+            "Path of the new averaged MS inside workdir. Must not exist. Required "
+            "when averaging; ignored when width=[1] and timebin_s=0."
+        ),
     )
     width: list[int] = Field(
         default=[1],
@@ -1194,9 +1198,11 @@ async def ms_flag_caltable(params: FlagCaltableInput) -> str:
 @mcp.tool(
     name="ms_split_average",
     description=(
-        "Split calibrated target data (CORRECTED_DATA) to a new MS with channel "
-        "(width) and time (timebin_s, at most 30 s) averaging, for imaging. "
-        "Never averages across scans. Refuses to overwrite an existing MS."
+        "The average_target stage: split calibrated target data (CORRECTED_DATA) "
+        "to a new MS with channel (width) and time (timebin_s, at most 30 s) "
+        "averaging, for imaging. Always run it: width=[1] and timebin_s=0 records "
+        "that no averaging was needed. Never averages across scans. Refuses to "
+        "overwrite an existing MS."
     ),
     annotations={
         "title": "Split With Averaging",

@@ -2,9 +2,11 @@
 
 ## Purpose
 
-After the final applycal (and post-cal flagging, skill 13), split the target
-to a smaller MS with channel and time averaging, so imaging and selfcal run on
-fewer visibilities. Averaging smears sources away from the phase centre.
+`average_target` is a standard pipeline stage. It always runs after the final
+applycal (and post-cal flagging, skill 13) and before imaging. It splits the
+target to a smaller MS with channel and time averaging, so imaging and selfcal
+run on fewer visibilities. When no averaging is needed, the stage still runs
+and records that. Averaging smears sources away from the phase centre.
 `ms_smearing_limits` gives the largest averaging that keeps the smearing loss
 within a fixed budget at the 10%-power radius of the primary beam (PB).
 
@@ -12,13 +14,13 @@ Average the target only. Never average `calibrators.ms` or a calibrator field.
 
 ---
 
-## When to skip
+## When to reduce the averaging
 
 | Situation | Action |
 |---|---|
 | Spectral-line science | No channel averaging (`width=[1]`); time averaging is still allowed |
 | Rotation-measure work on Q/U cubes | No channel averaging unless the user approves the coarser channels |
-| `suggested_width_channels` is 1 for every SpW and `suggested_timebin_s` ≤ the dump time | Nothing to gain; image the full MS |
+| `suggested_width_channels` is 1 for every SpW and `suggested_timebin_s` ≤ the dump time | No averaging: run Step 3 with `width=[1]`, `timebin_s=0` |
 
 ---
 
@@ -79,6 +81,13 @@ Run the generated `split_average.py`. The tool reads `CORRECTED_DATA`, never
 averages across a scan, and refuses an `output_ms` that exists. If you
 select SpWs with `spw`, give one `width` per selected SpW, in the same order.
 
+**No averaging.** Call it with `width=[1]`, `timebin_s=0` and no `output_ms`.
+Nothing is split. The script records the stage with `averaged: false`, and
+imaging uses the full MS. Say in the report that no averaging was needed, and
+give `tau_max_s` and `dnu_max_hz`.
+
+The tool returns `image_ms`: the MS that skills 11 and 12 use as `{VIS}`.
+
 ---
 
 ## Step 4 — Verify the averaged MS
@@ -86,10 +95,12 @@ select SpWs with `spw`, give one `width` per selected SpW, in the same order.
 | Check | Tool | Expected |
 |---|---|---|
 | Channels | `ms_spectral_window_list(<avg MS>)` | `nchan` = original `nchan` / `width` per SpW |
-| Time bin | `ms_correlator_config(<avg MS>)` | `dump_time_s` ≈ `timebin_s` (shorter at scan ends) |
+| Time bin | `stage_log.jsonl` line for `split_average` | `measurement.timebin` equals the `timebin_s` you passed |
 | Fields | `ms_field_list(<avg MS>)` | Only the target field(s) |
 
-Then use the averaged MS as `{VIS}` in skills 11 and 12. Record the split in
+Then use `image_ms` as `{VIS}` in skills 11 and 12. On that MS,
+`ms_workflow_status` returns `averaged_target_ms: true`,
+`calibrated_column: "DATA"` and `next_recommended_step: first_image`. Record the split in
 the reduction ledger with the limits and predicted losses in `outputs`.
 
 ---
@@ -97,8 +108,15 @@ the reduction ledger with the limits and predicted losses in `outputs`.
 ## Where the trouble is
 
 1. **The averaged MS has no CORRECTED_DATA.** The calibrated data are in its
-   DATA column. `ms_workflow_status` on it does not report CORRECTED as
-   populated; that is expected. tclean reads DATA when CORRECTED is absent.
-   Selfcal applycal on the averaged MS creates a new CORRECTED_DATA.
-2. **Width order.** A `width` list is matched to the selected SpWs in order.
+   DATA column. `ms_workflow_status` knows this from the stage log only when
+   it is given the same workdir as the split. With another workdir it
+   recommends `applycal_target` — do not run it; pass the right workdir.
+   tclean reads DATA when CORRECTED is absent. Selfcal applycal on the
+   averaged MS creates a new CORRECTED_DATA.
+2. **`dump_time_s` is wrong on an averaged MS.** `ms_correlator_config`
+   reads the step between time stamps. In an averaged MS each row's TIME is
+   the centroid of its unflagged data, so baselines in one bin differ by
+   about one dump. The tool then reports the original dump, not the bin.
+   Use the stage-log line to confirm the time bin.
+3. **Width order.** A `width` list is matched to the selected SpWs in order.
    A wrong order averages one SpW too much and smears it.

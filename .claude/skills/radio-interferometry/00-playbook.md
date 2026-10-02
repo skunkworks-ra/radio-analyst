@@ -14,7 +14,7 @@ Find your current state in the left column. Run the right-column tool
 | Pre-cal complete (rflag done, CORRECTED populated) | Run `/calibrate` or read `07-calibration-execution.md` |
 | Calibration solve done (G/B/K/fluxscale) | For pol: `/polcal` or read `09-polcal-execution.md`; else `/image` |
 | Polcal done | `/image` with stokes='IQUV' or read `11-imaging.md` |
-| Final applycal + post-cal flagging done, before imaging | Read `15-averaging.md` — smearing-limited channel/time averaging to a target-only MS |
+| Final applycal + post-cal flagging done (`next_recommended_step: average_target`) | Read `15-averaging.md` — always run; it averages or records that no averaging was needed |
 | First-pass image done | Read `12-selfcal.md` — one-pass phase selfcal with before/after assessment |
 | Final applycal done, RFI on target/phase cal | Read `13-postcal-rfi-flagging.md` — SpW severity triage + post-cal flagging |
 

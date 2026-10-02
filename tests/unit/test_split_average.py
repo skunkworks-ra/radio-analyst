@@ -45,7 +45,8 @@ def test_script_carries_the_split_arguments(setup):
     assert "'keepflags': False" in script
     assert "'field': '3C391 C1'" in script
     assert "_record_stage(" in script and "'split_average'" in script
-    assert res["data"]["output_ms"]["flag"] == "UNAVAILABLE"
+    assert res["data"]["image_ms"]["flag"] == "UNAVAILABLE"
+    assert "'averaged': True" in script and "'source_ms':" in script
     assert not (wd / "target_avg.ms").exists()
 
 
@@ -59,6 +60,50 @@ def test_zero_timebin_means_no_time_averaging(setup):
     ms, wd = setup
     res = _run(ms, wd, timebin_s=0.0)
     assert res["data"]["timebin"] == "0s"
+    assert res["data"]["averaged"] is True
+
+
+def test_no_averaging_writes_no_split_and_names_the_source_ms(setup):
+    ms, wd = setup
+    res = _run(ms, wd, width=[1], timebin_s=0.0, output_ms="")
+    script = (wd / "split_average.py").read_text()
+    compile(script, "split_average.py", "exec")
+    assert "split(" not in script.replace("_record_stage", "")
+    assert "'averaged': False" in script
+    assert res["data"]["averaged"] is False
+    assert res["data"]["image_ms"]["value"] == str(ms.resolve())
+    assert any("No averaging requested" in w for w in res["warnings"])
+
+
+def test_no_averaging_execute_records_the_stage_without_casa(setup):
+    import json
+
+    ms, wd = setup
+    _run(ms, wd, width=[1], timebin_s=0.0, output_ms="", execute=True)
+    lines = [json.loads(x) for x in (wd / "stage_log.jsonl").read_text().splitlines()]
+    assert lines[-1]["stage"] == "split_average"
+    assert lines[-1]["product"] == str(ms.resolve())
+    assert lines[-1]["measurement"]["averaged"] is False
+
+
+def test_averaging_without_output_ms_is_refused(setup):
+    ms, wd = setup
+    with pytest.raises(ComputationError, match="output_ms is required"):
+        _run(ms, wd, output_ms="")
+
+
+def test_averaged_stage_line_marks_the_output_as_averaged(setup):
+    from ms_inspect.tools.workflow_status import _averaged_products
+
+    ms, wd = setup
+    out = wd / "target_avg.ms"
+    entry = {
+        "stage": "split_average",
+        "product": str(out),
+        "exists": True,
+        "measurement": {"averaged": True, "source_ms": str(ms)},
+    }
+    assert _averaged_products([entry]) == {str(out.resolve())}
 
 
 def test_timebin_at_cap_is_accepted(setup):

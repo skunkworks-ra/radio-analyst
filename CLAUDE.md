@@ -296,7 +296,7 @@ Environment variable reference:
 | Tool | Module | What it does |
 |------|--------|-------------|
 | `ms_verify_import` | `tools/verify_import.py` | Filesystem check: MS exists + table.info valid + .flagonline.txt non-empty |
-| `ms_workflow_status` | `tools/workflow_status.py` | State probe over MS + workdir: ms_valid, intents_populated, calibrators_ms/priorcals/initial_bandpass present, corrected_populated, final_caltables/first_image present, and a categorical `next_recommended_step` |
+| `ms_workflow_status` | `tools/workflow_status.py` | State probe over MS + workdir: ms_valid, intents_populated, calibrators_ms/priorcals/initial_bandpass present, corrected_populated, final_caltables/first_image present, `averaged_target_ms` + `calibrated_column` (an MS the `split_average` stage recorded as averaged holds calibrated data in DATA), and a categorical `next_recommended_step` (`average_target` always runs between `applycal_target` and `first_image`) |
 | `ms_verify_model` | `tools/verify_model.py` | Per-field MODEL_DATA sanity probe after setjy/setjy_polcal: flags default-pinned (MODEL=1 Jy → flux-scale trap), out-of-band amplitude, and — for `polcal_fields` — missing polarization (zero cross-hands = Stokes-I clobber). Requires usescratch=True |
 | `ms_online_flag_stats` | `tools/online_flags.py` | Parse .flagonline.txt — n_commands, antennas flagged, reason breakdown, time range |
 | `ms_flag_summary` | `tools/flag_summary.py` | Per-field/SPW flag fractions from flagdata summary mode |

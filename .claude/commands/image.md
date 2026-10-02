@@ -32,9 +32,9 @@ Prerequisite: CORRECTED_DATA populated on the target field(s) — run
    Never assume mosaic vs. single pointing. Default Stokes='I' unless
    polcal is complete and the user wants IQUV.
 
-3. If no averaged target MS exists, read `15-averaging.md`:
+3. If `ms_workflow_status` returns `average_target`, read `15-averaging.md`:
    `ms_smearing_limits` → `ms_split_average` → run the script → verify.
-   Use the averaged MS as `ms_path` from here on.
+   Use the returned `image_ms` as `ms_path` from here on.
 
 3a. Gather placeholders from tool outputs (no hand math):
    - `ms_observation_info(ms_path)` → telescope, center_freq_hz
