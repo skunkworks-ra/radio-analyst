@@ -56,7 +56,7 @@ Always state the actual numbers from WILDCAT_METRICS — do not editorialize:
 
 | Answer | What happens |
 |--------|-------------|
-| `proceed` | → IMAGING_PIPELINE |
+| `proceed` | → IMAGING_PIPELINE (average the target first per `15-averaging.md`) |
 | `loop_back` | → CALIBRATION_PREFLAG (counter reset) |
 | `exit` | → STOPPED |
 | *(timeout)* | → `timeout_default` (proceed) |

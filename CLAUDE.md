@@ -11,8 +11,8 @@ This repository ships **three Model Context Protocol (MCP) servers** for an
 AI-assisted radio interferometric reduction pipeline targeting VLA/JVLA/EVLA,
 MeerKAT, and uGMRT:
 
-- **ms-inspect** — read-only inspection and diagnostics (34 tools, port 8000)
-- **ms-modify** — calibration, flagging, and MS modification (16 tools, port 8001)
+- **ms-inspect** — read-only inspection and diagnostics (35 tools, port 8000)
+- **ms-modify** — calibration, flagging, and MS modification (17 tools, port 8001)
 - **ms-create** — ASDM ingestion and reduction logging (3 tools, port 8002)
 
 `ms-inspect` began as Phase 1 only — Layer 1 (Orientation) and Layer 2
@@ -99,7 +99,7 @@ radio-analyst/
 │   └── marketplace.json           ← marketplace catalogue entry
 ├── .claude/
 │   ├── skills/
-│   │   ├── radio-interferometry/  ← 18 files: SKILL.md + 00..13 knowledge files
+│   │   ├── radio-interferometry/  ← 19 files: SKILL.md + 00..13, 15 knowledge files
 │   │   │                             (plus wildcat/, unreachable from SKILL.md)
 │   │   └── ms-simulator/          ← SKILL.md + 01..05 knowledge files
 │   └── commands/                  ← inspect, precal, calibrate, polcal, image, simulate
@@ -133,6 +133,7 @@ radio-analyst/
 │   │   ├── priorcals.py           ← ms_generate_priorcals
 │   │   ├── setjy.py               ← ms_setjy
 │   │   ├── setjy_polcal.py        ← ms_setjy_polcal
+│   │   ├── split_average.py       ← ms_split_average
 │   │   ├── initial_bandpass.py    ← ms_initial_bandpass
 │   │   ├── initial_rflag.py       ← ms_apply_initial_rflag
 │   │   ├── postcal_flag.py        ← ms_postcal_flag
@@ -171,6 +172,7 @@ radio-analyst/
 │       │   ├── calsol_plot.py     ← ms_calsol_plot
 │       │   ├── calsol_plot_library.py ← ms_plot_caltable_library
 │       │   ├── gaincal_snr_predict.py ← ms_gaincal_snr_predict
+│       │   ├── smearing.py        ← ms_smearing_limits
 │       │   ├── refant.py          ← ms_refant
 │       │   ├── residual_stats.py  ← ms_residual_stats
 │       │   ├── corrected_stats.py ← ms_corrected_stats
@@ -287,13 +289,14 @@ Environment variable reference:
 | `ms_calsol_plot` | `tools/calsol_plot.py` | Bokeh HTML dashboard from a single caltable, read directly from the caltable columns (does not call `ms_calsol_stats`); view routed by VisCal type |
 | `ms_plot_caltable_library` | `tools/calsol_plot_library.py` | Batch plot an explicit list of caltables in one call; partial-success — a bad table records an error entry rather than aborting |
 | `ms_gaincal_snr_predict` | `tools/gaincal_snr_predict.py` | Predict per-(antenna, SPW) SNR for a candidate solint; uses SEFD table + MS metadata; requires `flux_jy` from `ms_setjy` |
+| `ms_smearing_limits` | `tools/smearing.py` | Largest channel width and time bin whose bandwidth/time smearing stays within a stated peak loss at the 10% PB radius (PB at ν_min, beam λ(ν_max)/B_max); suggested `width` per SpW and `timebin` (≤ 30 s), with all inputs and constants |
 
 ### Pre-calibration inspection (7 tools)
 
 | Tool | Module | What it does |
 |------|--------|-------------|
 | `ms_verify_import` | `tools/verify_import.py` | Filesystem check: MS exists + table.info valid + .flagonline.txt non-empty |
-| `ms_workflow_status` | `tools/workflow_status.py` | State probe over MS + workdir: ms_valid, intents_populated, calibrators_ms/priorcals/initial_bandpass present, corrected_populated, final_caltables/first_image present, and a categorical `next_recommended_step` |
+| `ms_workflow_status` | `tools/workflow_status.py` | State probe over MS + workdir: ms_valid, intents_populated, calibrators_ms/priorcals/initial_bandpass present, corrected_populated, final_caltables/first_image present, `averaged_target_ms` + `calibrated_column` (an MS the `split_average` stage recorded as averaged holds calibrated data in DATA), and a categorical `next_recommended_step` (`average_target` always runs between `applycal_target` and `first_image`) |
 | `ms_verify_model` | `tools/verify_model.py` | Per-field MODEL_DATA sanity probe after setjy/setjy_polcal: flags default-pinned (MODEL=1 Jy → flux-scale trap), out-of-band amplitude, and — for `polcal_fields` — missing polarization (zero cross-hands = Stokes-I clobber). Requires usescratch=True |
 | `ms_online_flag_stats` | `tools/online_flags.py` | Parse .flagonline.txt — n_commands, antennas flagged, reason breakdown, time range |
 | `ms_flag_summary` | `tools/flag_summary.py` | Per-field/SPW flag fractions from flagdata summary mode |
@@ -356,6 +359,7 @@ Functions are also callable directly by skills and scripts.
 | `ms_apply_initial_rflag` | `ms_modify/initial_rflag.py` | rflag + tfcrop on CORRECTED−MODEL residuals in one list-mode pass; **requires** explicit `field` (only the field with valid CORRECTED) |
 | `ms_postcal_flag` | `ms_modify/postcal_flag.py` | Post-cal RFI flagging on phase cal + target CORRECTED in one list-mode pass: per-SpW robust clip (median + `clip_sigma`·1.4826·MAD, default 5σ; `uvrange`-scopable for extended sources) → tfcrop + rflag on kept SpWs → manual flag of drop-tier SpWs. Consumes `ms_spw_amp_severity` triage (skill 13); **requires** explicit `field` |
 | `ms_flag_caltable` | `ms_modify/flag_caltable.py` | Autoflag a caltable's solutions (mode auto-routed from VisCal: B→tfcrop, G/T/D→rflag, K refused) at a gentle sigma; reports flagged fraction before/after |
+| `ms_split_average` | `ms_modify/split_average.py` | Split target CORRECTED_DATA to a new MS with channel (`width`) and time (`timebin_s` ≤ 30 s) averaging; never crosses scans; refuses to overwrite an existing MS |
 | `ms_apply_rflag` | `ms_modify/rflag.py` | General-purpose rflag pass |
 | `ms_gaincal` | `ms_modify/gaincal.py` | Phase/amplitude/cross-hand delay gain calibration (supports gaintype='KCROSS' with smodel) |
 | `ms_polcal` | `ms_modify/polcal.py` | Polarisation calibration: D-term leakage (Df/Df+QU) or position angle (Xf) |
@@ -539,6 +543,7 @@ The skill is split into focused files to stay under the 200-line context limit:
 | `11-imaging.md` | First-pass continuum/cube imaging with derived tclean parameters and ms_image_stats gate |
 | `12-selfcal.md` | Single-pass phase selfcal with before/after DR comparison and stop-and-recommend gate |
 | `13-postcal-rfi-flagging.md` | Post-cal RFI flagging on target/phase cal + SpW severity triage (drop vs salvage), thresholds read off the dataset's own distribution |
+| `15-averaging.md` | Smearing-limited channel/time averaging of the target before imaging (`ms_smearing_limits` → `ms_split_average`; time bin ≤ 30 s) |
 
 ### MS simulator
 

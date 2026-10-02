@@ -383,6 +383,29 @@ class GaincalSnrPredictInput(BaseModel):
     snr_threshold: float = Field(default=3.0, ge=0.0)
 
 
+class SmearingLimitsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to the calibrated Measurement Set", min_length=1)
+    max_time_loss: float = Field(
+        default=0.10,
+        gt=0.0,
+        lt=1.0,
+        description="Allowed fractional peak loss from time averaging at the 10% PB radius.",
+    )
+    max_bandwidth_loss: float = Field(
+        default=0.05,
+        gt=0.0,
+        lt=1.0,
+        description="Allowed fractional peak loss from channel averaging at the 10% PB radius.",
+    )
+    max_timebin_s: float = Field(
+        default=30.0,
+        gt=0.0,
+        le=30.0,
+        description="Upper limit on the suggested time bin in seconds (at most 30).",
+    )
+
+
 class CalsolStatsInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     caltable_path: str = Field(
@@ -1679,6 +1702,34 @@ async def ms_gaincal_snr_predict(params: GaincalSnrPredictInput) -> str:
         params.solint_seconds,
         params.snr_threshold,
         flux_jy=params.flux_jy,
+    )
+
+
+@mcp.tool(
+    name="ms_smearing_limits",
+    description=(
+        "Largest channel width and time bin whose bandwidth and time smearing stay "
+        "within a stated peak loss at the 10% PB radius. Returns tau_max_s, dnu_max_hz, "
+        "suggested_timebin_s and per-SpW suggested_width_channels with all inputs."
+    ),
+    annotations={
+        "title": "Smearing Limits for Averaging",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_smearing_limits(params: SmearingLimitsInput) -> str:
+    """Smearing-limited averaging parameters for a calibrated MS."""
+    from ms_inspect.tools import smearing
+
+    return await _run_tool(
+        smearing.run,
+        params.ms_path,
+        params.max_time_loss,
+        params.max_bandwidth_loss,
+        params.max_timebin_s,
     )
 
 

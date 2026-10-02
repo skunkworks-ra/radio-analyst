@@ -333,3 +333,128 @@ def test_products_recorded_reports_the_paths_the_run_actually_used(fake_ms, monk
         "/w/delay.K",
         "/w/gain.g",
     ]
+
+
+# ---------------------------------------------------------------------------
+# average_target stage and the averaged target MS
+# ---------------------------------------------------------------------------
+
+_THROUGH_APPLYCAL = (
+    "set_intents",
+    "preflag",
+    "priorcals",
+    "initial_bandpass",
+    "initial_rflag",
+    "gaincal",
+    "bandpass",
+    "fluxscale",
+    "applycal",
+)
+
+
+def _log_split(workdir, product, averaged, source_ms="/w/full.ms"):
+    import json
+
+    from ms_inspect.util.stage_log import STAGE_LOG_NAME
+
+    with open(workdir / STAGE_LOG_NAME, "a") as fh:
+        fh.write(
+            json.dumps(
+                {
+                    "stage": "split_average",
+                    "product": str(product),
+                    "at": "2026-10-02T00:00:00Z",
+                    "exists": True,
+                    "measurement": {"averaged": averaged, "source_ms": source_ms},
+                }
+            )
+            + "\n"
+        )
+
+
+def _calibrated_target(fake_ms, monkeypatch, colnames):
+    """Every stage through the target applycal is logged; calibrators.ms has
+    CORRECTED; the target MS has the given columns."""
+    ms, workdir = fake_ms
+    (ms / "STATE").mkdir()
+    cal_ms = workdir / "calibrators.ms"
+    cal_ms.mkdir()
+    (cal_ms / "table.info").write_text("Type = Measurement Set\n")
+
+    def _open(path, *_args, **_kwargs):
+        if path.endswith("/STATE"):
+            return _table(nrows=3, colnames=[])
+        if "calibrators.ms" in path:
+            return _table(colnames=["DATA", "CORRECTED_DATA"])
+        return _table(colnames=colnames)
+
+    monkeypatch.setattr(workflow_status, "open_table", _open)
+    _log(workdir, *_THROUGH_APPLYCAL)
+    return ms, workdir
+
+
+def test_average_target_follows_applycal_before_first_image(fake_ms, monkeypatch):
+    ms, workdir = _calibrated_target(fake_ms, monkeypatch, ["DATA", "CORRECTED_DATA"])
+    assert _run(ms, workdir)["data"]["next_recommended_step"] == "average_target"
+
+
+def test_average_target_fires_even_after_an_image_exists(fake_ms, monkeypatch):
+    ms, workdir = _calibrated_target(fake_ms, monkeypatch, ["DATA", "CORRECTED_DATA"])
+    _log(workdir, "tclean")
+    assert _run(ms, workdir)["data"]["next_recommended_step"] == "average_target"
+
+
+def test_no_averaging_record_advances_the_full_ms_to_first_image(fake_ms, monkeypatch):
+    ms, workdir = _calibrated_target(fake_ms, monkeypatch, ["DATA", "CORRECTED_DATA"])
+    _log_split(workdir, ms, averaged=False)
+    data = _run(ms, workdir)["data"]
+    assert data["next_recommended_step"] == "first_image"
+    assert data["averaged_target_ms"]["value"] is False
+    assert data["calibrated_column"] == "CORRECTED_DATA"
+
+
+def test_averaged_ms_without_corrected_is_calibrated_in_data(fake_ms, monkeypatch):
+    ms, workdir = _calibrated_target(fake_ms, monkeypatch, ["DATA"])
+    _log_split(workdir, ms, averaged=True)
+    result = _run(ms, workdir)
+    data = result["data"]
+    assert data["next_recommended_step"] == "first_image"
+    assert data["averaged_target_ms"]["value"] is True
+    assert data["calibrated_column"] == "DATA"
+    assert not any("CORRECTED_DATA is not" in w for w in result["warnings"])
+
+
+def test_averaged_ms_reaches_selfcal_after_imaging(fake_ms, monkeypatch):
+    ms, workdir = _calibrated_target(fake_ms, monkeypatch, ["DATA"])
+    _log_split(workdir, ms, averaged=True)
+    _log(workdir, "tclean")
+    assert _run(ms, workdir)["data"]["next_recommended_step"] == "selfcal_or_done"
+
+
+def test_averaged_ms_after_selfcal_applycal_reports_corrected(fake_ms, monkeypatch):
+    ms, workdir = _calibrated_target(fake_ms, monkeypatch, ["DATA", "CORRECTED_DATA"])
+    _log_split(workdir, ms, averaged=True)
+    assert _run(ms, workdir)["data"]["calibrated_column"] == "CORRECTED_DATA"
+
+
+def test_an_ms_not_recorded_by_the_split_still_needs_applycal(fake_ms, monkeypatch):
+    ms, workdir = _calibrated_target(fake_ms, monkeypatch, ["DATA"])
+    _log_split(workdir, workdir / "other_avg.ms", averaged=True)
+    data = _run(ms, workdir)["data"]
+    assert data["next_recommended_step"] == "applycal_target"
+    assert data["averaged_target_ms"]["value"] is False
+
+
+def test_source_ms_of_an_averaged_split_warns_to_use_the_product(fake_ms, monkeypatch):
+    ms, workdir = _calibrated_target(fake_ms, monkeypatch, ["DATA", "CORRECTED_DATA"])
+    avg = workdir / "target_avg.ms"
+    _log_split(workdir, avg, averaged=True, source_ms=str(ms))
+    result = _run(ms, workdir)
+    assert result["data"]["next_recommended_step"] == "first_image"
+    assert any(str(avg.resolve()) in w and "not on this one" in w for w in result["warnings"])
+
+
+def test_no_averaging_record_gives_no_use_the_product_warning(fake_ms, monkeypatch):
+    ms, workdir = _calibrated_target(fake_ms, monkeypatch, ["DATA", "CORRECTED_DATA"])
+    _log_split(workdir, ms, averaged=False, source_ms=str(ms))
+    assert not any("not on this one" in w for w in _run(ms, workdir)["warnings"])

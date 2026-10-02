@@ -1,5 +1,5 @@
 {
-  "_comment": "One entry per registered MCP tool (53 total: 34 ms-inspect + 16 ms-modify + 3 ms-create). 'args' is the params payload sent as {\"params\": args}. Where a tool needs an MS, we point at the real CI smoke.ms (path filled at run time via {SMOKE_MS}); everything else that needs a file (caltable/image/ASDM/npz) gets a deliberately nonexistent path so the tool fails cleanly inside its own error envelope instead of via schema validation. Write tools (ms_modify) omit 'execute' so it defaults to dry-run/False -- no real writes ever happen from this manifest.",
+  "_comment": "One entry per registered MCP tool (55 total: 35 ms-inspect + 17 ms-modify + 3 ms-create). 'args' is the params payload sent as {\"params\": args}. Where a tool needs an MS, we point at the real CI smoke.ms (path filled at run time via {SMOKE_MS}); everything else that needs a file (caltable/image/ASDM/npz) gets a deliberately nonexistent path so the tool fails cleanly inside its own error envelope instead of via schema validation. Write tools (ms_modify) omit 'execute' so it defaults to dry-run/False -- no real writes ever happen from this manifest.",
   "tools": {
     "ms-inspect": {
       "ms_observation_info": {"ms_path": "{SMOKE_MS}"},
@@ -10,6 +10,7 @@
       "ms_correlator_config": {"ms_path": "{SMOKE_MS}"},
       "ms_antenna_list": {"ms_path": "{SMOKE_MS}"},
       "ms_baseline_lengths": {"ms_path": "{SMOKE_MS}"},
+      "ms_smearing_limits": {"ms_path": "{SMOKE_MS}"},
       "ms_elevation_vs_time": {"ms_path": "{SMOKE_MS}"},
       "ms_parallactic_angle_vs_time": {"ms_path": "{SMOKE_MS}"},
       "ms_shadowing_report": {"ms_path": "{SMOKE_MS}"},
@@ -48,6 +49,7 @@
       "ms_apply_initial_rflag": {"ms_path": "{SMOKE_MS}", "field": "0", "workdir": "/nonexistent/workdir"},
       "ms_postcal_flag": {"ms_path": "{SMOKE_MS}", "field": "0", "workdir": "/nonexistent/workdir"},
       "ms_flag_caltable": {"caltable_path": "/nonexistent/table.g", "workdir": "/nonexistent/workdir"},
+      "ms_split_average": {"ms_path": "{SMOKE_MS}", "field": "0", "output_ms": "/nonexistent/workdir/avg.ms", "workdir": "/nonexistent/workdir"},
       "ms_gaincal": {"ms_path": "{SMOKE_MS}", "field": "0", "caltable": "/nonexistent/out.g", "workdir": "/nonexistent/workdir"},
       "ms_polcal": {"ms_path": "{SMOKE_MS}", "field": "0", "poltype": "Df", "caltable": "/nonexistent/out.d", "workdir": "/nonexistent/workdir"},
       "ms_bandpass": {"ms_path": "{SMOKE_MS}", "field": "0", "caltable": "/nonexistent/out.b", "workdir": "/nonexistent/workdir"},

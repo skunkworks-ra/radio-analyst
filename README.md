@@ -1,7 +1,7 @@
 # radio-analyst
 
 A Claude Code plugin for reducing radio interferometric data with CASA. It
-gives Claude 53 tools across three MCP servers, the reasoning of an
+gives Claude 55 tools across three MCP servers, the reasoning of an
 experienced interferometrist (skills), and step-by-step workflows (slash
 commands) for VLA/JVLA/EVLA, MeerKAT, and uGMRT Measurement Sets, from a raw
 ASDM to a first image.
@@ -90,8 +90,8 @@ the read-only tools.
 
 **Three servers, by what they can touch:**
 
-- **ms-inspect**: read-only inspection and diagnostics (34 tools).
-- **ms-modify**: flagging, calibration, imaging (16 tools, script-first).
+- **ms-inspect**: read-only inspection and diagnostics (35 tools).
+- **ms-modify**: flagging, calibration, imaging (17 tools, script-first).
 - **ms-create**: ASDM inspection and import, and the reduction log (3 tools).
 
 ---

@@ -885,6 +885,7 @@ On tool error:
 | `ms_calsol_plot` | Bokeh HTML dashboard from a single caltable (reads caltable columns directly; view routed by VisCal type) |
 | `ms_plot_caltable_library` | Batch-plot an explicit list of caltables in one call; partial-success per table |
 | `ms_gaincal_snr_predict` | Predict per-(antenna, SpW) SNR for a candidate solint from SEFD + MS metadata |
+| `ms_smearing_limits` | Smearing-limited channel width and time bin at the 10% PB radius; suggested `width` per SpW and `timebin` (≤ 30 s) |
 | `ms_verify_caltables` | Structural validation of `init_gain.g` + `BP0.b` from initial bandpass |
 
 ### Pre-calibration inspection
@@ -919,7 +920,7 @@ On tool error:
 
 | Tool | What it returns |
 |------|----------------|
-| `ms_workflow_status` | State probe over MS + workdir: which pipeline stages are complete + `next_recommended_step` |
+| `ms_workflow_status` | State probe over MS + workdir: which pipeline stages are complete + `next_recommended_step` (`average_target` between `applycal_target` and `first_image`; an averaged target MS reads as calibrated in DATA) |
 
 ### Documentation
 
@@ -927,7 +928,7 @@ On tool error:
 |------|----------------|
 | `ms_casa_task_lookup` | A CASA task's casadocs API page and casa6 source-file URLs from a bundled index (no fetch; the caller fetches). `NOT_FOUND` if the task is not in the index |
 
-**Total `ms_inspect`: 34 tools.**
+**Total `ms_inspect`: 35 tools.**
 
 ---
 
@@ -949,6 +950,7 @@ the same functions are also callable programmatically by skills and scripts
 | `ms_apply_initial_rflag` | rflag + tfcrop on CORRECTED − MODEL residuals; requires explicit `field` |
 | `ms_postcal_flag` | Post-cal RFI flagging (per-SpW robust clip → tfcrop + rflag → manual drop-tier); requires explicit `field` |
 | `ms_flag_caltable` | Autoflag a caltable's solutions (mode auto-routed from VisCal) |
+| `ms_split_average` | Split target CORRECTED_DATA to a channel- and time-averaged MS for imaging |
 | `ms_apply_rflag` | General-purpose rflag pass |
 | `ms_gaincal` | Phase/amp/cross-hand-delay gain calibration (incl. `gaintype='KCROSS'`) |
 | `ms_polcal` | Polarization calibration: D-term leakage (Df/Df+QU) or position angle (Xf) |
