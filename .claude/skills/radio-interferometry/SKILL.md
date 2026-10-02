@@ -84,6 +84,13 @@ Python that has casatasks:
 If neither is available, stop and say so. Do not install casatools into
 another environment.
 
+Run CASA tasks only through the tools and the scripts they generate. Do not
+call casatasks from Bash, from `python -c`, or from a script you write
+yourself. The tool calls are the record of every parameter choice in the
+reduction; a task run outside them leaves no trace of what was chosen. If no
+tool exposes the step or the option you need, say which tool and which option
+is missing, then continue with what the tools provide.
+
 ## Start here
 
 Read these three now, before anything else:
