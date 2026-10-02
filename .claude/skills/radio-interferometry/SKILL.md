@@ -91,6 +91,10 @@ reduction; a task run outside them leaves no trace of what was chosen. If no
 tool exposes the step or the option you need, say which tool and which option
 is missing, then continue with what the tools provide.
 
+To change a parameter, call the tool again with the new value. Do not edit a
+generated script, even to fix a path; call the tool again with the corrected
+argument.
+
 ## Start here
 
 Read these three now, before anything else:
