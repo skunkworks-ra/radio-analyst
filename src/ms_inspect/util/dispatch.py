@@ -25,6 +25,7 @@ import threading
 
 from ms_inspect.exceptions import RadioMSError
 from ms_inspect.util.formatting import compact_fields
+from ms_inspect.util.param_log import record_call
 
 # ---------------------------------------------------------------------------
 # Per-resource locks
@@ -75,13 +76,20 @@ def run_tool_sync(tool_fn, *args, **kwargs) -> str:
     Run `tool_fn` and JSON-encode its result. Called from a worker thread.
 
     RadioMSError is converted to the documented error envelope. Any other
-    exception is re-raised for FastMCP to surface as a tool error.
+    exception is re-raised for FastMCP to surface as a tool error. Every
+    outcome is passed to param_log.record_call, which does nothing unless
+    ANALYST_PARAM_LOG is set.
     """
     try:
         result = tool_fn(*args, **kwargs)
-        return json.dumps(compact_fields(result), separators=(",", ":"), default=str)
     except RadioMSError as e:
+        record_call(tool_fn, args, kwargs, result=e.to_dict())
         return json.dumps(e.to_dict(), separators=(",", ":"), default=str)
+    except Exception as e:
+        record_call(tool_fn, args, kwargs, error=e)
+        raise
+    record_call(tool_fn, args, kwargs, result=result)
+    return json.dumps(compact_fields(result), separators=(",", ":"), default=str)
 
 
 async def run_tool(tool_fn, *args, _lock_path: str | None = None, **kwargs) -> str:

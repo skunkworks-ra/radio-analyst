@@ -47,7 +47,7 @@ def test_snippet_stamps_schema_version_and_analyst_rev(tmp_path, monkeypatch):
     _load_recorder()(str(tmp_path), "gaincal", str(product))
 
     entries = stage_log.read_stage_log(tmp_path)
-    assert entries[0]["schema_version"] == 1
+    assert entries[0]["schema_version"] == 2
     assert entries[0]["analyst_rev"] == "abc1234"
 
 
@@ -61,13 +61,13 @@ def test_snippet_stamps_analyst_rev_unknown_without_the_env_var(tmp_path, monkey
     assert entries[0]["analyst_rev"] == "unknown"
 
 
-def test_schema_version_of_a_current_line_is_one(tmp_path):
+def test_schema_version_of_a_current_line_is_two(tmp_path):
     product = tmp_path / "gain.g"
     product.mkdir()
     _load_recorder()(str(tmp_path), "gaincal", str(product))
 
     entries = stage_log.read_stage_log(tmp_path)
-    assert stage_log.schema_version_of(entries[0]) == 1
+    assert stage_log.schema_version_of(entries[0]) == 2
 
 
 def test_schema_version_of_an_old_shape_line_is_zero_not_a_parse_failure(tmp_path):
@@ -268,3 +268,31 @@ def test_the_in_process_recorder_is_the_same_function_as_the_pasted_one(tmp_path
     theirs = stage_log.read_stage_log(other)[0]
     assert set(mine) == set(theirs)
     assert mine["measurement"] == theirs["measurement"]
+
+
+def test_a_script_run_records_the_hash_of_its_own_file(tmp_path):
+    import hashlib
+    import subprocess
+    import sys
+
+    product = tmp_path / "gain.g"
+    product.mkdir()
+    script = tmp_path / "gaincal_gain_g.py"
+    script.write_text(
+        stage_log.RECORD_STAGE_SNIPPET
+        + f"\n_record_stage({str(tmp_path)!r}, 'gaincal', {str(product)!r})\n"
+    )
+    subprocess.run([sys.executable, str(script)], check=True)
+
+    (entry,) = stage_log.read_stage_log(tmp_path)
+    assert entry["script_sha256"] == hashlib.sha256(script.read_bytes()).hexdigest()
+    assert entry["script"] == str(script.resolve())
+
+
+def test_the_in_process_path_records_no_script_hash(tmp_path):
+    product = tmp_path / "gain.g"
+    product.mkdir()
+    stage_log.record_stage(str(tmp_path), "gaincal", str(product))
+
+    (entry,) = stage_log.read_stage_log(tmp_path)
+    assert "script_sha256" not in entry

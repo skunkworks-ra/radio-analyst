@@ -35,7 +35,7 @@ STAGE_LOG_NAME = "stage_log.jsonl"
 #: than the writer can still read every version below its own; a reader
 #: OLDER than the writer must not guess at fields it does not know about —
 #: see schema_version_of()'s docstring.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 #: Embedded verbatim in generated scripts. Call once after each product is
 #: written. Opens, appends one line and closes — never holds a handle, because
@@ -54,20 +54,30 @@ def _record_stage(workdir, stage, product, measurement=None):
     measurement is the only real content of the line. Those scripts raise on
     their own after recording, because what counts as failure is the
     measurement, not the path.
+
+    When run as a script file, the line also carries that file's sha256, so a
+    record can be matched to the exact script text that produced it. The
+    in-process path has no script file and writes no hash.
     """
+    import hashlib
     import json
     import os
     from datetime import datetime, timezone
 
     exists = os.path.exists(product)
     entry = {
-        "schema_version": 1,
+        "schema_version": 2,
         "analyst_rev": os.environ.get("ANALYST_REV", "unknown"),
         "stage": stage,
         "product": product,
         "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "exists": exists,
     }
+    _script = globals().get("__file__")
+    if _script and os.path.isfile(_script):
+        with open(_script, "rb") as _sf:
+            entry["script_sha256"] = hashlib.sha256(_sf.read()).hexdigest()
+        entry["script"] = os.path.abspath(_script)
     if measurement is not None:
         entry["measurement"] = measurement
     if not exists:
