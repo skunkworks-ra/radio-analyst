@@ -66,27 +66,27 @@ class TestResolveMode:
 
 class TestBuildScript:
     def test_tfcrop_uses_cutoff_kwargs(self):
-        s = _build_script("cal.B", "tfcrop", "CPARAM", 5.0, True)
+        s = _build_script("cal.B", "/wd", "tfcrop", "CPARAM", 5.0, True)
         assert "timecutoff=5.0" in s
         assert "freqcutoff=5.0" in s
         assert "timedevscale" not in s
 
     def test_rflag_uses_devscale_kwargs(self):
-        s = _build_script("cal.G", "rflag", "CPARAM", 6.0, True)
+        s = _build_script("cal.G", "/wd", "rflag", "CPARAM", 6.0, True)
         assert "timedevscale=6.0" in s
         assert "freqdevscale=6.0" in s
         assert "timecutoff" not in s
 
     def test_datacolumn_embedded(self):
-        s = _build_script("cal.G", "rflag", "CPARAM", 5.0, False)
+        s = _build_script("cal.G", "/wd", "rflag", "CPARAM", 5.0, False)
         assert "CPARAM" in s
 
     def test_summary_before_and_after(self):
-        s = _build_script("cal.G", "rflag", "CPARAM", 5.0, True)
+        s = _build_script("cal.G", "/wd", "rflag", "CPARAM", 5.0, True)
         assert s.count('mode="summary"') == 2
 
     def test_flagbackup_value_embedded(self):
-        s = _build_script("cal.G", "rflag", "CPARAM", 5.0, False)
+        s = _build_script("cal.G", "/wd", "rflag", "CPARAM", 5.0, False)
         assert "flagbackup=False" in s
 
 

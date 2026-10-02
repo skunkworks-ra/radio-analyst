@@ -646,3 +646,37 @@ def test_every_wired_generator_emits_the_recorder(ms_and_workdir, tmp_path, monk
         if "_record_stage" not in defined or not _record_calls(ast.parse(script)):
             missing.append(name)
     assert missing == []
+
+
+def _defines_recorder(script: str) -> bool:
+    return any(
+        isinstance(n, ast.FunctionDef) and n.name == "_record_stage"
+        for n in ast.walk(ast.parse(script))
+    )
+
+
+def test_flag_caltable_script_records_its_caltable():
+    from ms_modify.flag_caltable import _build_script
+
+    script = _build_script("/data/cal.G", "/data/work", "rflag", "CPARAM", 5.0, True)
+    assert _defines_recorder(script)
+    assert _recorded(script) == [("flag_caltable", "/data/cal.G")]
+    (measurement,) = _measurements(script)
+    assert set(measurement) == {"flagged_frac_before", "flagged_frac_after"}
+
+
+def test_setjy_polcal_script_records_the_ms():
+    from ms_modify.setjy_polcal import _build_script
+
+    script = _build_script(
+        "/data/x.ms", "0", "3C286", 3.0, [0.1, 0.0], [0.5, 0.0], 32.0, "/data/work"
+    )
+    assert _defines_recorder(script)
+    assert _recorded(script) == [("setjy_polcal", "/data/x.ms")]
+    tree = ast.parse(script)
+    (call,) = _record_calls(tree)
+    assert ast.literal_eval(call.args[0]) == "/data/work"
+    # The record must follow the manual setjy, or a failed apply still logs.
+    assert _module_level_index(script, "setjy") < _module_level_index(
+        script, "_record_stage", "/data/x.ms"
+    )

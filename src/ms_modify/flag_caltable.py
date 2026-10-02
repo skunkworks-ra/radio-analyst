@@ -32,6 +32,7 @@ from pathlib import Path
 from ms_inspect.util.casa_context import open_table
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.stage_log import record_stage
 
 TOOL_NAME = "ms_flag_caltable"
 
@@ -102,12 +103,15 @@ def _resolve_mode(viscal_type: str, mode_override: str | None) -> str:
 
 def _build_script(
     caltable_str: str,
+    workdir: str,
     mode: str,
     datacolumn: str,
     sigma: float,
     flagbackup: bool,
 ) -> str:
     """Return a self-contained flag_caltable.py driver script."""
+    from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
+
     if mode == "tfcrop":
         flag_kwargs = f"timecutoff={sigma}, freqcutoff={sigma}"
     else:  # rflag
@@ -125,6 +129,8 @@ whether the a-priori flagging was sufficient (> 30% flagged → improve preflag
 and redo the solve rather than loosening sigma).
 \"\"\"
 from casatasks import flagdata
+
+{record}
 
 caltable = {caltable_str!r}
 
@@ -149,6 +155,12 @@ flagdata(
 after = flagdata(vis=caltable, mode="summary", datacolumn={datacolumn!r})
 print(f"Flagged fraction after:  {{_frac(after):.4f}}")
 print(f"Delta: {{_frac(after) - _frac(before):.4f}}")
+_record_stage(
+    {workdir!r},
+    "flag_caltable",
+    caltable,
+    {{"flagged_frac_before": _frac(before), "flagged_frac_after": _frac(after)}},
+)
 print("Done. If > 30% flagged, improve a-priori flagging and redo the solve.")
 """
 
@@ -210,6 +222,7 @@ def run(
     script_path = str(workdir_path / "flag_caltable.py")
     script_content = _build_script(
         caltable_str=caltable_str,
+        workdir=str(workdir_path),
         mode=resolved_mode,
         datacolumn=datacolumn,
         sigma=sigma,
@@ -287,6 +300,12 @@ def run(
     frac_before = _frac(before)
     frac_after = _frac(after)
     delta = frac_after - frac_before
+    record_stage(
+        str(workdir_path),
+        "flag_caltable",
+        caltable_str,
+        {"flagged_frac_before": frac_before, "flagged_frac_after": frac_after},
+    )
     base_data["flagged_frac_before"] = fmt_field(round(frac_before, 4))
     base_data["flagged_frac_after"] = fmt_field(round(frac_after, 4))
     base_data["flagged_frac_delta"] = fmt_field(round(delta, 4))
