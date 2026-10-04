@@ -138,3 +138,46 @@ class TestCheckSpwCoverage:
 
         monkeypatch.setattr(spw_coverage, "open_msmd", boom)
         assert check_spw_coverage("/fake.ms", "3C286", "", "") == []
+
+
+class TestFullyFlaggedTargetSpws:
+    def test_flag_probe_failure_keeps_the_warning(self, monkeypatch):
+        _patch_msmd(monkeypatch, _AB1345_LIKE)
+
+        def boom(*_a, **_k):
+            raise RuntimeError("FLAG unreadable")
+
+        monkeypatch.setattr(spw_coverage, "_fully_flagged_spws", boom)
+        warns = check_spw_coverage("/fake.ms", "3C286", "", "")
+        assert any("coverage gap" in w for w in warns)
+
+    def test_spws_flagged_on_purpose_are_not_a_gap(self, monkeypatch):
+        monkeypatch.setattr(spw_coverage, "_fully_flagged_spws", lambda *_a: {4, 5})
+        # Solve field covers 2,3; 4,5 are fully flagged on the targets.
+        fields = list(_AB1345_LIKE)
+        fields[0] = ("3C286", ["CALIBRATE_BANDPASS#ON_SOURCE"], [2, 3])
+        _patch_msmd(monkeypatch, fields)
+        warns = check_spw_coverage("/fake.ms", "3C286", "", "")
+        assert not any("coverage gap" in w for w in warns)
+        assert any("[4, 5] are fully flagged" in w for w in warns)
+
+    def test_real_ms_fully_flagged_spw_detected(self, real_ms_raw_copy):
+        # Fixture: 3C147 (field 0) in SpWs 0 and 1; J1331+3030 (field 1) in SpW 0 only.
+        from casatools import table
+
+        before = check_spw_coverage(real_ms_raw_copy, "J1331+3030", "", "3C147")
+        assert any("coverage gap" in w for w in before)
+
+        tb = table()
+        tb.open(real_ms_raw_copy, nomodify=False)
+        sel = (tb.getcol("FIELD_ID") == 0) & (tb.getcol("DATA_DESC_ID") == 1)
+        flag = tb.getcol("FLAG")
+        flag[:, :, sel] = True
+        tb.putcol("FLAG", flag)
+        tb.close()
+        assert sel.any()
+
+        assert spw_coverage._fully_flagged_spws(real_ms_raw_copy, {0}, {0, 1}) == {1}
+        after = check_spw_coverage(real_ms_raw_copy, "J1331+3030", "", "3C147")
+        assert not any("coverage gap" in w for w in after)
+        assert any("[1] are fully flagged" in w for w in after)
