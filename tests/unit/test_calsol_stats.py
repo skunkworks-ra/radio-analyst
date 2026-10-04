@@ -185,18 +185,27 @@ class TestReadTableType:
 
 
 class TestStatHelpers:
-    def test_phase_rms_deg_zero(self):
-        phases = np.zeros(10)
-        assert calsol_stats._phase_rms_deg(phases) == pytest.approx(0.0)
+    def test_steady_offset_gives_scatter_not_offset(self):
+        rng = np.random.default_rng(0)
+        ph = np.deg2rad(60.0 + rng.normal(0, 5.0, (1, 1, 2000)))
+        assert calsol_stats._phase_scatter_deg(ph)[0] == pytest.approx(5.0, rel=0.05)
 
-    def test_phase_rms_deg_known(self):
-        phases = np.array([0.1, -0.1, 0.1, -0.1])  # radians
-        expected = float(np.sqrt(np.mean(phases**2))) * (180.0 / math.pi)
-        assert calsol_stats._phase_rms_deg(phases) == pytest.approx(expected)
+    def test_wrap_at_180(self):
+        ph = np.deg2rad(np.array([[[179.0, -179.0, 179.0, -179.0]]]))
+        assert calsol_stats._phase_scatter_deg(ph)[0] == pytest.approx(1.0, abs=1e-6)
+        assert abs(calsol_stats._phase_mean_deg(ph.ravel())) == pytest.approx(180.0, abs=1e-6)
 
-    def test_phase_rms_all_nan(self):
-        phases = np.full(5, math.nan)
-        assert math.isnan(calsol_stats._phase_rms_deg(phases))
+    def test_per_corr_offsets_removed(self):
+        ph = np.deg2rad(np.array([[[40.0] * 5], [[-40.0] * 5]]))  # RR +40, LL -40
+        np.testing.assert_allclose(calsol_stats._phase_scatter_deg(ph), [0.0, 0.0], atol=1e-6)
+
+    def test_single_time_is_nan(self):
+        ph = np.zeros((2, 4, 1))  # single-solution B table
+        assert np.all(np.isnan(calsol_stats._phase_scatter_deg(ph)))
+
+    def test_all_nan(self):
+        ph = np.full((2, 1, 5), math.nan)
+        assert np.all(np.isnan(calsol_stats._phase_scatter_deg(ph)))
 
     def test_safe_mean_ignores_nan(self):
         arr = np.array([1.0, 2.0, math.nan, 3.0])
@@ -243,6 +252,7 @@ class TestProcessSliceG:
         result = self._run(tmp_path, ant1, cparam, flag, snr)
         for a in range(_N_ANT):
             assert result[a]["phase_rms_deg"] == pytest.approx(0.0, abs=1e-6)
+            assert result[a]["phase_rms_deg_per_corr"] == pytest.approx([0.0] * _N_CORR, abs=1e-6)
 
     def test_unflagged_fraction_zero(self, tmp_path):
         ant1, cparam, flag, snr = _g_table_data()

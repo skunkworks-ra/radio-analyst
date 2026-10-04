@@ -58,19 +58,37 @@ def _nan_list(shape: tuple[int, ...]) -> list:
     return arr.tolist()
 
 
-def _phase_rms_deg(phase_rad: np.ndarray) -> float:
-    """RMS of phase values in degrees, ignoring NaN."""
-    valid = phase_rad[~np.isnan(phase_rad)]
-    if valid.size == 0:
-        return math.nan
-    return float(np.sqrt(np.mean(valid**2))) * (180.0 / math.pi)
+def _phase_scatter_deg(phase_rad: np.ndarray) -> np.ndarray:
+    """Phase scatter over time, per correlation, in degrees.
+
+    phase_rad: [n_corr, n_chan, n_rows], NaN where flagged. For each
+    (corr, chan) the circular mean over time is removed, and the RMS of the
+    wrapped deviations is taken, pooled over channels. A steady offset gives
+    0, not the offset. A (corr, chan) with fewer than 2 unflagged times
+    contributes nothing; a corr with none left is NaN.
+    """
+    n_corr = phase_rad.shape[0]
+    out = np.full(n_corr, math.nan)
+    valid = np.isfinite(phase_rad)
+    z = np.where(valid, np.exp(1j * np.where(valid, phase_rad, 0.0)), 0.0)
+    n_t = valid.sum(axis=2)  # [n_corr, n_chan]
+    mean = z.sum(axis=2)
+    ref = np.where(np.abs(mean) > 0, mean / np.where(np.abs(mean) > 0, np.abs(mean), 1.0), 1.0)
+    dev = np.angle(z * np.conj(ref)[:, :, np.newaxis])  # wrapped, [-pi, pi]
+    use = valid & (n_t >= 2)[:, :, np.newaxis]
+    for c in range(n_corr):
+        d = dev[c][use[c]]
+        if d.size:
+            out[c] = float(np.sqrt(np.mean(d**2))) * (180.0 / math.pi)
+    return out
 
 
 def _phase_mean_deg(phase_rad: np.ndarray) -> float:
+    """Circular mean of the phases in degrees, ignoring NaN."""
     valid = phase_rad[~np.isnan(phase_rad)]
     if valid.size == 0:
         return math.nan
-    return float(np.mean(valid)) * (180.0 / math.pi)
+    return float(np.angle(np.mean(np.exp(1j * valid)))) * (180.0 / math.pi)
 
 
 def _safe_mean(arr: np.ndarray) -> float:
@@ -135,8 +153,9 @@ def _process_slice(
     Read one (SPW, field) slice and compute per-antenna stats.
 
     Returns a dict keyed by antenna index with sub-dicts containing:
-        flagged_frac, snr_mean, amp_mean, amp_std, phase_mean_deg,
-        phase_rms_deg, amp_array (shape [n_chan_max]), delay_ns (K only),
+        flagged_frac, snr_mean, amp_mean, amp_std, phase_mean_deg (circular),
+        phase_rms_deg (worst correlation's scatter over time),
+        phase_rms_deg_per_corr, amp_array (shape [n_chan_max]), delay_ns (K only),
         n_rows.
     """
     n_ant = len(ant_names)
@@ -200,7 +219,11 @@ def _process_slice(
             entry["amp_mean"] = _safe_mean(amp_flat)
             entry["amp_std"] = _safe_std(amp_flat)
             entry["phase_mean_deg"] = _phase_mean_deg(phase_flat)
-            entry["phase_rms_deg"] = _phase_rms_deg(phase_flat)
+            per_corr = _phase_scatter_deg(phase)
+            entry["phase_rms_deg_per_corr"] = per_corr.tolist()
+            entry["phase_rms_deg"] = (
+                float(np.nanmax(per_corr)) if np.any(np.isfinite(per_corr)) else math.nan
+            )
 
             # full amplitude array averaged over corr axis → [n_chan]
             if np.all(np.isnan(amp)):
@@ -521,6 +544,8 @@ def run(
 
     # delay: store mean delay per (ant, spw, field, n_corr) — inferred from first slice
     delay_arr: np.ndarray | None = None
+    # phase scatter per correlation, same lazy allocation
+    phase_rms_corr_arr: np.ndarray | None = None
 
     # --- iterate (spw, field) slices ---
     for spw in spw_ids:
@@ -542,6 +567,10 @@ def run(
                     amp_std_arr[a_idx, si, fi] = entry["amp_std"]
                     phase_mean_arr[a_idx, si, fi] = entry["phase_mean_deg"]
                     phase_rms_arr[a_idx, si, fi] = entry["phase_rms_deg"]
+                    pc = entry["phase_rms_deg_per_corr"]
+                    if phase_rms_corr_arr is None:
+                        phase_rms_corr_arr = np.full((n_ant, n_spw, n_field, len(pc)), math.nan)
+                    phase_rms_corr_arr[a_idx, si, fi, : len(pc)] = pc
                     if _freq_dep and amp_array_4d is not None:
                         amp_array_4d[a_idx, si, fi, :] = entry["amp_array"]
 
@@ -591,7 +620,21 @@ def run(
         data["amp_mean"] = fmt_field(amp_mean_arr.tolist(), flag=_flag(amp_mean_arr))
         data["amp_std"] = fmt_field(amp_std_arr.tolist(), flag=_flag(amp_std_arr))
         data["phase_mean_deg"] = fmt_field(phase_mean_arr.tolist(), flag=_flag(phase_mean_arr))
-        data["phase_rms_deg"] = fmt_field(phase_rms_arr.tolist(), flag=_flag(phase_rms_arr))
+        data["phase_rms_deg"] = fmt_field(
+            phase_rms_arr.tolist(),
+            flag=_flag(phase_rms_arr),
+            note=(
+                "Scatter over time: RMS of wrapped deviations from the circular mean "
+                "per (corr, chan), pooled over channels; worst correlation. NaN where "
+                "fewer than 2 unflagged times (e.g. a single-solution B table)."
+            ),
+        )
+        if phase_rms_corr_arr is not None:
+            data["phase_rms_deg_per_corr"] = fmt_field(
+                phase_rms_corr_arr.tolist(),
+                flag=_flag(phase_rms_corr_arr),
+                note=f"Shape [n_ant={n_ant}, n_spw={n_spw}, n_field={n_field}, n_corr].",
+            )
 
     if _freq_dep and amp_array_4d is not None:
         data["amp_array"] = fmt_field(
@@ -643,6 +686,7 @@ def run(
                 "amp_std": amp_std_arr,
                 "phase_mean_deg": phase_mean_arr,
                 "phase_rms_deg": phase_rms_arr,
+                "phase_rms_deg_per_corr": phase_rms_corr_arr,
                 "amp_array": amp_array_4d,
                 "delay_ns": delay_arr,
             },
@@ -698,6 +742,17 @@ def run(
             compact_data["amp_mean"] = _per_ant(amp_mean_arr)
             compact_data["amp_std"] = _per_ant(amp_std_arr)
             compact_data["phase_rms_deg"] = _per_ant(phase_rms_arr)
+            if phase_rms_corr_arr is not None:
+                pc_ant = np.full((n_ant, phase_rms_corr_arr.shape[3]), math.nan)
+                for i in range(n_ant):
+                    for c in range(phase_rms_corr_arr.shape[3]):
+                        v = phase_rms_corr_arr[i, :, :, c]
+                        v = v[np.isfinite(v)]
+                        if v.size:
+                            pc_ant[i, c] = np.mean(v)
+                compact_data["phase_rms_deg_per_corr"] = [
+                    [round(float(x), 4) if np.isfinite(x) else None for x in row] for row in pc_ant
+                ]
         if _is_delay_type(table_type) and delay_arr is not None:
             da = np.nanmean(delay_arr, axis=(1, 2, 3))  # [n_ant]
             compact_data["delay_ns"] = [round(float(x), 3) if np.isfinite(x) else None for x in da]

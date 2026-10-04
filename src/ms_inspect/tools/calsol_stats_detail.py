@@ -63,6 +63,11 @@ def _antenna_slice(npz, ant_idx: int, spws, fields) -> list[dict]:
     for si, spw in enumerate(spws):
         for fi, fld in enumerate(fields):
             row = {"spw": int(spw), "field": str(fld)}
+            if "phase_rms_deg_per_corr" in npz.files:
+                pc = npz["phase_rms_deg_per_corr"][ant_idx, si, fi]
+                row["phase_rms_deg_per_corr"] = [
+                    round(float(v), 4) if np.isfinite(v) else None for v in pc
+                ]
             for q in quantities:
                 if q in npz.files:
                     arr = npz[q]
