@@ -111,7 +111,7 @@ is adequate. Use the flux density from `ms_setjy` output (`{FLUX_JY}`).
 ```
 ms_gaincal_snr_predict(
     ms_path        = {VIS},
-    field_name     = {FLUX_FIELD},
+    field          = {FLUX_FIELD},
     solint_seconds = -1,          # -1 = use full scan length (equivalent to solint='inf')
     snr_threshold  = 3.0,
     flux_jy        = {FLUX_JY},   # Stokes I flux density from ms_setjy
@@ -245,7 +245,7 @@ ms_gaincal(
 
 **Inspect G0 solutions:**
 ```
-ms_calsol_stats(caltable_path = {WORKDIR}/initial_phase.G0)
+ms_calsol_stats(caltable_path = {WORKDIR}/initial_phase.G0, verbosity = 'full')
 ```
 
 | Field | Index | Threshold | Action if exceeded |
@@ -286,7 +286,7 @@ ms_gaincal(
 
 **Inspect K solutions:**
 ```
-ms_calsol_stats(caltable_path = {WORKDIR}/delay.K)
+ms_calsol_stats(caltable_path = {WORKDIR}/delay.K, verbosity = 'full')
 ```
 
 | Field | Index | Threshold | Action if exceeded |
@@ -330,7 +330,7 @@ of a delay solution makes no physical sense and creates artifacts at scan edges.
 
 **Inspect B solutions:**
 ```
-ms_calsol_stats(caltable_path = {WORKDIR}/bandpass.B)
+ms_calsol_stats(caltable_path = {WORKDIR}/bandpass.B, verbosity = 'full')
 ```
 
 | Field | Index | Threshold | Action if exceeded |
@@ -499,7 +499,7 @@ the hard-stop Escalation criteria. The happy path does not need it.
 ## Step 5 — Inspect gain solutions
 
 ```
-ms_calsol_stats(caltable_path = {WORKDIR}/gain.G)
+ms_calsol_stats(caltable_path = {WORKDIR}/gain.G, verbosity = 'full')
 ```
 
 The `gain.G` table contains solutions for both flux and phase calibrators. Use

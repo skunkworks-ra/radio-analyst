@@ -70,7 +70,7 @@ ms_gaincal(
     gaintype  = 'G',
     calmode   = 'p',
     minsnr    = 3.0,
-    priorcals = {PRIORCALS},
+    gaintable = {PRIORCALS},
     execute   = False,
 )
 ```
@@ -90,8 +90,8 @@ After the script completes, call `ms_calsol_stats` to inspect solution quality:
 
 ```python
 ms_calsol_stats(
-    caltable = f"{WORKDIR}/pcal1.g",
-    ms_path  = {VIS},
+    caltable_path = f"{WORKDIR}/pcal1.g",
+    verbosity     = 'full',     # phase_mean_deg is not in compact output
 )
 ```
 
@@ -100,15 +100,15 @@ Check:
 | Output | What to look for | Action if bad |
 |---|---|---|
 | `flagged_fraction` per antenna | > 30% flagged → solution failed for that antenna | Lower `minsnr` to 2.0 and re-solve |
-| `phase_rms_deg` per antenna | > 30° RMS → large phase errors being corrected (this is fine) | Just note — this is what selfcal is for |
-| `phase_rms_deg` < 1° | Solutions are near-zero — no phase error to correct | Selfcal will not help; stop here |
+| `phase_mean_deg` / `phase_rms_deg` per antenna | Large mean offset or > 30° scatter over time → large phase errors being corrected (this is fine) | Just note — this is what selfcal is for |
+| `abs(phase_mean_deg)` < 1° **and** `phase_rms_deg` < 1° on every antenna | Solutions are near-zero — no phase error to correct | Selfcal will not help; stop here |
 
 Also plot with `ms_plot_caltable_library`:
 
 ```python
 ms_plot_caltable_library(
-    caltables = [f"{WORKDIR}/pcal1.g"],
-    workdir   = {WORKDIR},
+    caltable_paths = [f"{WORKDIR}/pcal1.g"],
+    output_dir     = {WORKDIR},
 )
 ```
 
@@ -162,7 +162,7 @@ Call `ms_image_stats` on both the first-pass and selfcal images:
 # Selfcal image
 ms_image_stats(
     image_path = f"{WORKDIR}/{imagename}_sc1.image.pbcor",
-    beam_image = f"{WORKDIR}/{imagename}_sc1.psf",
+    psf_path   = f"{WORKDIR}/{imagename}_sc1.psf",
 )
 ```
 

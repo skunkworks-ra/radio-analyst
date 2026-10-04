@@ -40,8 +40,8 @@ ms_initial_bandpass(execute=False, ...)   → generate initial_bandpass.py
   → run initial_bandpass.py as background job; wait for completion however long it takes
 ms_verify_caltables(...)                  → confirm init_gain.g + BP0.b valid
 ms_plot_caltable_library(               → plot both caltables; review before proceeding
-    caltables=[init_gain.g, BP0.b],
-    workdir=workdir,
+    caltable_paths=[init_gain.g, BP0.b],
+    output_dir=workdir,
 )
 
 ms_residual_stats(field_id=bp_field_id)  → inspect amplitude distribution
@@ -292,8 +292,8 @@ After verification passes, call `ms_plot_caltable_library` on both tables:
 
 ```python
 ms_plot_caltable_library(
-    caltables=[f"{workdir}/init_gain.g", f"{workdir}/BP0.b"],
-    workdir=workdir,
+    caltable_paths=[f"{workdir}/init_gain.g", f"{workdir}/BP0.b"],
+    output_dir=workdir,
 )
 ```
 

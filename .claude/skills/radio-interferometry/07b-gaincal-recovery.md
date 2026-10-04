@@ -139,7 +139,7 @@ exceeds the source-type threshold (e.g., > 8% for bright cal, > 12% for phase ca
 
 4. **Check per-antenna flag contribution:**
    ```
-   ms_flag_summary(ms_path={VIS}, field={FLUX_FIELD}, per_antenna=True)
+   ms_flag_summary(ms_path={VIS}, field={FLUX_FIELD})   # per_antenna is always returned
    # Identify antennas where flag_delta is largest
    ```
    - **If concentrated in 1–2 antennas:** suspect hardware issue on those antennas
