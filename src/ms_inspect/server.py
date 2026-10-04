@@ -280,6 +280,14 @@ class ResidualStatsInput(BaseModel):
         description="Maximum rows to read; rows are sampled uniformly if larger (default 500 000).",
         ge=1,
     )
+    max_per_chan_records: int = Field(
+        default=2000,
+        description=(
+            "Bound on per-channel records across all SpWs; above it the chan_* arrays "
+            "go to a JSON sidecar (detail_path). 0 = no bound."
+        ),
+        ge=0,
+    )
 
 
 class CorrectedStatsInput(BaseModel):
@@ -1412,7 +1420,7 @@ async def ms_verify_model(params: VerifyModelInput) -> str:
 @mcp.tool(
     name="ms_residual_stats",
     description=(
-        "CORRECTED − MODEL amplitude distribution per SpW. "
+        "CORRECTED − MODEL amplitude distribution per SpW and per channel, parallel hands only. "
         "RFI-threshold guide for ms_apply_initial_rflag. Requires CORRECTED + MODEL."
     ),
     annotations={
@@ -1437,13 +1445,16 @@ async def ms_residual_stats(params: ResidualStatsInput) -> str:
         params.max_rows:  Maximum rows to read per field (default 500 000).
 
     Returns:
-        JSON with per-spw median_amp, std_amp, p95_amp, n_unflagged, n_flagged.
+        JSON with per-spw median_amp, std_amp, p95_amp, n_unflagged, n_flagged,
+        and per-channel chan_median_amp, chan_robust_sigma, chan_p95_amp,
+        chan_n_unflagged arrays (parallel hands only).
     """
     return await _run_tool(
         residual_stats.run,
         params.ms_path,
         params.field_id,
         params.max_rows,
+        params.max_per_chan_records,
     )
 
 
