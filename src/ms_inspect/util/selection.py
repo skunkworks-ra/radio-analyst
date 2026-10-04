@@ -55,13 +55,25 @@ def parallel_corr_from_codes(
     ]
 
 
-def parallel_corr_by_ddid(ms_str: str) -> list[list[tuple[int, str]]]:
-    """For each DATA_DESC_ID, the (index, name) of its parallel-hand correlations,
-    read from the POLARIZATION row that DATA_DESCRIPTION actually points to."""
+def _corr_tables(ms_str: str) -> tuple[list[list[int]], list[int]]:
+    """CORR_TYPE per POLARIZATION row, and POLARIZATION_ID per DATA_DESC_ID."""
     from ms_inspect.util.casa_context import open_table
 
     with open_table(ms_str + "/POLARIZATION") as tb:
         corr = [[int(c) for c in tb.getcell("CORR_TYPE", r)] for r in range(tb.nrows())]
     with open_table(ms_str + "/DATA_DESCRIPTION") as tb:
         pol_ids = [int(x) for x in tb.getcol("POLARIZATION_ID")]
-    return parallel_corr_from_codes(corr, pol_ids)
+    return corr, pol_ids
+
+
+def corr_codes_by_ddid(ms_str: str) -> list[list[int]]:
+    """For each DATA_DESC_ID, the CORR_TYPE codes of the POLARIZATION row it
+    points to (not row 0)."""
+    corr, pol_ids = _corr_tables(ms_str)
+    return [corr[pid] for pid in pol_ids]
+
+
+def parallel_corr_by_ddid(ms_str: str) -> list[list[tuple[int, str]]]:
+    """For each DATA_DESC_ID, the (index, name) of its parallel-hand correlations,
+    read from the POLARIZATION row that DATA_DESCRIPTION actually points to."""
+    return parallel_corr_from_codes(*_corr_tables(ms_str))
