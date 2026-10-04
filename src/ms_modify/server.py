@@ -426,6 +426,14 @@ class ApplyPreflagInput(BaseModel):
         default=True,
         description="Apply conservative tfcrop pass (default True).",
     )
+    quack_interval_s: float = Field(
+        default=5.0,
+        description=(
+            "Seconds flagged at the start of each scan (quackmode='beg'); the first "
+            "integrations read low. Default 5.0; 0 disables."
+        ),
+        ge=0.0,
+    )
     execute: bool = Field(
         default=False,
         description=(
@@ -823,6 +831,7 @@ async def ms_apply_preflag(params: ApplyPreflagInput) -> str:
         params.online_flag_file: Path to .flagonline.txt (empty = skip).
         params.shadow_tolerance_m: Shadow tolerance in metres.
         params.do_tfcrop:        Apply conservative tfcrop (default True).
+        params.quack_interval_s: Seconds flagged at each scan start (default 5.0).
         params.execute:          Generate scripts only (False) or run in-process (True).
 
     Returns:
@@ -837,6 +846,7 @@ async def ms_apply_preflag(params: ApplyPreflagInput) -> str:
         params.shadow_tolerance_m,
         params.do_tfcrop,
         params.execute,
+        params.quack_interval_s,
     )
 
 

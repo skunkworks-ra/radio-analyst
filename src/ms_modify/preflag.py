@@ -6,12 +6,14 @@ pass, then splits calibrator fields to workdir/calibrators.ms.
 
 Flagging steps (order matters — all combined in preflag_cmds.txt):
   1. Online flags from importasdm .flagonline.txt (if provided)
-  2. Shadow flags (mode='shadow', tolerance=shadow_tolerance_m)
-  3. Zero-amplitude clip (mode='clip', clipzeros=True)
-  4. Conservative tfcrop (mode='tfcrop', timecutoff=3.0, freqcutoff=3.0)
-  5. Extend flags across polarizations (mode='extend', extendpols=True)
+  2. Quack the start of each scan (mode='quack', quackinterval=quack_interval_s,
+     quackmode='beg'); the first integrations read 4 to 17% low
+  3. Shadow flags (mode='shadow', tolerance=shadow_tolerance_m)
+  4. Zero-amplitude clip (mode='clip', clipzeros=True)
+  5. Conservative tfcrop (mode='tfcrop', timecutoff=3.0, freqcutoff=3.0)
+  6. Extend flags across polarizations (mode='extend', extendpols=True)
 
-All five run via flagdata(mode='list', inpfile=preflag_cmds.txt, flagbackup=True)
+All six run via flagdata(mode='list', inpfile=preflag_cmds.txt, flagbackup=True)
 in a single atomic pass. After flagging, calibrator fields are split to
 workdir/calibrators.ms with keepflags=False.
 """
@@ -32,6 +34,7 @@ def _build_cmds_content(
     online_flag_file: str,
     shadow_tolerance_m: float,
     do_tfcrop: bool,
+    quack_interval_s: float = 5.0,
 ) -> str:
     """
     Build the text content for preflag_cmds.txt.
@@ -53,6 +56,8 @@ def _build_cmds_content(
         else:
             lines.append(f"# WARNING: online_flag_file not found: {online_flag_file}")
 
+    if quack_interval_s > 0:
+        lines.append(f"mode='quack' quackinterval={quack_interval_s} quackmode='beg'")
     lines.append(f"mode='shadow' tolerance={shadow_tolerance_m}")
     lines.append("mode='clip' clipzeros=True")
     if do_tfcrop:
@@ -129,6 +134,7 @@ def run(
     shadow_tolerance_m: float = 0.0,
     do_tfcrop: bool = True,
     execute: bool = False,
+    quack_interval_s: float = 5.0,
 ) -> dict:
     """
     Apply deterministic pre-calibration flags and split calibrators.
@@ -140,6 +146,8 @@ def run(
         online_flag_file:  Path to .flagonline.txt from importasdm (empty = skip).
         shadow_tolerance_m: Shadow tolerance in metres (default 0.0).
         do_tfcrop:         Apply conservative tfcrop pass (default True).
+        quack_interval_s:  Seconds flagged at the start of each scan (default
+                           5.0; 0 disables).
         execute:           If False (default), write scripts and return.
                            If True, run flagdata + split in-process.
 
@@ -167,7 +175,9 @@ def run(
     cal_ms = str(workdir_path / "calibrators.ms")
 
     # Always write the flag command list
-    cmds_content = _build_cmds_content(online_flag_file, shadow_tolerance_m, do_tfcrop)
+    cmds_content = _build_cmds_content(
+        online_flag_file, shadow_tolerance_m, do_tfcrop, quack_interval_s
+    )
     Path(cmds_path).write_text(cmds_content)
     casa_calls.append(f"write_cmds → {cmds_path}")
 
@@ -186,6 +196,7 @@ def run(
         "n_flag_commands": fmt_field(n_cmd_lines),
         "cal_fields": cal_fields,
         "do_tfcrop": do_tfcrop,
+        "quack_interval_s": quack_interval_s,
         "shadow_tolerance_m": shadow_tolerance_m,
         "online_flag_file": online_flag_file or None,
         "cal_ms": fmt_field(None, flag="UNAVAILABLE", note="script not yet executed"),
