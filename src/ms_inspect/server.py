@@ -408,7 +408,9 @@ class CalsolStatsInput(BaseModel):
         default=3.0, ge=0.0, description="SNR threshold for low_snr outliers (default 3.0)."
     )
     amp_sigma: float = Field(
-        default=5.0, ge=0.0, description="Amplitude outlier threshold in sigma (default 5.0)."
+        default=5.0,
+        ge=0.0,
+        description="Amplitude outlier threshold, in robust sigma of the (field, SpW) group (default 5.0).",
     )
     verbosity: str = Field(
         default="compact",

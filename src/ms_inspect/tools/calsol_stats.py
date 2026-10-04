@@ -230,6 +230,9 @@ def _process_slice(
 # enumeration is recoverable from the raw NPZ sidecar via ms_calsol_stats_detail.
 _OUTLIER_DETAIL_CAP = 15
 
+# Minimum finite values for a robust (median, MAD) reference.
+_MIN_GROUP_N = 3
+
 
 def _rollup(entries: list[dict]) -> dict:
     """Per-antenna count rollup, ordered by count descending."""
@@ -237,6 +240,99 @@ def _rollup(entries: list[dict]) -> dict:
     for e in entries:
         by_ant[e["antenna"]] = by_ant.get(e["antenna"], 0) + 1
     return dict(sorted(by_ant.items(), key=lambda kv: kv[1], reverse=True))
+
+
+def _robust(vals: np.ndarray) -> tuple[float, float, int] | None:
+    """(median, 1.4826*MAD, n) of the finite values, or None if n < 3 or MAD = 0."""
+    v = vals[np.isfinite(vals)]
+    if v.size < _MIN_GROUP_N:
+        return None
+    med = float(np.median(v))
+    sigma = 1.4826 * float(np.median(np.abs(v - med)))
+    return (med, sigma, int(v.size)) if sigma > 0 else None
+
+
+def amp_outlier_scan(
+    amp: np.ndarray,
+    ant_names,
+    spw_ids,
+    field_names,
+    amp_sigma: float,
+) -> tuple[list[dict], list[dict]]:
+    """Amplitude outliers on amp[ant, spw, field], judged per (field, SpW).
+
+    Before fluxscale each field's gains sit at their own level, and a phase
+    cal's spectral index tilts that level across a wide band, so one pooled
+    median flags whole fields. Each antenna is judged against the median and
+    1.4826*MAD of its own (field, SpW) group; n_sigma_field gives the same
+    against the whole field.
+
+    Returns (rows, reference). rows: outliers worst first, each with the
+    group and field reference values. reference: one entry per field with
+    per-SpW arrays (aligned to spw_ids) of the group median, sigma, n, and the
+    signed offset of the group median from the field median in field sigmas,
+    which shows a whole SpW moving (wideband RFI) even when no antenna is an
+    outlier. A group with fewer than 3 finite values or MAD = 0 is null in the
+    arrays and contributes no outliers.
+    """
+    amp = np.asarray(amp, dtype=float)
+    while amp.ndim < 3:
+        amp = amp[..., np.newaxis]
+    _, n_spw, n_field = amp.shape
+    rows: list[dict] = []
+    reference: list[dict] = []
+    for fi in range(n_field):
+        fname = str(field_names[fi]) if fi < len(field_names) else ""
+        fref = _robust(amp[:, :, fi])
+        f_med, f_sig = (fref[0], fref[1]) if fref else (None, None)
+        spw_med: list[float | None] = []
+        spw_sig: list[float | None] = []
+        spw_n: list[int] = []
+        spw_off: list[float | None] = []
+        for si in range(n_spw):
+            col = amp[:, si, fi]
+            spw_n.append(int(np.isfinite(col).sum()))
+            gref = _robust(col)
+            if gref is None:
+                spw_med.append(None)
+                spw_sig.append(None)
+                spw_off.append(None)
+                continue
+            g_med, g_sig, _ = gref
+            spw_med.append(round(g_med, 4))
+            spw_sig.append(round(g_sig, 4))
+            spw_off.append(round((g_med - f_med) / f_sig, 2) if fref else None)
+            for ai, val in enumerate(col):
+                if not np.isfinite(val):
+                    continue
+                n_sigma = abs(val - g_med) / g_sig
+                if n_sigma <= amp_sigma:
+                    continue
+                rows.append(
+                    {
+                        "antenna": str(ant_names[ai]),
+                        "spw": int(spw_ids[si]) if si < len(spw_ids) else si,
+                        "field": fname,
+                        "amp": round(float(val), 4),
+                        "n_sigma": round(float(n_sigma), 2),
+                        "ref_median": round(g_med, 4),
+                        "ref_sigma": round(g_sig, 4),
+                        "n_sigma_field": (round(abs(val - f_med) / f_sig, 2) if fref else None),
+                    }
+                )
+        reference.append(
+            {
+                "field": fname,
+                "field_median": round(f_med, 4) if fref else None,
+                "field_sigma": round(f_sig, 4) if fref else None,
+                "spw_median": spw_med,
+                "spw_sigma": spw_sig,
+                "spw_n": spw_n,
+                "spw_offset_n_sigma_field": spw_off,
+            }
+        )
+    rows.sort(key=lambda e: e["n_sigma"], reverse=True)
+    return rows, reference
 
 
 def _compute_outliers(
@@ -276,28 +372,11 @@ def _compute_outliers(
     low_snr_by_ant = _rollup(low_snr)
 
     amp_outliers: list[dict] = []
+    amp_reference: list[dict] = []
     if amp_mean_arr is not None:
-        median = float(np.nanmedian(amp_mean_arr))
-        mad = float(np.nanmedian(np.abs(amp_mean_arr - median)))
-        sigma = 1.4826 * mad if mad > 0 else 0.0
-        if sigma > 0:
-            flat = amp_mean_arr.reshape(-1)
-            shape = amp_mean_arr.shape
-            for flat_idx, val in enumerate(flat):
-                if np.isfinite(val):
-                    n_sigma = abs(val - median) / sigma
-                    if n_sigma > amp_sigma_thresh:
-                        idx = np.unravel_index(flat_idx, shape)
-                        amp_outliers.append(
-                            {
-                                "antenna": str(ant_names[idx[0]]),
-                                "spw": spw_ids[idx[1]] if len(shape) > 1 else 0,
-                                "field": field_names[idx[2]] if len(shape) > 2 else "",
-                                "amp": round(float(val), 4),
-                                "n_sigma": round(float(n_sigma), 2),
-                            }
-                        )
-    amp_outliers.sort(key=lambda e: e["n_sigma"], reverse=True)  # worst first
+        amp_outliers, amp_reference = amp_outlier_scan(
+            amp_mean_arr, ant_names, spw_ids, field_names, amp_sigma_thresh
+        )
     amp_by_ant = _rollup(amp_outliers)
 
     return {
@@ -311,6 +390,7 @@ def _compute_outliers(
         "amp_outliers_n_antennas": len(amp_by_ant),
         "amp_outliers_by_antenna": amp_by_ant,
         "amp_outliers_truncated": len(amp_outliers) > _OUTLIER_DETAIL_CAP,
+        "amp_reference": amp_reference,
         "thresholds": {
             "snr_min": snr_min,
             "amp_sigma": amp_sigma_thresh,

@@ -512,3 +512,64 @@ class TestRunG:
         assert "amp_mean" in d
         assert "phase_rms_deg" in d
         assert "amp_array" not in d  # amp_array is B-only
+
+
+# ---------------------------------------------------------------------------
+# amp_outlier_scan — per-(field, SpW) reference
+# ---------------------------------------------------------------------------
+
+
+class TestAmpOutlierScan:
+    ANTS = [f"ea{i:02d}" for i in range(1, 28)]
+
+    def _amp(self, n_spw=4, levels=(1.0, 3.0), seed=0):
+        rng = np.random.default_rng(seed)
+        amp = np.empty((len(self.ANTS), n_spw, len(levels)))
+        for fi, lvl in enumerate(levels):
+            amp[:, :, fi] = lvl * (1 + rng.normal(0, 0.02, (len(self.ANTS), n_spw)))
+        return amp
+
+    def test_field_at_different_level_gives_no_hits(self):
+        from ms_inspect.tools.calsol_stats import amp_outlier_scan
+
+        rows, _ = amp_outlier_scan(self._amp(), self.ANTS, [0, 1, 2, 3], ["flux", "phase"], 5.0)
+        assert rows == []
+
+    def test_spectral_tilt_gives_no_hits(self):
+        from ms_inspect.tools.calsol_stats import amp_outlier_scan
+
+        amp = self._amp()
+        amp[:, :, 1] *= np.linspace(0.9, 1.1, 4)  # 20% tilt across the band
+        rows, _ = amp_outlier_scan(amp, self.ANTS, [0, 1, 2, 3], ["flux", "phase"], 5.0)
+        assert rows == []
+
+    def test_bad_antenna_caught_with_reference(self):
+        from ms_inspect.tools.calsol_stats import amp_outlier_scan
+
+        amp = self._amp()
+        amp[4, 2, 1] = 1.5  # ea05, SpW 2, phase cal at 3.0
+        rows, _ = amp_outlier_scan(amp, self.ANTS, [0, 1, 2, 3], ["flux", "phase"], 5.0)
+        assert [(r["antenna"], r["spw"], r["field"]) for r in rows] == [("ea05", 2, "phase")]
+        assert abs(rows[0]["ref_median"] - 3.0) < 0.1
+        assert rows[0]["n_sigma_field"] is not None
+
+    def test_reference_shows_whole_spw_offset(self):
+        from ms_inspect.tools.calsol_stats import amp_outlier_scan
+
+        amp = self._amp()
+        amp[:, 3, 0] *= 1.5  # every antenna in SpW 3 of the flux cal
+        rows, ref = amp_outlier_scan(amp, self.ANTS, [0, 1, 2, 3], ["flux", "phase"], 5.0)
+        assert rows == []
+        off = ref[0]["spw_offset_n_sigma_field"]
+        assert off[3] > 5 and all(abs(x) < 5 for x in off[:3])
+
+    def test_sparse_or_flat_group_is_null(self):
+        from ms_inspect.tools.calsol_stats import amp_outlier_scan
+
+        amp = self._amp()
+        amp[2:, 0, 0] = np.nan  # 2 finite values
+        amp[:, 1, 0] = 1.0  # MAD = 0
+        rows, ref = amp_outlier_scan(amp, self.ANTS, [0, 1, 2, 3], ["flux", "phase"], 5.0)
+        assert ref[0]["spw_median"][0] is None and ref[0]["spw_n"][0] == 2
+        assert ref[0]["spw_median"][1] is None
+        assert not any(r["field"] == "flux" and r["spw"] in (0, 1) for r in rows)
