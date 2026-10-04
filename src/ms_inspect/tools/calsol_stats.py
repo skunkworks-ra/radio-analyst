@@ -58,17 +58,26 @@ def _nan_list(shape: tuple[int, ...]) -> list:
     return arr.tolist()
 
 
-def _phase_scatter_deg(phase_rad: np.ndarray) -> np.ndarray:
-    """Phase scatter over time, per correlation, in degrees.
+def _phase_scatter_deg(phase_rad: np.ndarray) -> tuple[np.ndarray, list[str | None]]:
+    """Phase scatter per correlation, in degrees, and the axis it was taken over.
 
-    phase_rad: [n_corr, n_chan, n_rows], NaN where flagged. For each
-    (corr, chan) the circular mean over time is removed, and the RMS of the
-    wrapped deviations is taken, pooled over channels. A steady offset gives
-    0, not the offset. A (corr, chan) with fewer than 2 unflagged times
-    contributes nothing; a corr with none left is NaN.
+    phase_rad: [n_corr, n_chan, n_rows], NaN where flagged.
+
+    'time': for each (corr, chan) the circular mean over time is removed and the
+    RMS of the wrapped deviations is taken, pooled over channels. A steady
+    offset gives 0, not the offset. Used when any channel of the corr has at
+    least 2 unflagged times.
+
+    'channel': otherwise (one solution in time, e.g. a bandpass), the corr's
+    circular mean over all its samples is removed and the RMS is taken across
+    channels. A leftover delay shows here as a phase slope across the band.
+
+    A corr with fewer than 2 unflagged samples in total has no scatter: NaN,
+    axis None.
     """
     n_corr = phase_rad.shape[0]
     out = np.full(n_corr, math.nan)
+    axes: list[str | None] = [None] * n_corr
     valid = np.isfinite(phase_rad)
     z = np.where(valid, np.exp(1j * np.where(valid, phase_rad, 0.0)), 0.0)
     n_t = valid.sum(axis=2)  # [n_corr, n_chan]
@@ -80,7 +89,15 @@ def _phase_scatter_deg(phase_rad: np.ndarray) -> np.ndarray:
         d = dev[c][use[c]]
         if d.size:
             out[c] = float(np.sqrt(np.mean(d**2))) * (180.0 / math.pi)
-    return out
+            axes[c] = "time"
+            continue
+        zc = z[c][valid[c]]
+        if zc.size >= 2:
+            m = zc.sum()
+            d = np.angle(zc * np.conj(m / abs(m))) if abs(m) > 0 else np.angle(zc)
+            out[c] = float(np.sqrt(np.mean(d**2))) * (180.0 / math.pi)
+            axes[c] = "channel"
+    return out, axes
 
 
 def _phase_mean_deg(phase_rad: np.ndarray) -> float:
@@ -219,8 +236,9 @@ def _process_slice(
             entry["amp_mean"] = _safe_mean(amp_flat)
             entry["amp_std"] = _safe_std(amp_flat)
             entry["phase_mean_deg"] = _phase_mean_deg(phase_flat)
-            per_corr = _phase_scatter_deg(phase)
+            per_corr, axes = _phase_scatter_deg(phase)
             entry["phase_rms_deg_per_corr"] = per_corr.tolist()
+            entry["phase_rms_axes"] = [a for a in axes if a]
             entry["phase_rms_deg"] = (
                 float(np.nanmax(per_corr)) if np.any(np.isfinite(per_corr)) else math.nan
             )
@@ -546,6 +564,7 @@ def run(
     delay_arr: np.ndarray | None = None
     # phase scatter per correlation, same lazy allocation
     phase_rms_corr_arr: np.ndarray | None = None
+    phase_rms_axes: set[str] = set()
 
     # --- iterate (spw, field) slices ---
     for spw in spw_ids:
@@ -567,6 +586,7 @@ def run(
                     amp_std_arr[a_idx, si, fi] = entry["amp_std"]
                     phase_mean_arr[a_idx, si, fi] = entry["phase_mean_deg"]
                     phase_rms_arr[a_idx, si, fi] = entry["phase_rms_deg"]
+                    phase_rms_axes.update(entry["phase_rms_axes"])
                     pc = entry["phase_rms_deg_per_corr"]
                     if phase_rms_corr_arr is None:
                         phase_rms_corr_arr = np.full((n_ant, n_spw, n_field, len(pc)), math.nan)
@@ -624,11 +644,14 @@ def run(
             phase_rms_arr.tolist(),
             flag=_flag(phase_rms_arr),
             note=(
-                "Scatter over time: RMS of wrapped deviations from the circular mean "
-                "per (corr, chan), pooled over channels; worst correlation. NaN where "
-                "fewer than 2 unflagged times (e.g. a single-solution B table)."
+                "Worst correlation's phase scatter. Axis per phase_rms_axis: 'time' = "
+                "RMS of wrapped deviations from the circular mean over time per (corr, "
+                "chan), pooled over channels; 'channel' (one solution in time, e.g. a "
+                "bandpass) = RMS across channels about the corr's circular mean. NaN "
+                "only where a cell has fewer than 2 unflagged samples."
             ),
         )
+        data["phase_rms_axis"] = fmt_field(sorted(phase_rms_axes))
         if phase_rms_corr_arr is not None:
             data["phase_rms_deg_per_corr"] = fmt_field(
                 phase_rms_corr_arr.tolist(),
@@ -742,6 +765,7 @@ def run(
             compact_data["amp_mean"] = _per_ant(amp_mean_arr)
             compact_data["amp_std"] = _per_ant(amp_std_arr)
             compact_data["phase_rms_deg"] = _per_ant(phase_rms_arr)
+            compact_data["phase_rms_axis"] = sorted(phase_rms_axes)
             if phase_rms_corr_arr is not None:
                 pc_ant = np.full((n_ant, phase_rms_corr_arr.shape[3]), math.nan)
                 for i in range(n_ant):
