@@ -41,6 +41,7 @@ from pathlib import Path
 from ms_inspect.util.casa_context import validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, normalize_spw_sel, response_envelope
+from ms_inspect.util.selection import match_field_names, parallel_corr_by_ddid
 
 TOOL_NAME = "ms_postcal_flag"
 
@@ -51,9 +52,6 @@ _DATACOL_MAP = {
     "data": "DATA",
     "model": "MODEL_DATA",
 }
-
-# CASA Stokes enum → name, parallel hands only (the clip never touches cross-hands).
-_PARALLEL_CORR = {5: "RR", 8: "LL", 9: "XX", 12: "YY"}
 
 # A MODEL pinned at the CASA default: amplitude ~1 Jy with flat phase.
 _DEFAULT_MODEL_AMP_TOL = 0.05
@@ -86,40 +84,6 @@ def _parse_spw_ids(spw_sel: str) -> list[int]:
     return sorted(ids)
 
 
-def match_field_names(names: list[str], field_sel: str) -> list[int]:
-    """Resolve a CASA-style field selection against FIELD names. CASA-free.
-
-    Tokens (comma-separated): exact name, shell wildcard ('PER_FIELD_*'),
-    integer id ('3') or inclusive id range ('3~7'). Every token must match at
-    least one field — an unmatched token raises ValueError rather than silently
-    widening the selection to every field.
-    """
-    import fnmatch
-
-    ids: set[int] = set()
-    for raw in field_sel.split(","):
-        tok = raw.strip()
-        if not tok:
-            continue
-        hit: set[int] = set()
-        if tok.isdigit():
-            if int(tok) < len(names):
-                hit.add(int(tok))
-        elif "~" in tok and all(p.strip().isdigit() for p in tok.split("~", 1)):
-            lo, hi = (int(p) for p in tok.split("~", 1))
-            hit.update(i for i in range(lo, hi + 1) if i < len(names))
-        elif any(c in tok for c in "*?["):
-            hit.update(i for i, nm in enumerate(names) if fnmatch.fnmatchcase(nm, tok))
-        else:
-            hit.update(i for i, nm in enumerate(names) if nm == tok)
-        if not hit:
-            raise ValueError(f"field token {tok!r} matches no field in the MS")
-        ids |= hit
-    if not ids:
-        raise ValueError(f"field selection {field_sel!r} is empty")
-    return sorted(ids)
-
-
 def check_clip_policy(datacolumn: str, clip_sigma: float | None, clipmax: float | None) -> None:
     """Raise ValueError if an amplitude clip is requested on a non-residual column."""
     if clip_sigma is None and clipmax is None:
@@ -139,21 +103,6 @@ def model_is_default(par_amp: float, par_phase_rms_deg: float) -> bool:
         abs(par_amp - 1.0) <= _DEFAULT_MODEL_AMP_TOL
         and par_phase_rms_deg <= _DEFAULT_MODEL_PHASE_RMS_DEG
     )
-
-
-def _parallel_corr_by_ddid(ms_str: str) -> list[list[tuple[int, str]]]:
-    """For each DATA_DESC_ID, the (index, name) of its parallel-hand correlations,
-    read from the POLARIZATION row that DATA_DESCRIPTION actually points to."""
-    from ms_inspect.util.casa_context import open_table
-
-    with open_table(ms_str + "/POLARIZATION") as tb:
-        corr = [[int(c) for c in tb.getcell("CORR_TYPE", r)] for r in range(tb.nrows())]
-    with open_table(ms_str + "/DATA_DESCRIPTION") as tb:
-        pol_ids = [int(x) for x in tb.getcol("POLARIZATION_ID")]
-    return [
-        [(i, _PARALLEL_CORR[c]) for i, c in enumerate(corr[pid]) if c in _PARALLEL_CORR]
-        for pid in pol_ids
-    ]
 
 
 def _robust_clip_thresholds(
@@ -186,7 +135,7 @@ def _robust_clip_thresholds(
     field_ids = match_field_names(names, field_sel)
     with open_table(ms_str + "/DATA_DESCRIPTION") as tb:
         dd_to_spw = [int(x) for x in tb.getcol("SPECTRAL_WINDOW_ID")]
-    corr_by_dd = _parallel_corr_by_ddid(ms_str)
+    corr_by_dd = parallel_corr_by_ddid(ms_str)
     want = set(keep_spw_ids) | set(floor_spw_ids or [])
 
     sigmas: dict[tuple[str, int, str], float] = {}

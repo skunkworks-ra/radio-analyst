@@ -169,9 +169,15 @@ class SpwAmpSeverityInput(BaseModel):
     ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
     datacolumn: str = Field(
         default="CORRECTED_DATA",
-        description="Column to measure: 'CORRECTED_DATA' (default), 'DATA', or 'MODEL_DATA'.",
+        description=(
+            "Column to measure: 'CORRECTED_DATA' (default), 'DATA', 'MODEL_DATA', "
+            "or 'residual' (|CORRECTED_DATA - MODEL_DATA|)."
+        ),
     )
-    field: str = Field(default="", description="CASA field selection (empty = all fields).")
+    field: str = Field(
+        default="",
+        description="CASA field selection (empty = all fields); an unmatched token is an error.",
+    )
     sigma: float = Field(
         default=5.0,
         description="N in elevation threshold band_floor + N*robust_sigma (drives discardable-fraction estimate).",
@@ -1108,7 +1114,7 @@ async def ms_rfi_channel_stats(params: RfiChannelStatsInput) -> str:
     name="ms_spw_amp_severity",
     description=(
         "Per-channel robust amplitude statistics (median, MAD, robust-sigma, min, max) "
-        "of a data column, aggregated per SpW across all fields. Estimates how much of "
+        "of a data column (parallel hands only), aggregated per SpW. Estimates how much of "
         "each SpW is RFI-dominated and discardable. Read-only; no verdict, no flagging."
     ),
     annotations={
@@ -1131,7 +1137,8 @@ async def ms_spw_amp_severity(params: SpwAmpSeverityInput) -> str:
 
     Args:
         params.ms_path:              Path to the Measurement Set.
-        params.datacolumn:           'CORRECTED_DATA' (default), 'DATA', 'MODEL_DATA'.
+        params.datacolumn:           'CORRECTED_DATA' (default), 'DATA', 'MODEL_DATA',
+                                     or 'residual' (CORRECTED - MODEL).
         params.field:                CASA field selection (empty = all).
         params.sigma:                Elevation threshold multiplier (default 5.0).
         params.max_samples_per_chan: Reservoir size per channel (default 5000).

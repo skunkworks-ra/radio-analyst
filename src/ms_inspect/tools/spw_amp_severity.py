@@ -2,7 +2,10 @@
 tools/spw_amp_severity.py — ms_spw_amp_severity
 
 Robust amplitude statistics of a visibility data column, computed PER CHANNEL
-and aggregated PER SPW, across all (or selected) fields. The measurement that
+and aggregated PER SPW, across all (or selected) fields. Parallel hands only
+(RR/LL or XX/YY), pooled: on a bright calibrator the cross-hands sit at the
+leakage level, and pooling them with the parallel hands makes the per-channel
+distribution bimodal. The measurement that
 answers "which SpWs are RFI-dominated, and how much of each can we discard?"
 
 This is a READ-ONLY diagnostic tool. It does not interpret and it does not flag.
@@ -10,8 +13,9 @@ It returns robust statistics (median, MAD, robust-sigma, min, max) and a derived
 discardable-fraction estimate. The verdict (flag-channels vs drop-SpW) belongs to
 the skill; the flagging belongs to ms_modify.
 
-Works on ANY data column ('CORRECTED_DATA', 'DATA', 'MODEL_DATA'), so it can be
-run before and after a flagging/applycal step to measure the delta.
+Works on ANY data column ('CORRECTED_DATA', 'DATA', 'MODEL_DATA'), or on
+'residual' = |CORRECTED_DATA - MODEL_DATA|, so it can be run before and after a
+flagging/applycal step to measure the delta.
 
 Memory strategy
 ---------------
@@ -40,6 +44,7 @@ import numpy as np
 from ms_inspect.util.casa_context import open_table, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, response_envelope
+from ms_inspect.util.selection import match_field_names, parallel_corr_by_ddid
 
 TOOL_NAME = "ms_spw_amp_severity"
 
@@ -107,8 +112,8 @@ class _ChanReservoir:
 def _corr_first_axis(arr: np.ndarray) -> np.ndarray:
     """Return amplitude array as [n_chan, n_elements] folding corr + rows together.
 
-    Input getcol shape is [n_corr, n_chan, n_rows]; we want per-channel pooled
-    over correlation and row.
+    Input shape is [n_corr, n_chan, n_rows], already sliced to the parallel
+    hands; we want per-channel pooled over those correlations and rows.
     """
     n_corr, n_chan, n_rows = arr.shape
     # → [n_chan, n_corr, n_rows] → [n_chan, n_corr*n_rows]
@@ -209,9 +214,12 @@ def run(
     Args:
         ms_path:              Path to the Measurement Set.
         datacolumn:           Column to measure: 'CORRECTED_DATA' (default),
-                              'DATA', or 'MODEL_DATA'. Use the same tool on two
-                              columns to compare before/after a step.
-        field:                CASA field selection (empty = all fields).
+                              'DATA', 'MODEL_DATA', or 'residual'
+                              (|CORRECTED_DATA - MODEL_DATA|). Use the same tool
+                              on two columns to compare before/after a step.
+        field:                CASA field selection (empty = all fields): names,
+                              wildcards, ids or id ranges. An unmatched token
+                              is an error, not a fall back to all fields.
         sigma:                N in the elevation threshold band_floor + N*robust_sigma.
                               Only used to derive the discardable-fraction estimate.
         max_samples_per_chan: Reservoir size per channel (memory knob).
@@ -258,35 +266,37 @@ def run(
                 spw_chan_freqs[spw_id] = np.array([])
 
     # ------------------------------------------------------------------
+    # Parallel-hand correlations per DATA_DESC_ID
+    # ------------------------------------------------------------------
+    corr_by_dd = parallel_corr_by_ddid(ms_str)
+    casa_calls.append("tb.open(POLARIZATION, DATA_DESCRIPTION) → parallel-hand CORR_TYPE per DDID")
+
+    # ------------------------------------------------------------------
     # Optional field selection → set of FIELD_IDs
     # ------------------------------------------------------------------
+    from ms_inspect.exceptions import ComputationError
+
     field_ids: set[int] | None = None
     if field:
         with open_table(ms_str + "/FIELD") as tb:
             names = list(tb.getcol("NAME"))
-        wanted = {n.strip() for n in field.split(",") if n.strip()}
-        # accept either names or integer ids
-        field_ids = set()
-        for sel in wanted:
-            if sel.isdigit():
-                field_ids.add(int(sel))
-            else:
-                field_ids.update(i for i, nm in enumerate(names) if nm == sel)
-        if not field_ids:
-            warnings.append(f"No fields matched selection '{field}'. Measuring all fields.")
-            field_ids = None
+        try:
+            field_ids = set(match_field_names(names, field))
+        except ValueError as exc:
+            raise ComputationError(str(exc), ms_path=ms_path) from exc
 
     # ------------------------------------------------------------------
     # Validate column presence
     # ------------------------------------------------------------------
+    residual = datacolumn.lower() == "residual"
+    needed = ["CORRECTED_DATA", "MODEL_DATA"] if residual else [datacolumn]
     with open_table(ms_str) as tb:
-        if datacolumn not in set(tb.colnames()):
-            from ms_inspect.exceptions import ComputationError
-
-            raise ComputationError(
-                f"{datacolumn} column not present in {ms_path}.",
-                ms_path=ms_path,
-            )
+        missing = [c for c in needed if c not in set(tb.colnames())]
+    if missing:
+        raise ComputationError(
+            f"{', '.join(missing)} column not present in {ms_path}.",
+            ms_path=ms_path,
+        )
 
     # ------------------------------------------------------------------
     # Per-(spw, chan) reservoirs. Multiple DDIDs may map to one SpW; we feed
@@ -298,6 +308,7 @@ def run(
         if n_chan > 0:
             spw_reservoirs[spw_id] = [_ChanReservoir(max_samples_per_chan) for _ in range(n_chan)]
 
+    spw_corrs: dict[int, set[str]] = {}
     field_clause = ""
     if field_ids is not None:
         ids = ",".join(str(i) for i in sorted(field_ids))
@@ -307,17 +318,31 @@ def run(
         for ddid, spw_id in enumerate(dd_to_spw):
             if spw_id not in spw_reservoirs:
                 continue
+            par = corr_by_dd[ddid]
+            if not par:
+                warnings.append(
+                    f"DATA_DESC_ID {ddid} (SpW {spw_id}) has no parallel-hand correlation; skipped."
+                )
+                continue
+            par_idx = [i for i, _ in par]
             sub = tb.query(f"DATA_DESC_ID == {ddid}{field_clause}")
             try:
                 n_rows = int(sub.nrows())
                 if n_rows == 0:
                     continue
                 reservoirs = spw_reservoirs[spw_id]
+                spw_corrs.setdefault(spw_id, set()).update(name for _, name in par)
                 for start in range(0, n_rows, row_chunk):
                     nrow = min(row_chunk, n_rows - start)
-                    data = sub.getcol(datacolumn, startrow=start, nrow=nrow)
+                    if residual:
+                        data = sub.getcol("CORRECTED_DATA", startrow=start, nrow=nrow)
+                        data = data - sub.getcol("MODEL_DATA", startrow=start, nrow=nrow)
+                    else:
+                        data = sub.getcol(datacolumn, startrow=start, nrow=nrow)
                     flag = sub.getcol("FLAG", startrow=start, nrow=nrow)
-                    amp = np.abs(data)  # [n_corr, n_chan, nrow]
+                    data = data[par_idx]
+                    flag = flag[par_idx]
+                    amp = np.abs(data)  # [n_par, n_chan, nrow]
                     amp_c = _corr_first_axis(amp)  # [n_chan, n_corr*nrow]
                     flag_c = _corr_first_axis(flag.astype(bool))
                     n_chan = amp_c.shape[0]
@@ -330,8 +355,9 @@ def run(
                         reservoirs[ch].add(vals, rng)
             finally:
                 sub.close()
+            cols = "CORRECTED_DATA-MODEL_DATA" if residual else datacolumn
             casa_calls.append(
-                f"tb.query(DATA_DESC_ID=={ddid}{field_clause}) → getcol({datacolumn},FLAG) chunked"
+                f"tb.query(DATA_DESC_ID=={ddid}{field_clause}) → getcol({cols},FLAG) chunked"
             )
 
     # ------------------------------------------------------------------
@@ -429,6 +455,7 @@ def run(
                     "centre_freq_mhz": (
                         round(float(freqs[n_chan // 2]) / 1e6, 3) if n_chan else None
                     ),
+                    "correlations_used": sorted(spw_corrs.get(spw_id, set())),
                     "band_floor": fmt_field(None, "UNAVAILABLE", note="no unflagged data"),
                     "severity": None,
                     "per_chan": chan_records,
@@ -455,6 +482,7 @@ def run(
                 "spw_id": spw_id,
                 "n_channels": n_chan,
                 "centre_freq_mhz": round(float(freqs[n_chan // 2]) / 1e6, 3),
+                "correlations_used": sorted(spw_corrs.get(spw_id, set())),
                 "band_floor": fmt_field(round(band_floor, 6)),
                 "band_robust_sigma": fmt_field(round(st["band_sigma"], 6)),
                 "severity": severity,
@@ -473,6 +501,7 @@ def run(
         "max_samples_per_chan": max_samples_per_chan,
         "row_chunk": row_chunk,
         "note": (
+            "Parallel hands only, pooled (correlations_used per SpW). "
             "band_floor = median of per-channel medians (robust SpW floor). "
             "clean_floor_anchor = median of the lowest-quartile band_floors (thermal "
             "floor from the quietest SpWs). severity = band_floor / clean_floor_anchor; "
