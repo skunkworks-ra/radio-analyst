@@ -337,7 +337,7 @@ ms_calsol_stats(caltable_path = {WORKDIR}/bandpass.B)
 |---|---|---|---|
 | `overall_flagged_frac` | scalar | < 0.10 | 0.10–0.20 → note; > 0.20 → loop to CALIBRATION_PREFLAG |
 | `n_antennas_lost` | scalar | ≤ 1 | 2–3 → check refant and bp_field; > 3 → hard stop |
-| `phase_rms_deg[ant, spw, field=bp_field_idx]` | all antennas | < 10° | 10–30° → warn; > 30° → delay solve likely failed; re-run Step 2 |
+| `phase_rms_deg[ant, spw, field=bp_field_idx]` | all antennas | < 10° | 10–30° → warn; > 30° → delay solve likely failed; re-run Step 2. On a single-solution bandpass `phase_rms_axis` is `channel`: scatter across the band about the mean, so a leftover delay slope shows here |
 | `amp_array[ant, spw, field=bp_field_idx, :]` | all antennas | smooth, ~1.0 | Large mid-band excursions → suspect antenna; edge roll-off is normal |
 | `outliers.low_snr` | list | empty | non-empty → inspect named antennas; SNR < 3 on BP is a hard concern |
 | `outliers.amp_outliers` | list | empty | non-empty → antenna has anomalous amplitude shape; check against `amp_array` for that antenna |
@@ -478,8 +478,13 @@ flag_delta = flag_after - flag_before
 **Check 4: Solution distribution (outlier check)**
 ```
 # From ms_calsol_stats, inspect:
-outliers.amp_outliers            # List of {antenna, spw, field, amp, n_sigma} entries
+outliers.amp_outliers            # {antenna, spw, field, amp, n_sigma, ref_median, ref_sigma, n_sigma_field}
+outliers.amp_reference           # per field: spw_median, spw_sigma, spw_offset_n_sigma_field
 ```
+`n_sigma` is against the antenna's own (field, SpW) group, so a phase
+calibrator's pre-fluxscale level is not an outlier. A whole SpW moving shows in
+`amp_reference.spw_offset_n_sigma_field`, not in `amp_outliers`: a large offset
+in one SpW with no antenna outliers points to wideband RFI in that SpW.
 - Expected: `outliers.amp_outliers` is empty; antenna-to-antenna amplitude variation ~20–30% is normal
 - Red flag: one antenna appears in `amp_outliers` across multiple SPWs → **Recovery 1: Caltable Not Produced**
   (refant dependency issue) OR **Recovery 4: Low Coverage**
@@ -756,13 +761,12 @@ bandpass solutions (Step 3) before re-running applycal.
 If the phase calibrator shows anomalous time structure: consider flagging the
 affected scans and re-running Steps 4–6 before re-applying.
 
-**Residual rflag on the other calibrators belongs here.** This is the "later"
-pass deferred in 10-precal-workflow.md Step 8: now that applycal has populated a
-valid CORRECTED column for *all* calibrators (not just the bandpass cal), a
-residual rflag pass on them is finally meaningful. Call `ms_apply_initial_rflag`
-with `field` set to the calibrators whose CORRECTED is now valid — never an
-all-field pass over fields that were not in this applycal. Re-inspect with
-`ms_flag_summary` before/after.
+**Residual flagging runs on the primaries only.** CORRECTED − MODEL is RFI only
+where MODEL is true: the flux and polarization calibrators with setjy /
+setjy_polcal models. Never the phase calibrator (its MODEL is the 1 Jy default)
+or the target. Follow 13-postcal-rfi-flagging.md Step 1 (threshold at N × the
+thermal floor, iterate from the base flags). Re-inspect with `ms_flag_summary`
+before/after.
 
 ---
 

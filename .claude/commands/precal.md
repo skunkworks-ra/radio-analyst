@@ -69,10 +69,12 @@ decision gate.
     priorcals=<from step 7>, uvrange=<if 3C84>, execute=False)` → run.
     Then `ms_verify_caltables` — both tables exist with rows?
 
-11. `ms_residual_stats(calibrators.ms, bp_field_id)` — inspect tail ratio.
-    Apply §Step 7 decision table.
+11. `ms_residual_stats(calibrators.ms, bp_field_id)` — inspect tail ratio
+    and the per-channel `chan_*` arrays. Apply §Step 7 decision table.
 
-12. `ms_apply_initial_rflag(calibrators.ms, workdir, execute=False)` → run.
+12. `ms_verify_model(calibrators.ms, field=bp_field)` — skip step 12 if the
+    model is the 1 Jy default. Otherwise
+    `ms_apply_initial_rflag(calibrators.ms, workdir, field=bp_field, execute=False)` → run.
 
 13. `ms_flag_summary(calibrators.ms)` — post-rflag. Compare to step 6 delta.
     Apply §Step 8 decision table.

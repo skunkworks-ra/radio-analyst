@@ -115,8 +115,9 @@ Online flags are applied as-is — do not edit them. They are deterministic hard
 
 ## Step 2 — Pre-calibration flagging and calibrator split
 
-`ms_apply_preflag` applies five flagging steps in a single pass and splits
-calibrators to `calibrators.ms`.
+`ms_apply_preflag` applies its flagging steps in a single pass and splits
+calibrators to `calibrators.ms`. It quacks the first 5 s of every scan
+(`quack_interval_s`): the first integrations read 4 to 17 % low.
 
 **Always generate the script first (`execute=False`).** Review `preflag_cmds.txt`
 before running — it is the complete audit record of what will be flagged.
@@ -318,7 +319,10 @@ If either caltable is missing, do not proceed to rflag. Diagnose:
 ## Step 7 — Residual amplitude inspection
 
 Before applying rflag, call `ms_residual_stats(field_id=<bp_field_id>)` to
-inspect the CORRECTED − MODEL amplitude distribution.
+inspect the CORRECTED − MODEL amplitude distribution (parallel hands only).
+The per-SpW ratio below is a first look; decide per channel from the `chan_*`
+arrays (`chan_median_amp`, `chan_robust_sigma`), never drop a SpW from its
+median alone — a SpW with a bad median can still hold clean channels.
 
 | p95_amp / median_amp ratio (per SPW) | Interpretation |
 |--------------------------------------|---------------|
@@ -338,17 +342,20 @@ narrowband RFI (GPS, GSM). Cross-check with `ms_rfi_channel_stats` annotations.
 default, by design.** Residual rflag is only meaningful on a field whose
 CORRECTED column is genuinely calibrated at the point you call it.
 
-**At this stage that field is the bandpass calibrator only (`field={BP_FIELD}`).**
+**At this stage that field is the bandpass calibrator only (`field={BP_FIELD}`),
+and only if it is a primary with a real model.** Run `ms_verify_model` on it
+first. A residual against the 1 Jy default model is the sky, not RFI. If the
+bandpass calibrator has no setjy model, skip this step.
 `ms_initial_bandpass` solves gains on the bandpass calibrator alone, so it is the
 only field with a valid CORRECTED column right now. On every other field,
 CORRECTED−MODEL is dominated by uncorrected gain/phase error — not RFI — so a
 residual pass there flags almost the entire field (observed: 9.2% → ~90% overall,
 phase cals ~97%), recoverable only by re-splitting the calibrators.
 
-Residual rflag on the *other* calibrators happens later (see 07-calibration-execution.md),
-once the full gain solve + applycal has populated valid CORRECTED for them — at
-that point you pass those fields instead. The rule is invariant; the specific
-field changes with the stage.
+Residual flagging never runs on the phase calibrator or the target: neither has
+a true model. Later residual flagging on the primaries (flux and polarization
+calibrators) is 13-postcal-rfi-flagging.md Step 1, with the threshold set at
+N × the thermal floor from clean SpWs.
 
 `ms_apply_initial_rflag` runs rflag + tfcrop on the residual column in a single
 flagdata list-mode pass. `flagbackup=True` saves a versioned backup automatically.

@@ -70,7 +70,10 @@ thermal noise there — check that it does (3C147: 0.19–0.21 Jy against ~0.19 
 predicted).
 
 **Iterate from the base flags, not cumulatively.** Re-solve on the clipped flags,
-restore the pre-clip flag version, clip again with the better solutions. Stop when
+apply with `applymode='calonly'` (an interim apply: `calflag` would add solution
+flags to the base, and the next round would compound them), restore the pre-clip
+flag version, clip again with the better solutions. The final apply after the
+loop uses `calflag` (skill 07 Step 7). Stop when
 per-SpW flag fractions change by less than ~1 %. Between rounds, compare the
 bandpass and gain flag fractions per SpW: a jump means solves are failing (often
 a single refant flagged in those channels) — keep the previous round's flags and
@@ -137,8 +140,10 @@ channels for them.
 
 ## Known limitations
 
-- `ms_spw_amp_severity` pools all four correlations and has no time axis; on a
-  bright calibrator its medians are meaningless. Use residual / per-channel MAD
-  measurements as above until it is fixed.
-- No tool yet returns per-channel target MAD; it is a short script over
-  CORRECTED (parallel hands, sampled rows).
+- `ms_spw_amp_severity` (parallel hands only; `datacolumn='residual'` on the
+  primaries) and `ms_residual_stats` (per-channel `chan_*` arrays) measure
+  amplitude per channel. Neither has a time axis.
+- No tool yet returns per-channel MAD of Re(CORRECTED) on the target; it is a
+  short script over CORRECTED (parallel hands, sampled rows).
+  `ms_spw_amp_severity` per-channel `robust_sigma` on |CORRECTED| is the
+  nearest tool measurement.
