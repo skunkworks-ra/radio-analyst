@@ -676,10 +676,10 @@ gain solutions are interpolated correctly for each.
 - `gainfield`: selects which rows from `gain.fluxscaled` apply to each field
 - `interp`: `'nearest'` for calibrators; `'linear'` for target (interpolate between adjacent cal scans)
 - `calwt=False`: VLA data weights are not properly calibrated; calibrating them produces nonsensical results
-- `applymode`: default `'calonly'` for all fields — apply calibration without flagging, so
-  post-calibration RFI flagging (skill 13, `ms_postcal_flag`) owns the FLAG column. Use
-  `'calflagstrict'` only when you deliberately want apply-time flagging of missing/flagged
-  solutions (e.g. a quick-look without a post-cal flag pass).
+- `applymode='calflag'` for all final applies. Data whose solutions are flagged is
+  flagged, not copied into CORRECTED uncalibrated (`'calonly'` did that: 3C147 scan 60
+  read 14 to 16 Jy against a 19 to 22 Jy model). `'calonly'` is only for interim
+  applies inside a flagging loop.
 
 ### 7a — Flux calibrator
 
@@ -691,7 +691,7 @@ ms_applycal(
     gainfield  = [''] * len(PRIORCALS) + ['', '', {FLUX_FIELD}],
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'nearest'],
     calwt      = False,
-    applymode  = 'calonly',
+    applymode  = 'calflag',
     flagbackup = True,
     workdir    = {WORKDIR},
     execute    = False,
@@ -708,7 +708,7 @@ ms_applycal(
     gainfield  = [''] * len(PRIORCALS) + ['', '', {PHASE_FIELD}],
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'nearest'],
     calwt      = False,
-    applymode  = 'calonly',
+    applymode  = 'calflag',
     flagbackup = False,
     workdir    = {WORKDIR},
     execute    = False,
@@ -725,7 +725,7 @@ ms_applycal(
     gainfield  = [''] * len(PRIORCALS) + ['', '', {PHASE_FIELD}],
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'linear'],
     calwt      = False,
-    applymode  = 'calonly',        # post-cal RFI flagging (skill 13) owns FLAG
+    applymode  = 'calflag',
     flagbackup = False,
     workdir    = {WORKDIR},
     execute    = False,

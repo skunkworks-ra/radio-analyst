@@ -1355,11 +1355,12 @@ class ApplycalInput(BaseModel):
         ),
     )
     applymode: str = Field(
-        default="calonly",
+        default="calflag",
         description=(
-            "'calonly' (default) applies calibration without flagging, leaving the FLAG "
-            "column to post-cal RFI flagging (ms_postcal_flag, skill 13). 'calflagstrict' "
-            "additionally flags data with missing/flagged solutions at apply time."
+            "'calflag' (default) applies calibration and flags data whose solutions are "
+            "flagged, so uncalibrated data cannot reach CORRECTED. 'calonly' passes such "
+            "data through uncalibrated (interim applies in a flagging loop only). "
+            "'calflagstrict' also flags SpWs with no calibration in one or more tables."
         ),
     )
     parang: bool = Field(default=True, description="Apply parallactic angle correction.")
@@ -1623,8 +1624,8 @@ async def ms_fluxscale(params: FluxscaleInput) -> str:
     name="ms_applycal",
     description=(
         "Apply calibration tables to a field and populate CORRECTED_DATA. "
-        "Default applymode='calonly' leaves flagging to post-cal RFI flagging "
-        "(ms_postcal_flag). calwt=False is correct for VLA."
+        "Default applymode='calflag' flags data whose solutions are flagged rather "
+        "than passing it through uncalibrated. calwt=False is correct for VLA."
     ),
     annotations={
         "title": "Apply Calibration",
@@ -1643,9 +1644,10 @@ async def ms_applycal(params: ApplycalInput) -> str:
       Phase cal:  gainfield=[..., phase_field], interp=[..., 'nearest']
       Target:     gainfield=[..., phase_field], interp=[..., 'linear']
 
-    Uses applymode='calonly' by default — calibration is applied without
-    flagging, so post-cal RFI flagging (ms_postcal_flag, skill 13) owns the FLAG
-    column. Use 'calflagstrict' to flag missing-solution data at apply time.
+    Uses applymode='calflag' by default: data whose solutions are flagged is
+    flagged, not copied into CORRECTED uncalibrated. 'calonly' is for interim
+    applies inside a flagging loop. 'calflagstrict' also flags SpWs with no
+    calibration in one or more tables.
     Set calwt=False for VLA data.
 
     Args:
@@ -1656,7 +1658,7 @@ async def ms_applycal(params: ApplycalInput) -> str:
         params.gainfield:  Per-table field selection for solution rows.
         params.interp:     Per-table interpolation mode.
         params.calwt:      Calibrate weights (default False for VLA).
-        params.applymode:  'calonly' (default) or 'calflagstrict'.
+        params.applymode:  'calflag' (default), 'calonly', or 'calflagstrict'.
         params.parang:     Parallactic angle correction (default True).
         params.flagbackup: Save flag backup first (default False).
         params.execute:    Generate script only (False) or run in-process (True).
