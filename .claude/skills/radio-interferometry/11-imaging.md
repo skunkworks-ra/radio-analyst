@@ -256,7 +256,6 @@ ms_tclean(
     robust       = 0.5,
     niter        = 50000,
     threshold    = {threshold},
-    pbcor        = True,
     savemodel    = 'modelcolumn',
     workdir      = {WORKDIR},
     execute      = False,
@@ -278,7 +277,7 @@ Call `ms_image_stats` on the pbcor image:
 ```
 ms_image_stats(
     image_path  = {WORKDIR}/{imagename}.image.pbcor,
-    beam_image  = {WORKDIR}/{imagename}.psf,
+    psf_path    = {WORKDIR}/{imagename}.psf,
 )
 ```
 

@@ -111,7 +111,7 @@ is adequate. Use the flux density from `ms_setjy` output (`{FLUX_JY}`).
 ```
 ms_gaincal_snr_predict(
     ms_path        = {VIS},
-    field_name     = {FLUX_FIELD},
+    field          = {FLUX_FIELD},
     solint_seconds = -1,          # -1 = use full scan length (equivalent to solint='inf')
     snr_threshold  = 3.0,
     flux_jy        = {FLUX_JY},   # Stokes I flux density from ms_setjy
@@ -155,13 +155,24 @@ solutions from propagating into every downstream solve.
 | Table | When | mode (auto) | sigma |
 |---|---|---|---|
 | `bandpass.B` | after Step 3, before Step 4 gain solve | tfcrop | 5.0 |
-| `gain.G` | after Step 4, before fluxscale | rflag | 5.0 |
+| `gain.G` | after Step 4, before fluxscale — **only if ≥ 10 solution intervals per antenna per field** (see below) | rflag | 5.0 |
 | `dterms.D` (polcal) | after the D-term solve (skill 09) | rflag | 5.0 |
 | `delay.K` | — | — | **do not flag** — one value per antenna; inspect with `ms_calsol_stats` and flag bad antennas explicitly instead |
 
 `ms_flag_caltable` auto-routes the mode from the table's VisCal type, so you
 normally pass only `caltable_path`, `workdir`, and `sigma`. Default `sigma=5.0`
 is gentle — it catches the worst outliers without over-flagging.
+
+**Gain tables need enough time samples.** rflag judges each gain solution against
+its neighbours in time. With `solint='inf'` on a few calibrator scans there are
+only 2–3 points per antenna per field, and rflag flags real solutions (24A-376:
+3C147 on 2 scans went 16 % → 28 % flagged, other fields untouched).
+`ms_flag_caltable` reports `solution_intervals` (min / median / max per field,
+SpW, antenna) and refuses to auto-route a G/T table whose median is below
+`min_intervals` (default 10). In that case inspect with `ms_calsol_stats` and
+flag specific antennas/scans explicitly; do not force `mode='rflag'` unless the
+counts justify it. Bandpass and D-term tables vary along frequency and are not
+affected.
 
 **Read the reported flagged fraction:**
 
@@ -234,7 +245,7 @@ ms_gaincal(
 
 **Inspect G0 solutions:**
 ```
-ms_calsol_stats(caltable_path = {WORKDIR}/initial_phase.G0)
+ms_calsol_stats(caltable_path = {WORKDIR}/initial_phase.G0, verbosity = 'full')
 ```
 
 | Field | Index | Threshold | Action if exceeded |
@@ -275,7 +286,7 @@ ms_gaincal(
 
 **Inspect K solutions:**
 ```
-ms_calsol_stats(caltable_path = {WORKDIR}/delay.K)
+ms_calsol_stats(caltable_path = {WORKDIR}/delay.K, verbosity = 'full')
 ```
 
 | Field | Index | Threshold | Action if exceeded |
@@ -319,14 +330,14 @@ of a delay solution makes no physical sense and creates artifacts at scan edges.
 
 **Inspect B solutions:**
 ```
-ms_calsol_stats(caltable_path = {WORKDIR}/bandpass.B)
+ms_calsol_stats(caltable_path = {WORKDIR}/bandpass.B, verbosity = 'full')
 ```
 
 | Field | Index | Threshold | Action if exceeded |
 |---|---|---|---|
 | `overall_flagged_frac` | scalar | < 0.10 | 0.10–0.20 → note; > 0.20 → loop to CALIBRATION_PREFLAG |
 | `n_antennas_lost` | scalar | ≤ 1 | 2–3 → check refant and bp_field; > 3 → hard stop |
-| `phase_rms_deg[ant, spw, field=bp_field_idx]` | all antennas | < 10° | 10–30° → warn; > 30° → delay solve likely failed; re-run Step 2 |
+| `phase_rms_deg[ant, spw, field=bp_field_idx]` | all antennas | < 10° | 10–30° → warn; > 30° → delay solve likely failed; re-run Step 2. On a single-solution bandpass `phase_rms_axis` is `channel`: scatter across the band about the mean, so a leftover delay slope shows here |
 | `amp_array[ant, spw, field=bp_field_idx, :]` | all antennas | smooth, ~1.0 | Large mid-band excursions → suspect antenna; edge roll-off is normal |
 | `outliers.low_snr` | list | empty | non-empty → inspect named antennas; SNR < 3 on BP is a hard concern |
 | `outliers.amp_outliers` | list | empty | non-empty → antenna has anomalous amplitude shape; check against `amp_array` for that antenna |
@@ -467,8 +478,13 @@ flag_delta = flag_after - flag_before
 **Check 4: Solution distribution (outlier check)**
 ```
 # From ms_calsol_stats, inspect:
-outliers.amp_outliers            # List of {antenna, spw, field, amp, n_sigma} entries
+outliers.amp_outliers            # {antenna, spw, field, amp, n_sigma, ref_median, ref_sigma, n_sigma_field}
+outliers.amp_reference           # per field: spw_median, spw_sigma, spw_offset_n_sigma_field
 ```
+`n_sigma` is against the antenna's own (field, SpW) group, so a phase
+calibrator's pre-fluxscale level is not an outlier. A whole SpW moving shows in
+`amp_reference.spw_offset_n_sigma_field`, not in `amp_outliers`: a large offset
+in one SpW with no antenna outliers points to wideband RFI in that SpW.
 - Expected: `outliers.amp_outliers` is empty; antenna-to-antenna amplitude variation ~20–30% is normal
 - Red flag: one antenna appears in `amp_outliers` across multiple SPWs → **Recovery 1: Caltable Not Produced**
   (refant dependency issue) OR **Recovery 4: Low Coverage**
@@ -483,15 +499,17 @@ the hard-stop Escalation criteria. The happy path does not need it.
 ## Step 5 — Inspect gain solutions
 
 ```
-ms_calsol_stats(caltable_path = {WORKDIR}/gain.G)
+ms_calsol_stats(caltable_path = {WORKDIR}/gain.G, verbosity = 'full')
 ```
 
 The `gain.G` table contains solutions for both flux and phase calibrators. Use
 `field_names` from the output to identify which field index corresponds to each.
 
-**Before fluxscale (Step 6), flag the `gain.G` solutions** with `ms_flag_caltable`
-(rflag, sigma=5.0) — see "Caltable solution flagging" above. Outlier gain
-solutions left in place will bias the fluxscale transfer.
+**Before fluxscale (Step 6), flag outlier `gain.G` solutions** — with
+`ms_flag_caltable` (rflag, sigma=5.0) only when it reports ≥ 10 solution
+intervals per antenna per field; otherwise from `ms_calsol_stats` outliers, by
+hand (see "Caltable solution flagging" above). Outlier gain solutions left in
+place will bias the fluxscale transfer.
 
 | Field | Index | Threshold | Action if exceeded |
 |---|---|---|---|
@@ -663,10 +681,10 @@ gain solutions are interpolated correctly for each.
 - `gainfield`: selects which rows from `gain.fluxscaled` apply to each field
 - `interp`: `'nearest'` for calibrators; `'linear'` for target (interpolate between adjacent cal scans)
 - `calwt=False`: VLA data weights are not properly calibrated; calibrating them produces nonsensical results
-- `applymode`: default `'calonly'` for all fields — apply calibration without flagging, so
-  post-calibration RFI flagging (skill 13, `ms_postcal_flag`) owns the FLAG column. Use
-  `'calflagstrict'` only when you deliberately want apply-time flagging of missing/flagged
-  solutions (e.g. a quick-look without a post-cal flag pass).
+- `applymode='calflag'` for all final applies. Data whose solutions are flagged is
+  flagged, not copied into CORRECTED uncalibrated (`'calonly'` did that: 3C147 scan 60
+  read 14 to 16 Jy against a 19 to 22 Jy model). `'calonly'` is only for interim
+  applies inside a flagging loop.
 
 ### 7a — Flux calibrator
 
@@ -678,7 +696,7 @@ ms_applycal(
     gainfield  = [''] * len(PRIORCALS) + ['', '', {FLUX_FIELD}],
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'nearest'],
     calwt      = False,
-    applymode  = 'calonly',
+    applymode  = 'calflag',
     flagbackup = True,
     workdir    = {WORKDIR},
     execute    = False,
@@ -695,7 +713,7 @@ ms_applycal(
     gainfield  = [''] * len(PRIORCALS) + ['', '', {PHASE_FIELD}],
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'nearest'],
     calwt      = False,
-    applymode  = 'calonly',
+    applymode  = 'calflag',
     flagbackup = False,
     workdir    = {WORKDIR},
     execute    = False,
@@ -712,7 +730,7 @@ ms_applycal(
     gainfield  = [''] * len(PRIORCALS) + ['', '', {PHASE_FIELD}],
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'linear'],
     calwt      = False,
-    applymode  = 'calonly',        # post-cal RFI flagging (skill 13) owns FLAG
+    applymode  = 'calflag',
     flagbackup = False,
     workdir    = {WORKDIR},
     execute    = False,
@@ -743,13 +761,12 @@ bandpass solutions (Step 3) before re-running applycal.
 If the phase calibrator shows anomalous time structure: consider flagging the
 affected scans and re-running Steps 4–6 before re-applying.
 
-**Residual rflag on the other calibrators belongs here.** This is the "later"
-pass deferred in 10-precal-workflow.md Step 8: now that applycal has populated a
-valid CORRECTED column for *all* calibrators (not just the bandpass cal), a
-residual rflag pass on them is finally meaningful. Call `ms_apply_initial_rflag`
-with `field` set to the calibrators whose CORRECTED is now valid — never an
-all-field pass over fields that were not in this applycal. Re-inspect with
-`ms_flag_summary` before/after.
+**Residual flagging runs on the primaries only.** CORRECTED − MODEL is RFI only
+where MODEL is true: the flux and polarization calibrators with setjy /
+setjy_polcal models. Never the phase calibrator (its MODEL is the 1 Jy default)
+or the target. Follow 13-postcal-rfi-flagging.md Step 1 (threshold at N × the
+thermal floor, iterate from the base flags). Re-inspect with `ms_flag_summary`
+before/after.
 
 ---
 

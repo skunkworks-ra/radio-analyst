@@ -34,6 +34,7 @@ import numpy as np
 from ms_inspect.util.casa_context import open_table, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, response_envelope
+from ms_inspect.util.selection import corr_codes_by_ddid
 
 TOOL_NAME = "ms_verify_model"
 
@@ -45,11 +46,6 @@ _CROSSHAND_CODES = {6, 7, 10, 11}
 
 def _indices(corr_codes: list[int], wanted: set[int]) -> list[int]:
     return [i for i, c in enumerate(corr_codes) if int(c) in wanted]
-
-
-def _corr_codes(ms_str: str) -> list[int]:
-    with open_table(str(Path(ms_str) / "POLARIZATION")) as tb:
-        return [int(x) for x in tb.getcell("CORR_TYPE", 0)]
 
 
 def _field_id_map(ms_str: str) -> dict[int, str]:
@@ -69,10 +65,24 @@ def _model_metrics(
     MODEL is noise-free, so no per-channel vector averaging is needed — the
     metrics are taken over all unflagged samples on the selected correlations.
     """
-    par = data[par_idx, :, :]
-    par_good = ~flag[par_idx, :, :]
-    pvis = par[par_good]
+    return _metrics_from(*_collect(data, flag, par_idx, cross_idx))
+
+
+def _collect(
+    data: np.ndarray, flag: np.ndarray, par_idx: list[int], cross_idx: list[int]
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Unflagged non-zero parallel-hand samples, and cross-hand samples
+    (None when this data description has no cross-hand correlations)."""
+    pvis = data[par_idx, :, :][~flag[par_idx, :, :]]
     pvis = pvis[np.abs(pvis) > 0]
+    cvis = None
+    if cross_idx:
+        cvis = data[cross_idx, :, :][~flag[cross_idx, :, :]]
+        cvis = cvis[np.abs(cvis) > 0]
+    return pvis, cvis
+
+
+def _metrics_from(pvis: np.ndarray, cvis: np.ndarray | None) -> dict:
     n_par = int(pvis.size)
     if n_par == 0:
         return {"n_par": 0, "par_amp": None, "par_phase_rms": None, "cross_amp": None}
@@ -82,11 +92,7 @@ def _model_metrics(
     par_phase_rms = float(np.sqrt(np.mean(phase**2)))
 
     cross_amp: float | None = None
-    if cross_idx:
-        cr = data[cross_idx, :, :]
-        cr_good = ~flag[cross_idx, :, :]
-        cvis = cr[cr_good]
-        cvis = cvis[np.abs(cvis) > 0]
+    if cvis is not None:
         # Median over ALL cross-hand samples (including exact zeros would bias
         # low); a Stokes-I model has no non-zero cross-hand samples at all, so
         # an empty cvis is itself the "no polarization" signal → 0.0.
@@ -202,12 +208,14 @@ def run(
             casa_calls=casa_calls,
         )
 
-    corr_codes = _corr_codes(ms_str)
-    par_idx = _indices(corr_codes, _PARALLEL_CODES)
-    cross_idx = _indices(corr_codes, _CROSSHAND_CODES)
-    if not par_idx:
-        par_idx = list(range(len(corr_codes)))
-    casa_calls.append(f"tb.open(POLARIZATION) → CORR_TYPE, par={par_idx}, cross={cross_idx}")
+    # Correlations per DATA_DESC_ID, from the POLARIZATION row each one points to.
+    corr_idx: list[tuple[list[int], list[int]]] = []
+    for codes in corr_codes_by_ddid(ms_str):
+        par_idx = _indices(codes, _PARALLEL_CODES) or list(range(len(codes)))
+        corr_idx.append((par_idx, _indices(codes, _CROSSHAND_CODES)))
+    casa_calls.append(
+        f"tb.open(POLARIZATION, DATA_DESCRIPTION) → CORR_TYPE per DDID, (par, cross)={corr_idx}"
+    )
 
     per_field: list[dict] = []
     with open_table(ms_str) as tb:
@@ -224,19 +232,36 @@ def run(
             sub = tb.query(f"FIELD_ID == {fid}")
             try:
                 n_rows = int(sub.nrows())
-                if n_rows == 0:
-                    continue
-                step = max(1, n_rows // max_rows)
-                data = sub.getcol("MODEL_DATA")
-                flag = sub.getcol("FLAG")
+                dd_ids = sorted({int(x) for x in sub.getcol("DATA_DESC_ID")}) if n_rows else []
             finally:
                 sub.close()
-            if step > 1:
-                data = data[:, :, ::step]
-                flag = flag[:, :, ::step]
-            casa_calls.append(f"tb.query(FIELD_ID=={fid}) → MODEL_DATA, FLAG")
+            if n_rows == 0:
+                continue
+            step = max(1, -(-n_rows // max_rows))
+            # One DDID at a time: each has its own correlation layout, and
+            # DDIDs with different shapes cannot share one getcol array.
+            p_parts: list[np.ndarray] = []
+            c_parts: list[np.ndarray] = []
+            for dd in dd_ids:
+                sub = tb.query(f"FIELD_ID == {fid} && DATA_DESC_ID == {dd}")
+                try:
+                    data = sub.getcol("MODEL_DATA", rowincr=step)
+                    flag = sub.getcol("FLAG", rowincr=step)
+                finally:
+                    sub.close()
+                pv, cv = _collect(data, flag, *corr_idx[dd])
+                p_parts.append(pv)
+                if cv is not None:
+                    c_parts.append(cv)
+            casa_calls.append(
+                f"tb.query(FIELD_ID=={fid} && DATA_DESC_ID in {dd_ids}) → "
+                f"MODEL_DATA, FLAG (rowincr={step})"
+            )
 
-            m = _model_metrics(data, flag, par_idx, cross_idx)
+            m = _metrics_from(
+                np.concatenate(p_parts) if p_parts else np.empty(0, complex),
+                np.concatenate(c_parts) if c_parts else None,
+            )
             fname = name_map[fid]
             is_polcal = fname in polcal_set
 

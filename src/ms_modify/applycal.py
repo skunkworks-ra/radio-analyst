@@ -10,7 +10,7 @@ CASA call sequence:
            parang, flagbackup)
 
 When execute=False (default), writes a self-contained script to
-workdir/applycal_<field_stem>.py and returns immediately.
+workdir/applycal_<ms_stem>_<field_stem>.py and returns immediately.
 
 The three-call pattern for a standard observation:
   ms_applycal(field=flux_field,  gainfield=[..., flux_field],  interp=[..., 'nearest'])
@@ -35,9 +35,24 @@ from ms_modify.exceptions import ApplycalFailedError
 TOOL_NAME = "ms_applycal"
 
 
-def _script_path(workdir: Path, field: str) -> Path:
-    stem = field.replace(",", "_").replace(" ", "_").replace("/", "_")[:40]
-    return workdir / f"applycal_{stem}.py"
+def _safe_stem(text: str, limit: int = 40) -> str:
+    """Filename-safe stem. If sanitizing or truncation changed the text, a short
+    hash of the original is appended so distinct selections ('J*' vs 'J?', or
+    long lists sharing a prefix) cannot overwrite one another's script."""
+    import hashlib
+    import re
+
+    stem = re.sub(r"[^A-Za-z0-9._+=-]", "_", text)
+    if stem == text and len(stem) <= limit:
+        return stem
+    digest = hashlib.sha1(text.encode()).hexdigest()[:7]
+    return f"{stem[: limit - 8]}_{digest}"
+
+
+def _script_path(workdir: Path, field: str, ms_str: str = "") -> Path:
+    ms_stem = _safe_stem(Path(ms_str).name.removesuffix(".ms")) if ms_str else ""
+    prefix = f"applycal_{ms_stem}_" if ms_stem else "applycal_"
+    return workdir / f"{prefix}{_safe_stem(field)}.py"
 
 
 def _build_script(
@@ -108,7 +123,7 @@ def run(
     interp: list[str] | None = None,
     spwmap: list[list[int]] | None = None,
     calwt: bool = False,
-    applymode: str = "calonly",
+    applymode: str = "calflag",
     parang: bool = True,
     flagbackup: bool = False,
     execute: bool = False,
@@ -134,10 +149,13 @@ def run(
                     multiband-delay choice); not telescope-general.
         calwt:      Calibrate the weights (default False — VLA weights are not
                     properly normalised; use statwt before imaging instead).
-        applymode:  'calonly' (default) applies calibration without flagging, so
-                    post-calibration RFI flagging (ms_postcal_flag, skill 13) owns the
-                    FLAG column. Use 'calflagstrict' to additionally flag data with
-                    missing/flagged solutions at apply time.
+        applymode:  'calflag' (default) applies calibration and flags data whose
+                    solutions are flagged, so uncalibrated data cannot reach
+                    CORRECTED_DATA. 'calonly' leaves FLAG untouched and passes
+                    such data through uncalibrated; use it only for interim
+                    applies inside a flagging loop. 'calflagstrict' also flags
+                    SpWs with no calibration in one or more tables (calflag
+                    passes those through uncalibrated).
         parang:     Apply parallactic angle correction (default True).
         flagbackup: Save a flag backup before applying (default False; set True
                     for the first applycal call on the flux calibrator).
@@ -203,7 +221,7 @@ def run(
                 ms_path=ms_path,
             )
 
-    script = _script_path(workdir_path, field)
+    script = _script_path(workdir_path, field, ms_str)
     script.write_text(
         _build_script(
             ms_str=ms_str,

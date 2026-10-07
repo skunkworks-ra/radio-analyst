@@ -44,7 +44,7 @@ ms_calsol_stats outlier gate fails.
    - `ms_verify_priorcals(workdir)` → priorcals_list
    - `ms_refant(calibrators.ms, field=bp_field)` → refant
 
-3. `ms_gaincal_snr_predict(calibrators.ms, field=bp_field, solint='int')`
+3. `ms_gaincal_snr_predict(calibrators.ms, field=bp_field, solint_seconds=<integration>, flux_jy=<from setjy>)`
    — predictive pre-flight. If > 20% of (antenna, SpW) pairs predict SNR < 3,
    relax solint before launching gaincal.
 
@@ -61,13 +61,13 @@ ms_calsol_stats outlier gate fails.
    caltable=workdir/bandpass.B, execute=False)` → run.
    `ms_calsol_stats(bandpass.B)` — bandpass SNR per SpW.
 
-7. Gain solve on flux cal: `ms_gaincal(…, field=flux_field, gaintype='G',
+7. Gain solve on all calibrators in one call (skill 07 Step 4):
+   `ms_gaincal(…, field='<flux_field>,<phase_fields>', gaintype='G',
    calmode='ap', solint='inf', gaintable=[priorcals + K + B],
    caltable=workdir/gain.G, execute=False)` → run.
 
-8. Gain solve on phase cals (append): same caltable, different field.
-   `ms_gaincal(…, field=phase_fields, …, append=True, …)` → run.
-   `ms_calsol_stats(gain.G)` — outliers block gate.
+8. `ms_calsol_stats(gain.G)` — outliers block gate. (ms_gaincal has no append:
+   a second call on the same caltable archives the first.)
 
 9. `ms_fluxscale(…, caltable=gain.G, fluxtable=workdir/gain.fluxscaled,
    reference=flux_field, transfer=phase_fields, execute=False)` → run.

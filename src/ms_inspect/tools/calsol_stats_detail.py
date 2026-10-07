@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ms_inspect.tools.calsol_stats import amp_outlier_scan
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
 
@@ -48,33 +49,6 @@ def _enumerate_low_snr(snr: np.ndarray, ants, spws, fields, snr_min: float) -> l
     return rows
 
 
-def _enumerate_amp_outliers(amp: np.ndarray, ants, spws, fields, amp_sigma: float) -> list[dict]:
-    rows: list[dict] = []
-    median = float(np.nanmedian(amp))
-    mad = float(np.nanmedian(np.abs(amp - median)))
-    sigma = 1.4826 * mad if mad > 0 else 0.0
-    if sigma <= 0:
-        return rows
-    shape = amp.shape
-    flat = amp.reshape(-1)
-    for fi, val in enumerate(flat):
-        if np.isfinite(val):
-            n_sigma = abs(val - median) / sigma
-            if n_sigma > amp_sigma:
-                idx = np.unravel_index(fi, shape)
-                rows.append(
-                    {
-                        "antenna": str(ants[idx[0]]),
-                        "spw": int(spws[idx[1]]) if len(shape) > 1 else 0,
-                        "field": str(fields[idx[2]]) if len(shape) > 2 else "",
-                        "amp": round(float(val), 4),
-                        "n_sigma": round(float(n_sigma), 2),
-                    }
-                )
-    rows.sort(key=lambda e: e["n_sigma"], reverse=True)
-    return rows
-
-
 def _antenna_slice(npz, ant_idx: int, spws, fields) -> list[dict]:
     """Every stored quantity for one antenna, per (SPW, field)."""
     quantities = [
@@ -89,6 +63,11 @@ def _antenna_slice(npz, ant_idx: int, spws, fields) -> list[dict]:
     for si, spw in enumerate(spws):
         for fi, fld in enumerate(fields):
             row = {"spw": int(spw), "field": str(fld)}
+            if "phase_rms_deg_per_corr" in npz.files:
+                pc = npz["phase_rms_deg_per_corr"][ant_idx, si, fi]
+                row["phase_rms_deg_per_corr"] = [
+                    round(float(v), 4) if np.isfinite(v) else None for v in pc
+                ]
             for q in quantities:
                 if q in npz.files:
                     arr = npz[q]
@@ -168,7 +147,7 @@ def run(
         if "amp_mean" not in npz.files:
             rows = []
         else:
-            rows = _enumerate_amp_outliers(npz["amp_mean"], ants, spws, fields, amp_sigma)
+            rows, _ = amp_outlier_scan(npz["amp_mean"], ants, spws, fields, amp_sigma)
 
     # apply filters
     if antenna and kind != "antenna":

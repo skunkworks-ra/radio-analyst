@@ -947,7 +947,7 @@ the same functions are also callable programmatically by skills and scripts
 | `ms_setjy_polcal` | Set polarization-angle models for pol calibrators |
 | `ms_initial_bandpass` | gaincal → bandpass → applycal; populates CORRECTED |
 | `ms_apply_initial_rflag` | rflag + tfcrop on CORRECTED − MODEL residuals; requires explicit `field` |
-| `ms_postcal_flag` | Post-cal RFI flagging (per-SpW robust clip → tfcrop + rflag → manual drop-tier); requires explicit `field` |
+| `ms_postcal_flag` | Post-cal RFI flagging (residual clip on modelled fields only, per field/SpW/corr → tfcrop + rflag → manual drop); requires explicit `field`; unmatched field tokens raise |
 | `ms_flag_caltable` | Autoflag a caltable's solutions (mode auto-routed from VisCal) |
 | `ms_apply_rflag` | General-purpose rflag pass |
 | `ms_gaincal` | Phase/amp/cross-hand-delay gain calibration (incl. `gaintype='KCROSS'`) |

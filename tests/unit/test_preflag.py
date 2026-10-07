@@ -29,6 +29,13 @@ class TestBuildCmdsContent:
         assert any("clip" in ln for ln in lines)
         assert any("extend" in ln for ln in lines)
 
+    def test_quack_default_5s_at_scan_start(self):
+        content = _build_cmds_content("", 0.0, True)
+        assert "mode='quack' quackinterval=5.0 quackmode='beg'" in content
+
+    def test_quack_zero_disables(self):
+        assert "quack" not in _build_cmds_content("", 0.0, True, quack_interval_s=0.0)
+
     def test_do_tfcrop_true_includes_tfcrop(self):
         content = _build_cmds_content("", 0.0, True)
         assert "tfcrop" in content
@@ -163,9 +170,9 @@ class TestPreflagRun:
             execute=False,
         )
 
-        # shadow + clip + tfcrop + extend = 4
+        # quack + shadow + clip + tfcrop + extend = 5
         n = result["data"]["n_flag_commands"]["value"]
-        assert n == 4
+        assert n == 5
 
     def test_n_flag_commands_no_tfcrop(self, tmp_path):
         ms_fake = tmp_path / "fake.ms"
@@ -184,9 +191,9 @@ class TestPreflagRun:
             execute=False,
         )
 
-        # shadow + clip + extend = 3
+        # quack + shadow + clip + extend = 4
         n = result["data"]["n_flag_commands"]["value"]
-        assert n == 3
+        assert n == 4
 
 
 # ---------------------------------------------------------------------------

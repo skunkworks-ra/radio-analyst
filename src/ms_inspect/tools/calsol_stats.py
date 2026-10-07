@@ -58,19 +58,54 @@ def _nan_list(shape: tuple[int, ...]) -> list:
     return arr.tolist()
 
 
-def _phase_rms_deg(phase_rad: np.ndarray) -> float:
-    """RMS of phase values in degrees, ignoring NaN."""
-    valid = phase_rad[~np.isnan(phase_rad)]
-    if valid.size == 0:
-        return math.nan
-    return float(np.sqrt(np.mean(valid**2))) * (180.0 / math.pi)
+def _phase_scatter_deg(phase_rad: np.ndarray) -> tuple[np.ndarray, list[str | None]]:
+    """Phase scatter per correlation, in degrees, and the axis it was taken over.
+
+    phase_rad: [n_corr, n_chan, n_rows], NaN where flagged.
+
+    'time': for each (corr, chan) the circular mean over time is removed and the
+    RMS of the wrapped deviations is taken, pooled over channels. A steady
+    offset gives 0, not the offset. Used when any channel of the corr has at
+    least 2 unflagged times.
+
+    'channel': otherwise (one solution in time, e.g. a bandpass), the corr's
+    circular mean over all its samples is removed and the RMS is taken across
+    channels. A leftover delay shows here as a phase slope across the band.
+
+    A corr with fewer than 2 unflagged samples in total has no scatter: NaN,
+    axis None.
+    """
+    n_corr = phase_rad.shape[0]
+    out = np.full(n_corr, math.nan)
+    axes: list[str | None] = [None] * n_corr
+    valid = np.isfinite(phase_rad)
+    z = np.where(valid, np.exp(1j * np.where(valid, phase_rad, 0.0)), 0.0)
+    n_t = valid.sum(axis=2)  # [n_corr, n_chan]
+    mean = z.sum(axis=2)
+    ref = np.where(np.abs(mean) > 0, mean / np.where(np.abs(mean) > 0, np.abs(mean), 1.0), 1.0)
+    dev = np.angle(z * np.conj(ref)[:, :, np.newaxis])  # wrapped, [-pi, pi]
+    use = valid & (n_t >= 2)[:, :, np.newaxis]
+    for c in range(n_corr):
+        d = dev[c][use[c]]
+        if d.size:
+            out[c] = float(np.sqrt(np.mean(d**2))) * (180.0 / math.pi)
+            axes[c] = "time"
+            continue
+        zc = z[c][valid[c]]
+        if zc.size >= 2:
+            m = zc.sum()
+            d = np.angle(zc * np.conj(m / abs(m))) if abs(m) > 0 else np.angle(zc)
+            out[c] = float(np.sqrt(np.mean(d**2))) * (180.0 / math.pi)
+            axes[c] = "channel"
+    return out, axes
 
 
 def _phase_mean_deg(phase_rad: np.ndarray) -> float:
+    """Circular mean of the phases in degrees, ignoring NaN."""
     valid = phase_rad[~np.isnan(phase_rad)]
     if valid.size == 0:
         return math.nan
-    return float(np.mean(valid)) * (180.0 / math.pi)
+    return float(np.angle(np.mean(np.exp(1j * valid)))) * (180.0 / math.pi)
 
 
 def _safe_mean(arr: np.ndarray) -> float:
@@ -135,8 +170,9 @@ def _process_slice(
     Read one (SPW, field) slice and compute per-antenna stats.
 
     Returns a dict keyed by antenna index with sub-dicts containing:
-        flagged_frac, snr_mean, amp_mean, amp_std, phase_mean_deg,
-        phase_rms_deg, amp_array (shape [n_chan_max]), delay_ns (K only),
+        flagged_frac, snr_mean, amp_mean, amp_std, phase_mean_deg (circular),
+        phase_rms_deg (worst correlation's scatter over time),
+        phase_rms_deg_per_corr, amp_array (shape [n_chan_max]), delay_ns (K only),
         n_rows.
     """
     n_ant = len(ant_names)
@@ -200,7 +236,12 @@ def _process_slice(
             entry["amp_mean"] = _safe_mean(amp_flat)
             entry["amp_std"] = _safe_std(amp_flat)
             entry["phase_mean_deg"] = _phase_mean_deg(phase_flat)
-            entry["phase_rms_deg"] = _phase_rms_deg(phase_flat)
+            per_corr, axes = _phase_scatter_deg(phase)
+            entry["phase_rms_deg_per_corr"] = per_corr.tolist()
+            entry["phase_rms_axes"] = [a for a in axes if a]
+            entry["phase_rms_deg"] = (
+                float(np.nanmax(per_corr)) if np.any(np.isfinite(per_corr)) else math.nan
+            )
 
             # full amplitude array averaged over corr axis → [n_chan]
             if np.all(np.isnan(amp)):
@@ -230,6 +271,9 @@ def _process_slice(
 # enumeration is recoverable from the raw NPZ sidecar via ms_calsol_stats_detail.
 _OUTLIER_DETAIL_CAP = 15
 
+# Minimum finite values for a robust (median, MAD) reference.
+_MIN_GROUP_N = 3
+
 
 def _rollup(entries: list[dict]) -> dict:
     """Per-antenna count rollup, ordered by count descending."""
@@ -237,6 +281,99 @@ def _rollup(entries: list[dict]) -> dict:
     for e in entries:
         by_ant[e["antenna"]] = by_ant.get(e["antenna"], 0) + 1
     return dict(sorted(by_ant.items(), key=lambda kv: kv[1], reverse=True))
+
+
+def _robust(vals: np.ndarray) -> tuple[float, float, int] | None:
+    """(median, 1.4826*MAD, n) of the finite values, or None if n < 3 or MAD = 0."""
+    v = vals[np.isfinite(vals)]
+    if v.size < _MIN_GROUP_N:
+        return None
+    med = float(np.median(v))
+    sigma = 1.4826 * float(np.median(np.abs(v - med)))
+    return (med, sigma, int(v.size)) if sigma > 0 else None
+
+
+def amp_outlier_scan(
+    amp: np.ndarray,
+    ant_names,
+    spw_ids,
+    field_names,
+    amp_sigma: float,
+) -> tuple[list[dict], list[dict]]:
+    """Amplitude outliers on amp[ant, spw, field], judged per (field, SpW).
+
+    Before fluxscale each field's gains sit at their own level, and a phase
+    cal's spectral index tilts that level across a wide band, so one pooled
+    median flags whole fields. Each antenna is judged against the median and
+    1.4826*MAD of its own (field, SpW) group; n_sigma_field gives the same
+    against the whole field.
+
+    Returns (rows, reference). rows: outliers worst first, each with the
+    group and field reference values. reference: one entry per field with
+    per-SpW arrays (aligned to spw_ids) of the group median, sigma, n, and the
+    signed offset of the group median from the field median in field sigmas,
+    which shows a whole SpW moving (wideband RFI) even when no antenna is an
+    outlier. A group with fewer than 3 finite values or MAD = 0 is null in the
+    arrays and contributes no outliers.
+    """
+    amp = np.asarray(amp, dtype=float)
+    while amp.ndim < 3:
+        amp = amp[..., np.newaxis]
+    _, n_spw, n_field = amp.shape
+    rows: list[dict] = []
+    reference: list[dict] = []
+    for fi in range(n_field):
+        fname = str(field_names[fi]) if fi < len(field_names) else ""
+        fref = _robust(amp[:, :, fi])
+        f_med, f_sig = (fref[0], fref[1]) if fref else (None, None)
+        spw_med: list[float | None] = []
+        spw_sig: list[float | None] = []
+        spw_n: list[int] = []
+        spw_off: list[float | None] = []
+        for si in range(n_spw):
+            col = amp[:, si, fi]
+            spw_n.append(int(np.isfinite(col).sum()))
+            gref = _robust(col)
+            if gref is None:
+                spw_med.append(None)
+                spw_sig.append(None)
+                spw_off.append(None)
+                continue
+            g_med, g_sig, _ = gref
+            spw_med.append(round(g_med, 4))
+            spw_sig.append(round(g_sig, 4))
+            spw_off.append(round((g_med - f_med) / f_sig, 2) if fref else None)
+            for ai, val in enumerate(col):
+                if not np.isfinite(val):
+                    continue
+                n_sigma = abs(val - g_med) / g_sig
+                if n_sigma <= amp_sigma:
+                    continue
+                rows.append(
+                    {
+                        "antenna": str(ant_names[ai]),
+                        "spw": int(spw_ids[si]) if si < len(spw_ids) else si,
+                        "field": fname,
+                        "amp": round(float(val), 4),
+                        "n_sigma": round(float(n_sigma), 2),
+                        "ref_median": round(g_med, 4),
+                        "ref_sigma": round(g_sig, 4),
+                        "n_sigma_field": (round(abs(val - f_med) / f_sig, 2) if fref else None),
+                    }
+                )
+        reference.append(
+            {
+                "field": fname,
+                "field_median": round(f_med, 4) if fref else None,
+                "field_sigma": round(f_sig, 4) if fref else None,
+                "spw_median": spw_med,
+                "spw_sigma": spw_sig,
+                "spw_n": spw_n,
+                "spw_offset_n_sigma_field": spw_off,
+            }
+        )
+    rows.sort(key=lambda e: e["n_sigma"], reverse=True)
+    return rows, reference
 
 
 def _compute_outliers(
@@ -276,28 +413,11 @@ def _compute_outliers(
     low_snr_by_ant = _rollup(low_snr)
 
     amp_outliers: list[dict] = []
+    amp_reference: list[dict] = []
     if amp_mean_arr is not None:
-        median = float(np.nanmedian(amp_mean_arr))
-        mad = float(np.nanmedian(np.abs(amp_mean_arr - median)))
-        sigma = 1.4826 * mad if mad > 0 else 0.0
-        if sigma > 0:
-            flat = amp_mean_arr.reshape(-1)
-            shape = amp_mean_arr.shape
-            for flat_idx, val in enumerate(flat):
-                if np.isfinite(val):
-                    n_sigma = abs(val - median) / sigma
-                    if n_sigma > amp_sigma_thresh:
-                        idx = np.unravel_index(flat_idx, shape)
-                        amp_outliers.append(
-                            {
-                                "antenna": str(ant_names[idx[0]]),
-                                "spw": spw_ids[idx[1]] if len(shape) > 1 else 0,
-                                "field": field_names[idx[2]] if len(shape) > 2 else "",
-                                "amp": round(float(val), 4),
-                                "n_sigma": round(float(n_sigma), 2),
-                            }
-                        )
-    amp_outliers.sort(key=lambda e: e["n_sigma"], reverse=True)  # worst first
+        amp_outliers, amp_reference = amp_outlier_scan(
+            amp_mean_arr, ant_names, spw_ids, field_names, amp_sigma_thresh
+        )
     amp_by_ant = _rollup(amp_outliers)
 
     return {
@@ -311,6 +431,7 @@ def _compute_outliers(
         "amp_outliers_n_antennas": len(amp_by_ant),
         "amp_outliers_by_antenna": amp_by_ant,
         "amp_outliers_truncated": len(amp_outliers) > _OUTLIER_DETAIL_CAP,
+        "amp_reference": amp_reference,
         "thresholds": {
             "snr_min": snr_min,
             "amp_sigma": amp_sigma_thresh,
@@ -441,6 +562,9 @@ def run(
 
     # delay: store mean delay per (ant, spw, field, n_corr) — inferred from first slice
     delay_arr: np.ndarray | None = None
+    # phase scatter per correlation, same lazy allocation
+    phase_rms_corr_arr: np.ndarray | None = None
+    phase_rms_axes: set[str] = set()
 
     # --- iterate (spw, field) slices ---
     for spw in spw_ids:
@@ -462,6 +586,11 @@ def run(
                     amp_std_arr[a_idx, si, fi] = entry["amp_std"]
                     phase_mean_arr[a_idx, si, fi] = entry["phase_mean_deg"]
                     phase_rms_arr[a_idx, si, fi] = entry["phase_rms_deg"]
+                    phase_rms_axes.update(entry["phase_rms_axes"])
+                    pc = entry["phase_rms_deg_per_corr"]
+                    if phase_rms_corr_arr is None:
+                        phase_rms_corr_arr = np.full((n_ant, n_spw, n_field, len(pc)), math.nan)
+                    phase_rms_corr_arr[a_idx, si, fi, : len(pc)] = pc
                     if _freq_dep and amp_array_4d is not None:
                         amp_array_4d[a_idx, si, fi, :] = entry["amp_array"]
 
@@ -511,7 +640,24 @@ def run(
         data["amp_mean"] = fmt_field(amp_mean_arr.tolist(), flag=_flag(amp_mean_arr))
         data["amp_std"] = fmt_field(amp_std_arr.tolist(), flag=_flag(amp_std_arr))
         data["phase_mean_deg"] = fmt_field(phase_mean_arr.tolist(), flag=_flag(phase_mean_arr))
-        data["phase_rms_deg"] = fmt_field(phase_rms_arr.tolist(), flag=_flag(phase_rms_arr))
+        data["phase_rms_deg"] = fmt_field(
+            phase_rms_arr.tolist(),
+            flag=_flag(phase_rms_arr),
+            note=(
+                "Worst correlation's phase scatter. Axis per phase_rms_axis: 'time' = "
+                "RMS of wrapped deviations from the circular mean over time per (corr, "
+                "chan), pooled over channels; 'channel' (one solution in time, e.g. a "
+                "bandpass) = RMS across channels about the corr's circular mean. NaN "
+                "only where a cell has fewer than 2 unflagged samples."
+            ),
+        )
+        data["phase_rms_axis"] = fmt_field(sorted(phase_rms_axes))
+        if phase_rms_corr_arr is not None:
+            data["phase_rms_deg_per_corr"] = fmt_field(
+                phase_rms_corr_arr.tolist(),
+                flag=_flag(phase_rms_corr_arr),
+                note=f"Shape [n_ant={n_ant}, n_spw={n_spw}, n_field={n_field}, n_corr].",
+            )
 
     if _freq_dep and amp_array_4d is not None:
         data["amp_array"] = fmt_field(
@@ -563,6 +709,7 @@ def run(
                 "amp_std": amp_std_arr,
                 "phase_mean_deg": phase_mean_arr,
                 "phase_rms_deg": phase_rms_arr,
+                "phase_rms_deg_per_corr": phase_rms_corr_arr,
                 "amp_array": amp_array_4d,
                 "delay_ns": delay_arr,
             },
@@ -618,6 +765,18 @@ def run(
             compact_data["amp_mean"] = _per_ant(amp_mean_arr)
             compact_data["amp_std"] = _per_ant(amp_std_arr)
             compact_data["phase_rms_deg"] = _per_ant(phase_rms_arr)
+            compact_data["phase_rms_axis"] = sorted(phase_rms_axes)
+            if phase_rms_corr_arr is not None:
+                pc_ant = np.full((n_ant, phase_rms_corr_arr.shape[3]), math.nan)
+                for i in range(n_ant):
+                    for c in range(phase_rms_corr_arr.shape[3]):
+                        v = phase_rms_corr_arr[i, :, :, c]
+                        v = v[np.isfinite(v)]
+                        if v.size:
+                            pc_ant[i, c] = np.mean(v)
+                compact_data["phase_rms_deg_per_corr"] = [
+                    [round(float(x), 4) if np.isfinite(x) else None for x in row] for row in pc_ant
+                ]
         if _is_delay_type(table_type) and delay_arr is not None:
             da = np.nanmean(delay_arr, axis=(1, 2, 3))  # [n_ant]
             compact_data["delay_ns"] = [round(float(x), 3) if np.isfinite(x) else None for x in da]

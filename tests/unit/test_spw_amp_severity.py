@@ -46,3 +46,44 @@ def test_reservoir_bounded_memory():
 
 def test_reservoir_empty_returns_none():
     assert _ChanReservoir(100).stats() is None
+
+
+def test_parallel_corr_follows_ddid_polarization_row():
+    from ms_inspect.util.selection import parallel_corr_from_codes
+
+    # POLARIZATION row 0 = RR LL, row 1 = RR RL LR LL; DDID 0 points at row 1.
+    corr_by_pol = [[5, 8], [5, 6, 7, 8]]
+    out = parallel_corr_from_codes(corr_by_pol, pol_ids=[1, 0])
+    assert out[0] == [(0, "RR"), (3, "LL")]
+    assert out[1] == [(0, "RR"), (1, "LL")]
+
+
+def test_cross_hands_widen_pooled_mad():
+    # Bright calibrator: parallel hands ~10 Jy, cross hands ~0.1 Jy.
+    rng = np.random.default_rng(2)
+    amp = np.empty((4, 1, 1000))
+    amp[[0, 3]] = 10.0 + rng.normal(0, 0.1, (2, 1, 1000))
+    amp[[1, 2]] = 0.1 + rng.normal(0, 0.01, (2, 1, 1000))
+    pooled = _corr_first_axis(amp)[0]
+    par = _corr_first_axis(amp[[0, 3]])[0]
+    mad = lambda v: np.median(np.abs(v - np.median(v)))  # noqa: E731
+    assert mad(pooled) > 10 * mad(par)
+
+
+def test_run_parallel_hands_and_residual(real_ms_calibrated):
+    from ms_inspect.tools.spw_amp_severity import run
+
+    out = run(real_ms_calibrated, datacolumn="residual", max_per_chan_records=0)
+    assert out["status"] == "ok"
+    spws = out["data"]["per_spw"]
+    assert spws and all(s["correlations_used"] == ["LL", "RR"] for s in spws)
+
+
+def test_run_unmatched_field_raises(real_ms_calibrated):
+    import pytest
+
+    from ms_inspect.exceptions import ComputationError
+    from ms_inspect.tools.spw_amp_severity import run
+
+    with pytest.raises(ComputationError, match="matches no field"):
+        run(real_ms_calibrated, field="NOPE")

@@ -98,3 +98,27 @@ class TestModelMetrics:
         m = _model_metrics(data, flag, par_idx=[0, 3], cross_idx=[1, 2])
         assert m["n_par"] == 0
         assert m["par_amp"] is None
+
+
+def test_correlations_follow_ddid_polarization_row(real_ms_raw_copy):
+    """POLARIZATION row 0 is not the row the data uses: the DDIDs point at row 1
+    (RR LL); row 0 holds cross-hands only. Reading row 0 would take RR/LL as
+    cross-hands."""
+    from casatools import table
+
+    from ms_inspect.tools.verify_model import run
+
+    tb = table()
+    tb.open(real_ms_raw_copy + "/POLARIZATION", nomodify=False)
+    tb.copyrows(real_ms_raw_copy + "/POLARIZATION", startrowin=0, nrow=1)
+    tb.putcell("CORR_TYPE", 0, np.array([6, 7], dtype=np.int32))  # RL LR
+    tb.close()
+    tb.open(real_ms_raw_copy + "/DATA_DESCRIPTION", nomodify=False)
+    tb.putcol("POLARIZATION_ID", np.ones(tb.nrows(), dtype=np.int32))
+    tb.close()
+
+    out = run(real_ms_raw_copy, field="3C147")
+    assert out["status"] == "ok", out
+    entry = out["data"]["per_field"][0]
+    assert entry["cross_amp"]["flag"] == "UNAVAILABLE"
+    assert entry["par_amp"]["value"] > 0

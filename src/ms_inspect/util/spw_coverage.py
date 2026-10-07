@@ -19,6 +19,8 @@ msmd wrapper used by the ms_modify solve tools.
 
 Policy:
   * SpW-coverage mismatches are WARN-only (returned to the caller's warnings[]).
+  * A target SpW that is fully flagged on every target/transfer field was
+    dropped on purpose; it is left out of the check and named in a note.
   * If the target/transfer fields cannot be inferred from intents and the caller
     passed no explicit target_fields, the wrapper STOPS (raises ComputationError)
     rather than guessing — the agent surfaces it to the user.
@@ -31,7 +33,7 @@ from __future__ import annotations
 import logging
 
 from ms_inspect.exceptions import ComputationError
-from ms_inspect.util.casa_context import open_msmd
+from ms_inspect.util.casa_context import open_msmd, open_table
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +110,45 @@ def evaluate_coverage(
 # ---------------------------------------------------------------------------
 # msmd wrapper
 # ---------------------------------------------------------------------------
+
+_FLAG_CHUNK = 10_000
+
+
+def _fully_flagged_spws(ms_path: str, field_ids: set[int], spws: set[int]) -> set[int]:
+    """Of `spws`, those with no unflagged sample on any of `field_ids`.
+
+    Reads FLAG in row chunks and stops at the first unflagged sample, so an
+    SpW with live data costs one chunk. Only called on SpWs that would
+    otherwise raise a coverage warning.
+    """
+    if not spws or not field_ids:
+        return set()
+    with open_table(ms_path + "/DATA_DESCRIPTION") as tb:
+        dd_spw = [int(x) for x in tb.getcol("SPECTRAL_WINDOW_ID")]
+    fields = ",".join(str(f) for f in sorted(field_ids))
+    out: set[int] = set()
+    with open_table(ms_path) as tb:
+        for spw in sorted(spws):
+            dds = [i for i, s in enumerate(dd_spw) if s == spw]
+            if not dds:
+                continue
+            ddl = ",".join(str(d) for d in dds)
+            sub = tb.query(f"FIELD_ID IN [{fields}] && DATA_DESC_ID IN [{ddl}]")
+            try:
+                n = int(sub.nrows())
+                if n == 0:
+                    continue
+                live = False
+                for start in range(0, n, _FLAG_CHUNK):
+                    flag = sub.getcol("FLAG", startrow=start, nrow=min(_FLAG_CHUNK, n - start))
+                    if not flag.all():
+                        live = True
+                        break
+                if not live:
+                    out.add(spw)
+            finally:
+                sub.close()
+    return out
 
 
 def _resolve_field_ids(msmd, field_sel: str, nfields: int) -> set[int]:
@@ -232,6 +273,14 @@ def check_spw_coverage(
             solve_spws = _spws(solve_ids)
             target_spws = _spws(target_ids)
             selected_spws = _parse_spw_ids(spw_sel)
+            effective = solve_spws if selected_spws is None else solve_spws & selected_spws
+            try:
+                dropped = _fully_flagged_spws(ms_path, target_ids, target_spws - effective)
+            except Exception:
+                # FLAG unreadable: check every SpW rather than lose the check.
+                logger.debug("Fully-flagged SpW probe failed for %s", ms_path)
+                dropped = set()
+            target_spws -= dropped
             solve_label = solve_field or "(all)"
             target_label = (
                 target_fields.strip()
@@ -245,4 +294,10 @@ def check_spw_coverage(
         logger.debug("SpW coverage check skipped: msmd unavailable for %s", ms_path)
         return []
 
-    return evaluate_coverage(solve_spws, target_spws, selected_spws, solve_label, target_label)
+    out = evaluate_coverage(solve_spws, target_spws, selected_spws, solve_label, target_label)
+    if dropped:
+        out.append(
+            f"SpWs {sorted(dropped)} are fully flagged on target/transfer field(s) "
+            f"{target_label}; left out of the coverage check."
+        )
+    return out

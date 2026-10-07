@@ -169,9 +169,15 @@ class SpwAmpSeverityInput(BaseModel):
     ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
     datacolumn: str = Field(
         default="CORRECTED_DATA",
-        description="Column to measure: 'CORRECTED_DATA' (default), 'DATA', or 'MODEL_DATA'.",
+        description=(
+            "Column to measure: 'CORRECTED_DATA' (default), 'DATA', 'MODEL_DATA', "
+            "or 'residual' (|CORRECTED_DATA - MODEL_DATA|)."
+        ),
     )
-    field: str = Field(default="", description="CASA field selection (empty = all fields).")
+    field: str = Field(
+        default="",
+        description="CASA field selection (empty = all fields); an unmatched token is an error.",
+    )
     sigma: float = Field(
         default=5.0,
         description="N in elevation threshold band_floor + N*robust_sigma (drives discardable-fraction estimate).",
@@ -273,6 +279,14 @@ class ResidualStatsInput(BaseModel):
         default=500_000,
         description="Maximum rows to read; rows are sampled uniformly if larger (default 500 000).",
         ge=1,
+    )
+    max_per_chan_records: int = Field(
+        default=2000,
+        description=(
+            "Bound on per-channel records across all SpWs; above it the chan_* arrays "
+            "go to a JSON sidecar (detail_path). 0 = no bound."
+        ),
+        ge=0,
     )
 
 
@@ -394,7 +408,9 @@ class CalsolStatsInput(BaseModel):
         default=3.0, ge=0.0, description="SNR threshold for low_snr outliers (default 3.0)."
     )
     amp_sigma: float = Field(
-        default=5.0, ge=0.0, description="Amplitude outlier threshold in sigma (default 5.0)."
+        default=5.0,
+        ge=0.0,
+        description="Amplitude outlier threshold, in robust sigma of the (field, SpW) group (default 5.0).",
     )
     verbosity: str = Field(
         default="compact",
@@ -1108,7 +1124,7 @@ async def ms_rfi_channel_stats(params: RfiChannelStatsInput) -> str:
     name="ms_spw_amp_severity",
     description=(
         "Per-channel robust amplitude statistics (median, MAD, robust-sigma, min, max) "
-        "of a data column, aggregated per SpW across all fields. Estimates how much of "
+        "of a data column (parallel hands only), aggregated per SpW. Estimates how much of "
         "each SpW is RFI-dominated and discardable. Read-only; no verdict, no flagging."
     ),
     annotations={
@@ -1131,7 +1147,8 @@ async def ms_spw_amp_severity(params: SpwAmpSeverityInput) -> str:
 
     Args:
         params.ms_path:              Path to the Measurement Set.
-        params.datacolumn:           'CORRECTED_DATA' (default), 'DATA', 'MODEL_DATA'.
+        params.datacolumn:           'CORRECTED_DATA' (default), 'DATA', 'MODEL_DATA',
+                                     or 'residual' (CORRECTED - MODEL).
         params.field:                CASA field selection (empty = all).
         params.sigma:                Elevation threshold multiplier (default 5.0).
         params.max_samples_per_chan: Reservoir size per channel (default 5000).
@@ -1405,7 +1422,7 @@ async def ms_verify_model(params: VerifyModelInput) -> str:
 @mcp.tool(
     name="ms_residual_stats",
     description=(
-        "CORRECTED − MODEL amplitude distribution per SpW. "
+        "CORRECTED − MODEL amplitude distribution per SpW and per channel, parallel hands only. "
         "RFI-threshold guide for ms_apply_initial_rflag. Requires CORRECTED + MODEL."
     ),
     annotations={
@@ -1430,13 +1447,16 @@ async def ms_residual_stats(params: ResidualStatsInput) -> str:
         params.max_rows:  Maximum rows to read per field (default 500 000).
 
     Returns:
-        JSON with per-spw median_amp, std_amp, p95_amp, n_unflagged, n_flagged.
+        JSON with per-spw median_amp, std_amp, p95_amp, n_unflagged, n_flagged,
+        and per-channel chan_median_amp, chan_robust_sigma, chan_p95_amp,
+        chan_n_unflagged arrays (parallel hands only).
     """
     return await _run_tool(
         residual_stats.run,
         params.ms_path,
         params.field_id,
         params.max_rows,
+        params.max_per_chan_records,
     )
 
 
