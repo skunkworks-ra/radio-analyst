@@ -5,11 +5,13 @@ Every `@mcp.tool` coroutine in ms_inspect, ms_modify, and ms_create funnels
 through `run_tool()`. It provides three things that must not diverge between
 the read, write, and ingest servers:
 
-1. **Off-loop execution.** Tool functions are synchronous and can run for
-   minutes (a bandpass solve, a FLAG column read). `asyncio.to_thread` keeps
-   them off the event loop so the server stays responsive.
-2. **Per-path serialization.** CASA table access is not thread-safe for
-   concurrent opens of the same MS within one process.
+1. **One child process per call.** casacore is not thread-safe within one
+   process, for the same table or for different ones: two calls at once can
+   segfault the whole server. Each call runs in its own Python process
+   (util/worker.py), so calls stay concurrent, a native crash ends only that
+   call, and a cancelled call is killed.
+2. **Per-path serialization.** Calls against the same resource path still run
+   one at a time, so a read never overlaps a write on the same MS.
 3. **A uniform error envelope.** RadioMSError becomes the documented error
    dict (design_docs/DESIGN.md §7.2); anything else propagates to FastMCP.
 
@@ -19,23 +21,27 @@ No CASA dependency.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
-import threading
+import signal
+import sys
+import time
+import weakref
 
 from ms_inspect.exceptions import RadioMSError
 from ms_inspect.util.formatting import compact_fields
+from ms_inspect.util.worker import LOGFILE_ENV
 
 # ---------------------------------------------------------------------------
 # Per-resource locks
 # ---------------------------------------------------------------------------
 
-# CASA table access is not thread-safe for concurrent opens of the same MS
-# within one process (observed: >=2 simultaneous opens can crash the server,
-# with no in-session recovery). CASA's own locking is per-MS, so tools against
-# *different* MSes may still run concurrently.
-_PATH_LOCKS: dict[str, threading.Lock] = {}
-_PATH_LOCKS_GUARD = threading.Lock()
+# One asyncio.Lock per resolved path, per event loop (an asyncio.Lock belongs to
+# the loop it was first used on).
+_PATH_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyncio.Lock]] = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def _is_plausible_lock_key(key: str) -> bool:
@@ -52,17 +58,29 @@ def _is_plausible_lock_key(key: str) -> bool:
     return os.sep in key or (os.altsep is not None and os.altsep in key)
 
 
-def path_lock(path: str) -> threading.Lock:
-    """Return the process-wide lock for `path`, creating it on first use."""
+def path_lock(path: str) -> asyncio.Lock:
+    """Return this event loop's lock for `path`, creating it on first use."""
     # realpath: the same MS may be referenced via symlinked aliases
     # (e.g. /users/... -> /lustre/...); those must share one lock.
     path = os.path.realpath(path)
-    with _PATH_LOCKS_GUARD:
-        lock = _PATH_LOCKS.get(path)
-        if lock is None:
-            lock = threading.Lock()
-            _PATH_LOCKS[path] = lock
-        return lock
+    locks = _PATH_LOCKS.setdefault(asyncio.get_running_loop(), {})
+    lock = locks.get(path)
+    if lock is None:
+        lock = asyncio.Lock()
+        locks[path] = lock
+    return lock
+
+
+_casa_logfile: str | None = None
+
+
+def _casa_logfile_path() -> str:
+    """One CASA log per server process, in its working directory, named as CASA names it."""
+    global _casa_logfile
+    if _casa_logfile is None:
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+        _casa_logfile = os.path.abspath(f"casa-{stamp}.log")
+    return _casa_logfile
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +90,7 @@ def path_lock(path: str) -> threading.Lock:
 
 def run_tool_sync(tool_fn, *args, **kwargs) -> str:
     """
-    Run `tool_fn` and JSON-encode its result. Called from a worker thread.
+    Run `tool_fn` and JSON-encode its result. Called in the worker process.
 
     RadioMSError is converted to the documented error envelope. Any other
     exception is re-raised for FastMCP to surface as a tool error.
@@ -86,7 +104,10 @@ def run_tool_sync(tool_fn, *args, **kwargs) -> str:
 
 async def run_tool(tool_fn, *args, _lock_path: str | None = None, **kwargs) -> str:
     """
-    Execute a tool function off the event loop thread; return JSON-encoded result.
+    Execute a tool function in a child process; return JSON-encoded result.
+
+    The tool must be a module-level function, because the child imports it by
+    module and name. Arguments and results cross the process boundary as JSON.
 
     Concurrent calls against the same resource path are serialized via a per-path
     lock. By default the resource is the first positional argument (MS, ASDM,
@@ -116,10 +137,61 @@ async def run_tool(tool_fn, *args, _lock_path: str | None = None, **kwargs) -> s
             "tools whose first argument is not the resource."
         )
 
-    def _locked() -> str:
-        if lock_key is None:
-            return run_tool_sync(tool_fn, *args, **kwargs)
-        with path_lock(lock_key):
-            return run_tool_sync(tool_fn, *args, **kwargs)
+    async with contextlib.AsyncExitStack() as stack:
+        if lock_key is not None:
+            await stack.enter_async_context(path_lock(lock_key))
+        return await _run_in_child(tool_fn, args, kwargs)
 
-    return await asyncio.to_thread(_locked)
+
+def _tool_ref(tool_fn) -> tuple[str, str]:
+    """Module and qualified name of a module-level function the child can import."""
+    module = getattr(tool_fn, "__module__", None)
+    qualname = getattr(tool_fn, "__qualname__", None)
+    if not module or not qualname or "<locals>" in qualname:
+        raise TypeError(
+            f"run_tool: {tool_fn!r} is not an importable module-level function; "
+            "the tool runs in a child process that imports it by module and name."
+        )
+    return module, qualname
+
+
+async def _run_in_child(tool_fn, args: tuple, kwargs: dict) -> str:
+    """Run one tool call in a fresh process (util/worker.py) and return its JSON result."""
+    module, qualname = _tool_ref(tool_fn)
+    request = json.dumps({"module": module, "qualname": qualname, "args": args, "kwargs": kwargs})
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(p for p in sys.path if p)
+    env[LOGFILE_ENV] = _casa_logfile_path()
+
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "ms_inspect.util.worker",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+    try:
+        out, err = await proc.communicate(request.encode())
+    except asyncio.CancelledError:
+        proc.kill()
+        await proc.wait()
+        raise
+
+    name = f"{module}.{qualname}"
+    if proc.returncode != 0 or not out:
+        code = proc.returncode
+        cause = f"signal {signal.Signals(-code).name}" if code and code < 0 else f"exit code {code}"
+        tail = " | ".join(err.decode(errors="replace").strip().splitlines()[-5:])
+        raise RuntimeError(
+            f"{name} ended in its worker process with {cause}; the server is still "
+            f"running and other calls are unaffected. Last stderr: {tail or '(none)'}"
+        )
+
+    reply = json.loads(out)
+    if "exception" in reply:
+        exc = reply["exception"]
+        raise RuntimeError(f"{exc['type']}: {exc['message']}")
+    return reply["result"]
