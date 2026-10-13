@@ -4436,9 +4436,9 @@ packages:
 - pypi: ./
   name: ms-inspect
   version: 0.1.0
-  sha256: 2854d0f9f5b049fcd63c48bfaa5caee2d96a2cf22483f75df8240865a31cbe9c
+  sha256: cbb8bd6ae22a5b799a3c34b5f0ff724d84085acc08bf42561493c5af2d9ee634
   requires_dist:
-  - mcp[cli]>=1.0
+  - mcp[cli]>=1.0,<2
   - numpy>=1.26
   - astropy>=6.0
   - pydantic>=2.0

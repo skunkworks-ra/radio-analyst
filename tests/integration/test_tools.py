@@ -432,12 +432,16 @@ class TestInitialBandpassReal:
         if bp_field is None:
             pytest.skip("No CALIBRATE_BANDPASS field found in test MS")
 
+        # The test MS has no intents, so the SpW-coverage guard needs the
+        # phase cal + target fields (J1822-0938, 3C391 C1..C7) named.
         return bp_run(
             _TEST_MS,
             bp_field=bp_field,
             applycal_field=bp_field,
             ref_ant=ref_ant,
             workdir=bp_workdir,
+            target_fields="1~8",
+            execute=True,
         )
 
     def test_returns_ok(self, bp_result):
@@ -460,7 +464,8 @@ class TestInitialBandpassReal:
 
     def test_provenance_has_three_steps(self, bp_result):
         calls = bp_result["provenance"]["casa_calls"]
-        assert len(calls) == 3
+        # gaincal, bandpass, applycal; the write_script entry is not a CASA step
+        assert sum(c.startswith("casatasks.") for c in calls) == 3
 
 
 @_SKIP
@@ -493,6 +498,7 @@ class TestVerifyCaltablesReal:
             applycal_field=bp_field,
             ref_ant=ref_ant,
             workdir=workdir,
+            target_fields="1~8",
             execute=True,
         )
 
@@ -668,9 +674,10 @@ class TestApplyInitialRflagReal:
         with open(os.path.join(str(tmp_path), "initial_rflag.py")) as fh:
             script = fh.read()
         assert 'mode="list"' not in script
-        # one rflag pass + one tfcrop pass
-        assert script.count("flagdata(") == 2
-        assert 'mode="rflag"' in script and 'mode="tfcrop"' in script
+        # one rflag pass + one tfcrop pass, plus the summary pass the stage log records
+        assert script.count('mode="rflag"') == 1
+        assert script.count('mode="tfcrop"') == 1
+        assert script.count('mode="summary"') == 1
 
 
 @_SKIP
