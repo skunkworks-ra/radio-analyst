@@ -1,7 +1,7 @@
 # Tight CI image: just the tools needed to install and exercise the plugin.
 # Repo code is checked out and mounted at run time, not baked into the image,
 # so this only needs to be rebuilt when the toolchain itself changes.
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git bash xz-utils python3 \
