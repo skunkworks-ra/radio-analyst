@@ -14,7 +14,7 @@ import os
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-from ms_inspect.util.dispatch import run_tool
+from ms_inspect.util.dispatch import ToolResult, run_tool
 from ms_modify import (
     __version__,
     applycal,
@@ -240,7 +240,7 @@ _run_tool = run_tool
         "openWorldHint": False,
     },
 )
-async def ms_set_intents(params: SetIntentsInput) -> str:
+async def ms_set_intents(params: SetIntentsInput) -> ToolResult:
     """
     Populate scan intent metadata in a Measurement Set that lacks intents.
 
@@ -299,7 +299,7 @@ async def ms_set_intents(params: SetIntentsInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_initial_bandpass(params: InitialBandpassInput) -> str:
+async def ms_initial_bandpass(params: InitialBandpassInput) -> ToolResult:
     """
     Solve an initial coarse bandpass on a calibrator MS and populate CORRECTED.
 
@@ -362,7 +362,7 @@ async def ms_initial_bandpass(params: InitialBandpassInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_apply_rflag(params: ApplyRflagInput) -> str:
+async def ms_apply_rflag(params: ApplyRflagInput) -> ToolResult:
     """
     Generate (and optionally execute) an rflag script on the CORRECTED column.
 
@@ -815,7 +815,7 @@ class FlagCaltableInput(BaseModel):
         "openWorldHint": False,
     },
 )
-async def ms_apply_preflag(params: ApplyPreflagInput) -> str:
+async def ms_apply_preflag(params: ApplyPreflagInput) -> ToolResult:
     """
     Apply deterministic pre-calibration flags and split calibrators to a separate MS.
 
@@ -864,7 +864,7 @@ async def ms_apply_preflag(params: ApplyPreflagInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_generate_priorcals(params: GeneratePriorcalsInput) -> str:
+async def ms_generate_priorcals(params: GeneratePriorcalsInput) -> ToolResult:
     """
     Generate the four deterministic prior calibration tables (gc, opac, rq, antpos).
 
@@ -910,7 +910,7 @@ async def ms_generate_priorcals(params: GeneratePriorcalsInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_setjy(params: SetjyInput) -> str:
+async def ms_setjy(params: SetjyInput) -> ToolResult:
     """
     Set flux density models for the catalogued flux calibrators in the MS.
 
@@ -969,7 +969,7 @@ async def ms_setjy(params: SetjyInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_setjy_polcal(params: SetjyPolcalInput) -> str:
+async def ms_setjy_polcal(params: SetjyPolcalInput) -> ToolResult:
     """
     Set the full polarization model for a polarization angle calibrator.
 
@@ -1038,7 +1038,7 @@ async def ms_setjy_polcal(params: SetjyPolcalInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_apply_initial_rflag(params: ApplyInitialRflagInput) -> str:
+async def ms_apply_initial_rflag(params: ApplyInitialRflagInput) -> ToolResult:
     """
     Run rflag + tfcrop on the residual column (CORRECTED − MODEL) in one pass.
 
@@ -1090,7 +1090,7 @@ async def ms_apply_initial_rflag(params: ApplyInitialRflagInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_postcal_flag(params: PostcalFlagInput) -> str:
+async def ms_postcal_flag(params: PostcalFlagInput) -> ToolResult:
     """
     Post-calibration RFI flagging on target + phase calibrator CORRECTED.
 
@@ -1152,7 +1152,7 @@ async def ms_postcal_flag(params: PostcalFlagInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_flag_caltable(params: FlagCaltableInput) -> str:
+async def ms_flag_caltable(params: FlagCaltableInput) -> ToolResult:
     """
     Autoflag outlier solutions in a calibration table.
 
@@ -1404,7 +1404,7 @@ class ApplycalInput(BaseModel):
         "openWorldHint": False,
     },
 )
-async def ms_gaincal(params: GaincalInput) -> str:
+async def ms_gaincal(params: GaincalInput) -> ToolResult:
     """
     Solve for antenna-based gain calibration solutions.
 
@@ -1474,7 +1474,7 @@ async def ms_gaincal(params: GaincalInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_polcal(params: PolcalInput) -> str:
+async def ms_polcal(params: PolcalInput) -> ToolResult:
     """
     Solve for polarisation calibration solutions.
 
@@ -1533,7 +1533,7 @@ async def ms_polcal(params: PolcalInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_bandpass(params: BandpassInput) -> str:
+async def ms_bandpass(params: BandpassInput) -> ToolResult:
     """
     Solve for the complex bandpass calibration (channel-by-channel gains).
 
@@ -1595,7 +1595,7 @@ async def ms_bandpass(params: BandpassInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_fluxscale(params: FluxscaleInput) -> str:
+async def ms_fluxscale(params: FluxscaleInput) -> ToolResult:
     """
     Bootstrap the flux density scale from a primary to secondary calibrators.
 
@@ -1645,7 +1645,7 @@ async def ms_fluxscale(params: FluxscaleInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_applycal(params: ApplycalInput) -> str:
+async def ms_applycal(params: ApplycalInput) -> ToolResult:
     """
     Apply calibration tables to a field and write CORRECTED_DATA.
 
@@ -1859,7 +1859,7 @@ class TcleanInput(BaseModel):
         "openWorldHint": False,
     },
 )
-async def ms_tclean(params: TcleanInput) -> str:
+async def ms_tclean(params: TcleanInput) -> ToolResult:
     """
     Generate (and optionally execute) a first-pass tclean imaging script.
 

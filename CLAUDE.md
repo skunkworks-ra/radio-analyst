@@ -383,7 +383,8 @@ Functions are also callable directly by skills and scripts.
 
 ## Response envelope
 
-Every tool returns this structure:
+Every tool returns this structure, as `structuredContent` and again as compact
+JSON text (`util/dispatch.py`). An error envelope also sets `isError`.
 
 ```json
 {

@@ -15,6 +15,11 @@ the read, write, and ingest servers:
 3. **A uniform error envelope.** RadioMSError becomes the documented error
    dict (design_docs/DESIGN.md §7.2); anything else propagates to FastMCP.
 
+The envelope goes out twice in one result: as ``structuredContent`` for a
+client that reads structured output, and as compact JSON text for one that
+does not. An error envelope sets ``isError``, so the model sees a tool error it
+can correct rather than a success whose status field says otherwise.
+
 No CASA dependency.
 """
 
@@ -28,10 +33,34 @@ import signal
 import sys
 import time
 import weakref
+from typing import Annotated, Any, Literal
 
-from ms_inspect.exceptions import RadioMSError
-from ms_inspect.util.formatting import compact_fields
+from mcp.types import CallToolResult, TextContent
+from pydantic import BaseModel, ConfigDict
+
 from ms_inspect.util.worker import LOGFILE_ENV
+
+
+# Loose on purpose: ``data`` differs per tool. The schema tells a client where
+# status, completeness and warnings live; it does not re-validate each payload.
+# No docstring: pydantic would ship it in every tool's schema on every listing.
+class ToolEnvelope(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    status: Literal["ok", "error"]
+    tool: str | None = None
+    ms_path: str | None = None
+    completeness_summary: str | None = None
+    data: Any = None
+    warnings: list[Any] = []
+    provenance: dict[str, Any] | None = None
+    error_type: str | None = None
+    message: str | None = None
+
+
+#: Return annotation for every ``@mcp.tool`` coroutine. FastMCP reads the
+#: second argument as the output schema and validates structuredContent against it.
+ToolResult = Annotated[CallToolResult, ToolEnvelope]
 
 # ---------------------------------------------------------------------------
 # Per-resource locks
@@ -88,26 +117,28 @@ def _casa_logfile_path() -> str:
 # ---------------------------------------------------------------------------
 
 
-def run_tool_sync(tool_fn, *args, **kwargs) -> str:
-    """
-    Run `tool_fn` and JSON-encode its result. Called in the worker process.
+def envelope_result(envelope: dict) -> CallToolResult:
+    """Wrap an envelope as a tool result: structured content plus compact text.
 
-    RadioMSError is converted to the documented error envelope. Any other
-    exception is re-raised for FastMCP to surface as a tool error.
+    The text is produced first and the structured content parsed back from it,
+    so both carry exactly the same values (``default=str`` has already turned
+    anything non-JSON into a string).
     """
-    try:
-        result = tool_fn(*args, **kwargs)
-        return json.dumps(compact_fields(result), separators=(",", ":"), default=str)
-    except RadioMSError as e:
-        return json.dumps(e.to_dict(), separators=(",", ":"), default=str)
+    text = json.dumps(envelope, separators=(",", ":"), default=str)
+    return CallToolResult(
+        content=[TextContent(type="text", text=text)],
+        structuredContent=json.loads(text),
+        isError=envelope.get("status") == "error",
+    )
 
 
-async def run_tool(tool_fn, *args, _lock_path: str | None = None, **kwargs) -> str:
+async def run_tool(tool_fn, *args, _lock_path: str | None = None, **kwargs) -> CallToolResult:
     """
-    Execute a tool function in a child process; return JSON-encoded result.
+    Execute a tool function in a child process; return the tool result.
 
     The tool must be a module-level function, because the child imports it by
-    module and name. Arguments and results cross the process boundary as JSON.
+    module and name. Arguments and results cross the process boundary as JSON;
+    the parent wraps the child's JSON as a CallToolResult.
 
     Concurrent calls against the same resource path are serialized via a per-path
     lock. By default the resource is the first positional argument (MS, ASDM,
@@ -140,7 +171,7 @@ async def run_tool(tool_fn, *args, _lock_path: str | None = None, **kwargs) -> s
     async with contextlib.AsyncExitStack() as stack:
         if lock_key is not None:
             await stack.enter_async_context(path_lock(lock_key))
-        return await _run_in_child(tool_fn, args, kwargs)
+        return envelope_result(json.loads(await _run_in_child(tool_fn, args, kwargs)))
 
 
 def _tool_ref(tool_fn) -> tuple[str, str]:

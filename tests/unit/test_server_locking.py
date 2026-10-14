@@ -10,7 +10,6 @@ The write servers (ms_modify, ms_create) get the same guarantees as ms_inspect.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 
 import dispatch_tools as dt
@@ -129,7 +128,7 @@ def test_nonexistent_but_path_shaped_key_is_allowed(tmp_path):
     async def go():
         return await _run_tool(dt.record, "/data/typo-does-not-exist.ms", str(tmp_path), 0.0)
 
-    assert "typo-does-not-exist.ms" in asyncio.run(go())
+    assert "typo-does-not-exist.ms" in asyncio.run(go()).content[0].text
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +142,7 @@ def test_each_call_runs_in_its_own_process():
             _run_tool(dt.pid, "/data/a.ms"), _run_tool(dt.pid, "/data/b.ms")
         )
 
-    pids = {json.loads(r)["pid"] for r in asyncio.run(go())}
+    pids = {r.structuredContent["pid"] for r in asyncio.run(go())}
     assert len(pids) == 2 and os.getpid() not in pids
 
 
@@ -155,8 +154,8 @@ def test_a_crash_ends_only_that_call():
 
     crashed, healthy = asyncio.run(go())
     assert isinstance(crashed, RuntimeError) and "SIGSEGV" in str(crashed)
-    assert "b.ms" in healthy
-    assert "b.ms" in asyncio.run(_run_tool(dt.slow, "/data/b.ms"))
+    assert "b.ms" in healthy.content[0].text
+    assert "b.ms" in asyncio.run(_run_tool(dt.slow, "/data/b.ms")).content[0].text
 
 
 def test_tool_exception_is_raised_with_its_type_and_message():
@@ -166,7 +165,7 @@ def test_tool_exception_is_raised_with_its_type_and_message():
 
 def test_stdout_noise_does_not_corrupt_the_result():
     assert (
-        json.loads(asyncio.run(_run_tool(dt.print_to_stdout, "/data/a.ms")))["ms_path"]
+        asyncio.run(_run_tool(dt.print_to_stdout, "/data/a.ms")).structuredContent["ms_path"]
         == "/data/a.ms"
     )
 

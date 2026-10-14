@@ -15,7 +15,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 from ms_create import __version__, import_asdm, reduction_log, sdm_summary
-from ms_inspect.util.dispatch import run_tool
+from ms_inspect.util.dispatch import ToolResult, run_tool
 
 # ---------------------------------------------------------------------------
 # Server initialisation
@@ -113,7 +113,7 @@ class SDMSummaryInput(BaseModel):
     ),
     annotations={"readOnlyHint": True, "destructiveHint": False},
 )
-async def ms_sdm_summary(params: SDMSummaryInput) -> str:
+async def ms_sdm_summary(params: SDMSummaryInput) -> ToolResult:
     """
     Summarise a raw ASDM/SDM directory prior to conversion.
 
@@ -139,7 +139,7 @@ async def ms_sdm_summary(params: SDMSummaryInput) -> str:
     ),
     annotations={"readOnlyHint": False, "destructiveHint": False},
 )
-async def ms_reduction_log(params: ReductionLogInput) -> str:
+async def ms_reduction_log(params: ReductionLogInput) -> ToolResult:
     """
     Append to / render / list the reduction working-calls ledger.
 
@@ -183,7 +183,7 @@ async def ms_reduction_log(params: ReductionLogInput) -> str:
     ),
     annotations={"readOnlyHint": False, "destructiveHint": False},
 )
-async def ms_import_asdm(params: ImportASDMInput) -> str:
+async def ms_import_asdm(params: ImportASDMInput) -> ToolResult:
     """
     Convert a raw ASDM to a CASA Measurement Set.
 

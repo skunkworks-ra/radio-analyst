@@ -47,14 +47,30 @@ def _resolve(module: str, qualname: str):
     return obj
 
 
+def run_tool_sync(tool_fn, *args, **kwargs) -> str:
+    """
+    Run `tool_fn` and JSON-encode its result.
+
+    Here rather than in util/dispatch.py so the child never imports mcp or
+    pydantic (about 0.3 s per call). RadioMSError is converted to the
+    documented error envelope. Any other exception is re-raised.
+    """
+    from ms_inspect.exceptions import RadioMSError
+    from ms_inspect.util.formatting import compact_fields
+
+    try:
+        result = tool_fn(*args, **kwargs)
+        return json.dumps(compact_fields(result), separators=(",", ":"), default=str)
+    except RadioMSError as e:
+        return json.dumps(e.to_dict(), separators=(",", ":"), default=str)
+
+
 def main() -> int:
     reply_fd = os.dup(1)
     os.dup2(2, 1)
     request = json.loads(sys.stdin.read())
 
     _set_casa_logfile()
-
-    from ms_inspect.util.dispatch import run_tool_sync
 
     try:
         tool_fn = _resolve(request["module"], request["qualname"])

@@ -6,12 +6,13 @@ the args from tool_manifest.json. Ground truth for the harness in
 tool_probe_llm.py -- both read the same manifest so they can't drift apart.
 
 Pass criterion is deliberately loose: a tool that runs and returns its own
-error envelope (isError=False, e.g. MS_NOT_FOUND) still counts as a pass --
-most manifest entries point non-MS tools at nonexistent files on purpose, so
-we're proving the server is alive and returns clean errors, not exercising
-real science. A transport-level failure (crash, timeout, no response) or an
-MCP-level rejection (isError=True, e.g. a schema validation error that never
-reaches the tool's own code) is a probe failure.
+error envelope (isError=True with an error_type, e.g. MS_NOT_FOUND) still
+counts as a pass -- most manifest entries point non-MS tools at nonexistent
+files on purpose, so we're proving the server is alive and returns clean
+errors, not exercising real science. A transport-level failure (crash,
+timeout, no response) or an MCP-level rejection (isError=True with no
+error_type, e.g. a schema validation error that never reaches the tool's own
+code) is a probe failure.
 
 Runs identically in CI and locally:
     pixi run python scripts/ci/tool_probe.py --server ms-inspect --tool ms_observation_info --smoke-ms smoke.ms
@@ -64,8 +65,9 @@ async def probe(server: str, tool: str, args: dict, timeout_s: float) -> dict:
                     }
                 result = await session.call_tool(tool, {"params": args})
                 text = result.content[0].text if result.content else ""
+                own_envelope = bool((result.structuredContent or {}).get("error_type"))
                 return {
-                    "probe_status": "FAIL" if result.isError else "PASS",
+                    "probe_status": "FAIL" if result.isError and not own_envelope else "PASS",
                     "is_error": bool(result.isError),
                     "response": text[:2000],
                 }

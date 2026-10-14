@@ -53,7 +53,7 @@ from ms_inspect.tools import (
 )
 from ms_inspect.util import casa_task_index as _cti
 from ms_inspect.util import phase_cal_catalog as _pcc
-from ms_inspect.util.dispatch import path_lock, run_tool, run_tool_sync
+from ms_inspect.util.dispatch import ToolResult, path_lock, run_tool
 
 # ---------------------------------------------------------------------------
 # Server initialisation
@@ -503,7 +503,6 @@ class ImageStatsInput(BaseModel):
 # all three servers — see ms_inspect/util/dispatch.py. Aliased here so the
 # existing `_run_tool(...)` call sites and tests keep working.
 _ms_lock = path_lock
-_run_tool_sync = run_tool_sync
 _run_tool = run_tool
 
 
@@ -527,7 +526,7 @@ _run_tool = run_tool
         "openWorldHint": False,
     },
 )
-async def ms_observation_info(params: MSPathInput) -> str:
+async def ms_observation_info(params: MSPathInput) -> ToolResult:
     """
     Layer 1, Tool 1: Retrieve observation-level metadata.
 
@@ -562,7 +561,7 @@ async def ms_observation_info(params: MSPathInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_field_list(params: MSPathInput) -> str:
+async def ms_field_list(params: MSPathInput) -> ToolResult:
     """
     Layer 1, Tool 2: List all observed fields with J2000 coordinates and calibration roles.
 
@@ -614,7 +613,7 @@ async def ms_field_list(params: MSPathInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_scan_list(params: MSPathInput) -> str:
+async def ms_scan_list(params: MSPathInput) -> ToolResult:
     """
     Layer 1, Tool 3: Return the time-ordered list of all scans.
 
@@ -646,7 +645,7 @@ async def ms_scan_list(params: MSPathInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_scan_intent_summary(params: MSPathInput) -> str:
+async def ms_scan_intent_summary(params: MSPathInput) -> ToolResult:
     """
     Layer 1, Tool 4: Summarise how total observing time is distributed across intents.
 
@@ -679,7 +678,7 @@ async def ms_scan_intent_summary(params: MSPathInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_spectral_window_list(params: MSPathInput) -> str:
+async def ms_spectral_window_list(params: MSPathInput) -> ToolResult:
     """
     Layer 1, Tool 5: Return frequency and channel structure for all spectral windows.
 
@@ -713,7 +712,7 @@ async def ms_spectral_window_list(params: MSPathInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_correlator_config(params: MSPathInput) -> str:
+async def ms_correlator_config(params: MSPathInput) -> ToolResult:
     """
     Layer 1, Tool 6: Return correlator dump time and polarization basis.
 
@@ -750,7 +749,7 @@ async def ms_correlator_config(params: MSPathInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_antenna_list(params: MSPathInput) -> str:
+async def ms_antenna_list(params: MSPathInput) -> ToolResult:
     """
     Layer 2, Tool 1: Return antenna inventory with ECEF positions and completeness check.
 
@@ -784,7 +783,7 @@ async def ms_antenna_list(params: MSPathInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_baseline_lengths(params: BaselineLengthInput) -> str:
+async def ms_baseline_lengths(params: BaselineLengthInput) -> ToolResult:
     """
     Layer 2, Tool 2: Compute physical baseline length statistics and derived angular scales.
 
@@ -821,7 +820,7 @@ async def ms_baseline_lengths(params: BaselineLengthInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_elevation_vs_time(params: ElevationInput) -> str:
+async def ms_elevation_vs_time(params: ElevationInput) -> ToolResult:
     """
     Layer 2, Tool 3: Return per-scan elevation statistics for each field.
 
@@ -856,7 +855,7 @@ async def ms_elevation_vs_time(params: ElevationInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_parallactic_angle_vs_time(params: MSPathInput) -> str:
+async def ms_parallactic_angle_vs_time(params: MSPathInput) -> ToolResult:
     """
     Layer 2, Tool 4: Return parallactic angle range per field (sky-frame and feed-frame).
 
@@ -894,7 +893,7 @@ async def ms_parallactic_angle_vs_time(params: MSPathInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_shadowing_report(params: ShadowingInput) -> str:
+async def ms_shadowing_report(params: ShadowingInput) -> ToolResult:
     """
     Layer 2, Tool 5: Detect antenna shadowing events.
 
@@ -929,7 +928,7 @@ async def ms_shadowing_report(params: ShadowingInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_flag_preflight(params: MSPathInput) -> str:
+async def ms_flag_preflight(params: MSPathInput) -> ToolResult:
     """
     Fast pre-flight probe for the FLAG column — no data read, completes in seconds.
 
@@ -965,7 +964,7 @@ async def ms_flag_preflight(params: MSPathInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_antenna_flag_fraction(params: AntennaFlagFractionInput) -> str:
+async def ms_antenna_flag_fraction(params: AntennaFlagFractionInput) -> ToolResult:
     """
     Layer 2, Tool 6: Compute pre-existing flag fractions per antenna.
 
@@ -1010,7 +1009,7 @@ async def ms_antenna_flag_fraction(params: AntennaFlagFractionInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_refant(params: RefAntInput) -> str:
+async def ms_refant(params: RefAntInput) -> ToolResult:
     """
     Select the best reference antenna using geometry and flagging heuristics.
 
@@ -1060,7 +1059,7 @@ async def ms_refant(params: RefAntInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_verify_caltables(params: VerifyCaltablesInput) -> str:
+async def ms_verify_caltables(params: VerifyCaltablesInput) -> ToolResult:
     """
     Verify that caltables from ms_initial_bandpass exist and are structurally sound.
 
@@ -1101,7 +1100,7 @@ async def ms_verify_caltables(params: VerifyCaltablesInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_rfi_channel_stats(params: RfiChannelStatsInput) -> str:
+async def ms_rfi_channel_stats(params: RfiChannelStatsInput) -> ToolResult:
     """
     Identify RFI-contaminated channels from the FLAG column.
 
@@ -1135,7 +1134,7 @@ async def ms_rfi_channel_stats(params: RfiChannelStatsInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_spw_amp_severity(params: SpwAmpSeverityInput) -> str:
+async def ms_spw_amp_severity(params: SpwAmpSeverityInput) -> ToolResult:
     """
     Robust per-channel/per-SpW amplitude statistics for RFI-severity assessment.
 
@@ -1182,7 +1181,7 @@ async def ms_spw_amp_severity(params: SpwAmpSeverityInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_flag_summary(params: FlagSummaryInput) -> str:
+async def ms_flag_summary(params: FlagSummaryInput) -> ToolResult:
     """
     Return a complete flag statistics summary for the MS.
 
@@ -1223,7 +1222,7 @@ async def ms_flag_summary(params: FlagSummaryInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_pol_cal_conditions(params: PolCalConditionsInput) -> str:
+async def ms_pol_cal_conditions(params: PolCalConditionsInput) -> ToolResult:
     """
     Measure the polarisation-calibration conditions of this dataset.
 
@@ -1270,7 +1269,7 @@ async def ms_pol_cal_conditions(params: PolCalConditionsInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_online_flag_stats(params: OnlineFlagStatsInput) -> str:
+async def ms_online_flag_stats(params: OnlineFlagStatsInput) -> ToolResult:
     """
     Parse a .flagonline.txt and return summary statistics.
 
@@ -1302,7 +1301,7 @@ async def ms_online_flag_stats(params: OnlineFlagStatsInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_verify_priorcals(params: VerifyPriorcalsInput) -> str:
+async def ms_verify_priorcals(params: VerifyPriorcalsInput) -> ToolResult:
     """
     Verify prior calibration tables from ms_generate_priorcals exist and are non-empty.
 
@@ -1343,7 +1342,7 @@ async def ms_verify_priorcals(params: VerifyPriorcalsInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_corrected_stats(params: CorrectedStatsInput) -> str:
+async def ms_corrected_stats(params: CorrectedStatsInput) -> ToolResult:
     """
     Per-field amplitude/phase stats of a visibility column on parallel hands.
 
@@ -1387,7 +1386,7 @@ async def ms_corrected_stats(params: CorrectedStatsInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_verify_model(params: VerifyModelInput) -> str:
+async def ms_verify_model(params: VerifyModelInput) -> ToolResult:
     """
     Probe MODEL_DATA for untouched-default, out-of-band, and missing-polarization
     models after a setjy / setjy_polcal step.
@@ -1433,7 +1432,7 @@ async def ms_verify_model(params: VerifyModelInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_residual_stats(params: ResidualStatsInput) -> str:
+async def ms_residual_stats(params: ResidualStatsInput) -> ToolResult:
     """
     Compute per-SPW amplitude statistics of CORRECTED − MODEL for a field.
 
@@ -1474,7 +1473,7 @@ async def ms_residual_stats(params: ResidualStatsInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_calsol_stats(params: CalsolStatsInput) -> str:
+async def ms_calsol_stats(params: CalsolStatsInput) -> ToolResult:
     """
     Inspect a CASA calibration table and return per-(antenna, SPW, field) diagnostics.
 
@@ -1518,7 +1517,7 @@ async def ms_calsol_stats(params: CalsolStatsInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_calsol_stats_detail(params: CalsolStatsDetailInput) -> str:
+async def ms_calsol_stats_detail(params: CalsolStatsDetailInput) -> ToolResult:
     """
     Slice the raw NPZ sidecar from ms_calsol_stats for full outlier/antenna detail.
 
@@ -1560,7 +1559,7 @@ async def ms_calsol_stats_detail(params: CalsolStatsDetailInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_calsol_plot(params: CalsolPlotInput) -> str:
+async def ms_calsol_plot(params: CalsolPlotInput) -> ToolResult:
     """
     Generate a Bokeh HTML dashboard and NPZ file from a CASA calibration table.
 
@@ -1594,7 +1593,7 @@ async def ms_calsol_plot(params: CalsolPlotInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_plot_caltable_library(params: CalsolPlotLibraryInput) -> str:
+async def ms_plot_caltable_library(params: CalsolPlotLibraryInput) -> ToolResult:
     """
     Generate Bokeh HTML dashboards for an explicit list of caltables.
 
@@ -1630,7 +1629,7 @@ async def ms_plot_caltable_library(params: CalsolPlotLibraryInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_verify_import(params: VerifyImportInput) -> str:
+async def ms_verify_import(params: VerifyImportInput) -> ToolResult:
     """
     Verify that ms_import_asdm completed successfully.
 
@@ -1669,7 +1668,7 @@ async def ms_verify_import(params: VerifyImportInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_workflow_status(params: WorkflowStatusInput) -> str:
+async def ms_workflow_status(params: WorkflowStatusInput) -> ToolResult:
     """State probe over MS + workdir for pipeline resumption."""
     return await _run_tool(workflow_status.run, params.ms_path, params.workdir)
 
@@ -1688,7 +1687,7 @@ async def ms_workflow_status(params: WorkflowStatusInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_gaincal_snr_predict(params: GaincalSnrPredictInput) -> str:
+async def ms_gaincal_snr_predict(params: GaincalSnrPredictInput) -> ToolResult:
     """Predictive SNR for gaincal solint selection."""
     from ms_inspect.tools import gaincal_snr_predict
 
@@ -1716,7 +1715,7 @@ async def ms_gaincal_snr_predict(params: GaincalSnrPredictInput) -> str:
         "openWorldHint": False,
     },
 )
-async def ms_image_stats(params: ImageStatsInput) -> str:
+async def ms_image_stats(params: ImageStatsInput) -> ToolResult:
     """
     Phase 3, Tool 1: Quality metrics for a CASA image produced by tclean.
 
