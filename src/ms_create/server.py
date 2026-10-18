@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ms_create import __version__, import_asdm, reduction_log, sdm_summary
 from ms_inspect.util.dispatch import ToolResult, run_tool
+from ms_inspect.util.logs import init_server_logging
 
 # ---------------------------------------------------------------------------
 # Server initialisation
@@ -216,6 +217,7 @@ async def ms_import_asdm(params: ImportASDMInput) -> ToolResult:
 # Entry point
 # ---------------------------------------------------------------------------
 def main() -> None:
+    init_server_logging("ms-create")
     transport = os.environ.get("RADIO_MCP_TRANSPORT", "stdio").lower()
     port = int(os.environ.get("RADIO_MCP_PORT", "8002"))
 

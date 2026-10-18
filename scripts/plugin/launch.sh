@@ -19,6 +19,10 @@ set -euo pipefail
 SERVER="$1"
 TASK="$2"
 
+# Keep CASA's casa-*.log out of the cwd. The server hands its children a real
+# log under <workdir>/logs/; anything else in this process tree is silenced.
+export _ANALYST_CASA_LOGFILE="${_ANALYST_CASA_LOGFILE:-/dev/null}"
+
 # shellcheck source=scripts/plugin/env-lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/env-lib.sh"
 

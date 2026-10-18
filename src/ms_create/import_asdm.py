@@ -23,6 +23,7 @@ from pathlib import Path
 from ms_create.exceptions import ASDMNotFoundError, ImportFailedError
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import record_stage
 
 TOOL_NAME = "ms_import_asdm"
@@ -136,7 +137,7 @@ def run(
         with_pointing_correction,
         workdir=str(workdir_path),
     )
-    script_path.write_text(script_content)
+    write_script(script_path, script_content)
 
     casa_calls: list[str] = [f"write_script → {script_path}"]
     warnings: list[str] = []

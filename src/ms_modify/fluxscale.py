@@ -23,6 +23,7 @@ from pathlib import Path
 from ms_inspect.util.casa_context import describe_numeric_fields, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import record_stage
 from ms_modify.exceptions import FluxscaleFailedError
 
@@ -154,7 +155,8 @@ def run(
     transfer = _resolve_field_ids(caltable, transfer)
 
     script_path = str(workdir_path / "fluxscale.py")
-    Path(script_path).write_text(
+    write_script(
+        script_path,
         _build_script(
             ms_str=ms_str,
             caltable=caltable,
@@ -163,7 +165,7 @@ def run(
             reference=reference,
             transfer=transfer,
             incremental=incremental,
-        )
+        ),
     )
     casa_calls.append(f"write_script → {script_path}")
 

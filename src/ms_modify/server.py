@@ -15,6 +15,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 from ms_inspect.util.dispatch import ToolResult, run_tool
+from ms_inspect.util.logs import init_server_logging
 from ms_modify import (
     __version__,
     applycal,
@@ -1933,6 +1934,7 @@ async def ms_tclean(params: TcleanInput) -> ToolResult:
 
 
 def main() -> None:
+    init_server_logging("ms-modify")
     transport = os.environ.get("RADIO_MCP_TRANSPORT", "stdio").lower()
     port = int(os.environ.get("RADIO_MCP_PORT", "8001"))
 

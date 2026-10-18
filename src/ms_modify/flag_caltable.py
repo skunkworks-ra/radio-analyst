@@ -40,6 +40,7 @@ from pathlib import Path
 from ms_inspect.util.casa_context import open_table
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.logs import write_script
 
 TOOL_NAME = "ms_flag_caltable"
 
@@ -294,7 +295,7 @@ def run(
         sigma=sigma,
         flagbackup=flagbackup,
     )
-    Path(script_path).write_text(script_content)
+    write_script(script_path, script_content)
     casa_calls.append(f"write_script → {script_path}")
 
     base_data: dict = {

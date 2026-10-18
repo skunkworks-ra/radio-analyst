@@ -54,6 +54,7 @@ from ms_inspect.tools import (
 from ms_inspect.util import casa_task_index as _cti
 from ms_inspect.util import phase_cal_catalog as _pcc
 from ms_inspect.util.dispatch import ToolResult, path_lock, run_tool
+from ms_inspect.util.logs import init_server_logging
 
 # ---------------------------------------------------------------------------
 # Server initialisation
@@ -1927,6 +1928,7 @@ async def ms_casa_task_lookup(params: CasaTaskLookupInput) -> str:
 
 
 def main() -> None:
+    init_server_logging("ms-inspect")
     transport = os.environ.get("RADIO_MCP_TRANSPORT", "stdio").lower()
 
     if transport == "http":

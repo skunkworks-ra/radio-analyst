@@ -29,6 +29,7 @@ from ms_inspect.util.casa_context import (
 )
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, response_envelope
+from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import record_stage
 from ms_modify.exceptions import ApplycalFailedError
 
@@ -222,7 +223,8 @@ def run(
             )
 
     script = _script_path(workdir_path, field, ms_str)
-    script.write_text(
+    write_script(
+        script,
         _build_script(
             ms_str=ms_str,
             workdir=str(workdir_path),
@@ -235,7 +237,7 @@ def run(
             parang=parang,
             flagbackup=flagbackup,
             spwmap=spwmap,
-        )
+        ),
     )
     casa_calls.append(f"write_script → {script}")
 

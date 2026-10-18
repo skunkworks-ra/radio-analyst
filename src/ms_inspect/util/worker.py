@@ -16,6 +16,7 @@ before anything is imported; only the reply goes to the saved descriptor.
 
 The CASA log file is taken from ``_ANALYST_CASA_LOGFILE`` (set by the parent) so
 every call from one server appends to one log, as a single in-process server did.
+Importing ms_inspect applies it (see util/logs.py); without it CASA is silenced.
 """
 
 from __future__ import annotations
@@ -25,19 +26,7 @@ import json
 import os
 import sys
 
-LOGFILE_ENV = "_ANALYST_CASA_LOGFILE"
-
-
-def _set_casa_logfile() -> None:
-    """Point casatools at the parent's log file. casatools reads it once, at import."""
-    logfile = os.environ.get(LOGFILE_ENV)
-    if not logfile:
-        return
-    try:
-        from casaconfig import config
-    except ImportError:
-        return
-    config.logfile = logfile
+from ms_inspect.util.logs import LOGFILE_ENV, configure_casa_log
 
 
 def _resolve(module: str, qualname: str):
@@ -62,7 +51,11 @@ def run_tool_sync(tool_fn, *args, **kwargs) -> str:
         result = tool_fn(*args, **kwargs)
         return json.dumps(compact_fields(result), separators=(",", ":"), default=str)
     except RadioMSError as e:
-        return json.dumps(e.to_dict(), separators=(",", ":"), default=str)
+        return json.dumps(
+            {**e.to_dict(), "log_path": os.environ.get(LOGFILE_ENV)},
+            separators=(",", ":"),
+            default=str,
+        )
 
 
 def main() -> int:
@@ -70,7 +63,7 @@ def main() -> int:
     os.dup2(2, 1)
     request = json.loads(sys.stdin.read())
 
-    _set_casa_logfile()
+    configure_casa_log()
 
     try:
         tool_fn = _resolve(request["module"], request["qualname"])

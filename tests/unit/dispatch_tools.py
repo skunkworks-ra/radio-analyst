@@ -60,3 +60,33 @@ def print_to_stdout(path: str) -> dict:
 
 def pid(path: str) -> dict:
     return {"pid": os.getpid()}
+
+
+def import_casa(path: str) -> dict:
+    """Import casatools, which creates a casa-*.log unless its log is configured."""
+    import casatools
+
+    casatools.table()
+    return {"ms_path": path}
+
+
+def _pool_import_casa(_: int) -> int:
+    import casatools
+
+    casatools.table()
+    return os.getpid()
+
+
+def pool_import_casa(path: str) -> dict:
+    """Same spawn-context pool the flag and RFI tools use, with CASA imported in the workers."""
+    import multiprocessing as mp
+
+    with mp.get_context("spawn").Pool(processes=1) as pool:
+        pool.map(_pool_import_casa, [0])
+    return {"ms_path": path}
+
+
+def raise_ms_not_found(path: str) -> dict:
+    from ms_inspect.exceptions import MSNotFoundError
+
+    raise MSNotFoundError("no such ms", ms_path=path)

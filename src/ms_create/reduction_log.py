@@ -27,6 +27,7 @@ from pathlib import Path
 
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.logs import write_script
 
 TOOL_NAME = "ms_reduction_log"
 
@@ -201,7 +202,7 @@ def run(
     if action == "render":
         script = _replay_script(records)
         script_path = wd / "reduction_replay.py"
-        script_path.write_text(script)
+        write_script(script_path, script)
         return response_envelope(
             tool_name=TOOL_NAME,
             ms_path=workdir,

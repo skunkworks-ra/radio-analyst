@@ -15,6 +15,7 @@ from ms_inspect.util.calibrators import lookup as cal_lookup
 from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
 from ms_inspect.util.conversions import rad_to_deg
 from ms_inspect.util.formatting import field, response_envelope
+from ms_inspect.util.logs import write_script
 from ms_inspect.util.phase_cal_catalog import cone_search as vla_cone_search
 from ms_inspect.util.pol_calibrators import effective_role_at_band, lookup_pol
 from ms_inspect.util.stage_log import record_stage
@@ -460,8 +461,8 @@ def set_intents(
             from pathlib import Path as _Path
 
             script_path = str(_Path(workdir) / "set_intents.py")
-            _Path(script_path).write_text(
-                _build_set_intents_script(ms_path, intent_map, obs_modes, workdir)
+            write_script(
+                script_path, _build_set_intents_script(ms_path, intent_map, obs_modes, workdir)
             )
             casa_calls.append(f"write_script → {script_path}")
 

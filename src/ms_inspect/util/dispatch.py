@@ -38,7 +38,7 @@ from typing import Annotated, Any, Literal
 from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel, ConfigDict
 
-from ms_inspect.util.worker import LOGFILE_ENV
+from ms_inspect.util.logs import LOGFILE_ENV, casa_log_path, log_event
 
 
 # Loose on purpose: ``data`` differs per tool. The schema tells a client where
@@ -100,18 +100,6 @@ def path_lock(path: str) -> asyncio.Lock:
     return lock
 
 
-_casa_logfile: str | None = None
-
-
-def _casa_logfile_path() -> str:
-    """One CASA log per server process, in its working directory, named as CASA names it."""
-    global _casa_logfile
-    if _casa_logfile is None:
-        stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
-        _casa_logfile = os.path.abspath(f"casa-{stamp}.log")
-    return _casa_logfile
-
-
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -168,10 +156,30 @@ async def run_tool(tool_fn, *args, _lock_path: str | None = None, **kwargs) -> C
             "tools whose first argument is not the resource."
         )
 
-    async with contextlib.AsyncExitStack() as stack:
-        if lock_key is not None:
-            await stack.enter_async_context(path_lock(lock_key))
-        return envelope_result(json.loads(await _run_in_child(tool_fn, args, kwargs)))
+    started = time.monotonic()
+    status, error_type = "crash", None
+    try:
+        async with contextlib.AsyncExitStack() as stack:
+            if lock_key is not None:
+                await stack.enter_async_context(path_lock(lock_key))
+            envelope = json.loads(await _run_in_child(tool_fn, args, kwargs))
+        status, error_type = envelope.get("status", "ok"), envelope.get("error_type")
+        return envelope_result(envelope)
+    except asyncio.CancelledError:
+        status = "cancelled"
+        raise
+    except Exception as exc:
+        error_type = type(exc).__name__
+        raise
+    finally:
+        log_event(
+            tool=f"{getattr(tool_fn, '__module__', '?')}.{getattr(tool_fn, '__qualname__', '?')}",
+            resource=lock_key,
+            status=status,
+            error_type=error_type,
+            duration_s=round(time.monotonic() - started, 3),
+            casa_log=casa_log_path(),
+        )
 
 
 def _tool_ref(tool_fn) -> tuple[str, str]:
@@ -193,7 +201,7 @@ async def _run_in_child(tool_fn, args: tuple, kwargs: dict) -> str:
 
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join(p for p in sys.path if p)
-    env[LOGFILE_ENV] = _casa_logfile_path()
+    env[LOGFILE_ENV] = casa_log_path()
 
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
@@ -218,11 +226,12 @@ async def _run_in_child(tool_fn, args: tuple, kwargs: dict) -> str:
         tail = " | ".join(err.decode(errors="replace").strip().splitlines()[-5:])
         raise RuntimeError(
             f"{name} ended in its worker process with {cause}; the server is still "
-            f"running and other calls are unaffected. Last stderr: {tail or '(none)'}"
+            f"running and other calls are unaffected. CASA log: {casa_log_path()}. "
+            f"Last stderr: {tail or '(none)'}"
         )
 
     reply = json.loads(out)
     if "exception" in reply:
         exc = reply["exception"]
-        raise RuntimeError(f"{exc['type']}: {exc['message']}")
+        raise RuntimeError(f"{exc['type']}: {exc['message']} (CASA log: {casa_log_path()})")
     return reply["result"]

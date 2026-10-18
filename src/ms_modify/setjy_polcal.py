@@ -41,6 +41,7 @@ from ms_inspect.util.casa_context import open_table, validate_ms_path
 from ms_inspect.util.conversions import mjd_seconds_to_unix
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.logs import write_script
 from ms_inspect.util.polcal_setjy_fit import (
     fit_pol_terms_from_catalogue,
     fit_stokes_i_adaptive,
@@ -376,7 +377,7 @@ def run(
     script_content = _build_script(
         ms_str, field, lookup_name, reffreq_ghz, polindex, polangle, min_chunk_mhz
     )
-    Path(script_path).write_text(script_content)
+    write_script(script_path, script_content)
     casa_calls.append(f"write_script → {script_path}")
 
     # The fitter clamps each degree down to (in-band node count - 1) when the

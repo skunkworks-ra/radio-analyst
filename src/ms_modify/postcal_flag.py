@@ -41,6 +41,7 @@ from pathlib import Path
 from ms_inspect.util.casa_context import validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, normalize_spw_sel, response_envelope
+from ms_inspect.util.logs import write_script
 from ms_inspect.util.selection import match_field_names, parallel_corr_by_ddid
 
 TOOL_NAME = "ms_postcal_flag"
@@ -483,7 +484,7 @@ def run(
     )
 
     script_content = _build_script(ms_str, flag_calls, workdir=str(workdir_path))
-    Path(script_path).write_text(script_content)
+    write_script(script_path, script_content)
     casa_calls.append(f"write_script → {script_path}")
 
     base_data: dict = {

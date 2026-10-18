@@ -24,6 +24,7 @@ from pathlib import Path
 from ms_inspect.util.casa_context import validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_spw_sel, response_envelope
+from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import record_stage
 from ms_modify.exceptions import InitialBandpassFailedError
 
@@ -254,7 +255,7 @@ def run(
         uvrange=uvrange,
         applymode=applymode,
     )
-    Path(script_path).write_text(script_content)
+    write_script(script_path, script_content)
     casa_calls.append(f"write_script → {script_path}")
 
     # ------------------------------------------------------------------

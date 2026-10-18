@@ -22,6 +22,7 @@ from pathlib import Path
 from ms_inspect.util.casa_context import describe_numeric_fields, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, normalize_spw_sel, response_envelope
+from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import record_stage
 from ms_modify.exceptions import BandpassFailedError
 
@@ -180,7 +181,8 @@ def run(
             )
 
     script = _script_path(workdir_path, caltable)
-    script.write_text(
+    write_script(
+        script,
         _build_script(
             ms_str=ms_str,
             caltable=caltable,
@@ -197,7 +199,7 @@ def run(
             gaintable=gaintable,
             interp=interp,
             parang=parang,
-        )
+        ),
     )
     casa_calls.append(f"write_script → {script}")
 

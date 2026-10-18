@@ -68,6 +68,9 @@ def _record_stage(workdir, stage, product, measurement=None):
         "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "exists": exists,
     }
+    casa_log = os.environ.get("_ANALYST_CASA_LOGFILE")
+    if casa_log:
+        entry["casa_log"] = casa_log
     if measurement is not None:
         entry["measurement"] = measurement
     if not exists:
