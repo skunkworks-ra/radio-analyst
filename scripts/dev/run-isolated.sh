@@ -70,7 +70,9 @@ podman image exists "$IMAGE" \
 echo "run-isolated: $OUT"
 
 # label=disable: read the repo and the MS without relabelling host files.
+# keep-id: the container's uid 1000 (analyst) is the host user, so /out is writable.
 podman run --rm \
+    --userns=keep-id --user analyst \
     --security-opt label=disable \
     -v "$ROOT:/src:ro" \
     -v "$(cd "$MS" && pwd):/data/input.ms:ro" \

@@ -11,13 +11,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://pixi.sh/install.sh | bash \
     && mv /root/.pixi/bin/pixi /usr/local/bin/pixi
 
+# Non-root user for scripts/dev/run-isolated.sh (podman --user analyst). No
+# final USER: the GitHub container jobs run as root and still find both CLIs.
+RUN useradd -m -u 1000 analyst && mkdir -p /work && chown analyst:analyst /work
+
 # Claude Code CLI (native installer; version floor enforced via the
 # project's .claude/settings.json minimumVersion, not pinned here)
-RUN curl -fsSL https://claude.ai/install.sh | bash
-ENV PATH="/root/.local/bin:${PATH}"
+RUN su analyst -c 'curl -fsSL https://claude.ai/install.sh | bash' \
+    && ln -s /home/analyst/.local/bin/claude /usr/local/bin/claude
 
 # OpenCode CLI, for runs against non-Claude models (scripts/dev/run-isolated.sh)
-RUN curl -fsSL https://opencode.ai/install | bash
-ENV PATH="/root/.opencode/bin:${PATH}"
+RUN su analyst -c 'curl -fsSL https://opencode.ai/install | bash' \
+    && ln -s /home/analyst/.opencode/bin/opencode /usr/local/bin/opencode
 
 WORKDIR /workspace
