@@ -4,6 +4,7 @@
 # session at a given model and effort. Nothing on the host is reused except the
 # image, so every run starts from the same state.
 #
+# DEBUG=1 adds set -x. Progress: <run_dir>/progress.log; all output: container.log.
 # Usage:
 #   scripts/dev/run-isolated.sh --sha <commit> --model <model> --effort <level> \
 #       --prompt <file> --ms <path.ms> [--allowed-tools "<tools>"] [--harness claude]
@@ -71,7 +72,7 @@ echo "run-isolated: $OUT"
 
 # label=disable: read the repo and the MS without relabelling host files.
 # keep-id: the container's uid 1000 (analyst) is the host user, so /out is writable.
-podman run --rm \
+podman run --rm -i \
     --userns=keep-id --user analyst \
     --security-opt label=disable \
     -v "$ROOT:/src:ro" \
@@ -79,17 +80,24 @@ podman run --rm \
     -v "$OUT:/out" \
     -e CLAUDE_CODE_OAUTH_TOKEN -e ANTHROPIC_API_KEY \
     -e SHA="$FULL_SHA" -e MODEL="$MODEL" -e EFFORT="$EFFORT" \
-    -e ALLOWED_TOOLS="$ALLOWED_TOOLS" \
-    "$IMAGE" bash -s <<'INNER'
+    -e ALLOWED_TOOLS="$ALLOWED_TOOLS" -e DEBUG="${DEBUG:-}" \
+    "$IMAGE" bash -s <<'INNER' 2>&1 | tee "$OUT/container.log"
 set -euo pipefail
+[[ -n "$DEBUG" ]] && set -x
+step() { echo "[$(date -u +%T)] $*" | tee -a /out/progress.log; }
+trap 'rc=$?; [[ $rc -ne 0 ]] && step "FAILED rc=$rc at line $LINENO: $BASH_COMMAND"' EXIT
+step "start sha=$SHA model=$MODEL effort=$EFFORT"
 t0=$(date +%s)
 git config --global --add safe.directory '*'
+step "clone + checkout"
 git clone -q /src /work/plugin
 git -C /work/plugin checkout -q "$SHA"
 
 mkdir -p "$HOME/.casa/data" /work/run
-claude plugin marketplace add /work/plugin
-claude plugin install radio-analyst@radio-analyst
+step "plugin install"
+claude plugin marketplace add /work/plugin </dev/null
+claude plugin install radio-analyst@radio-analyst </dev/null
+step "copy MS"
 cp -r /data/input.ms /work/run/
 cd /work/run
 
@@ -97,32 +105,43 @@ cd /work/run
 python3 -c "import json, os; p = os.path.join(os.environ['HOME'], '.claude.json'); d = json.load(open(p)) if os.path.exists(p) else {}; d.setdefault('projects', {}).setdefault(os.getcwd(), {})['hasTrustDialogAccepted'] = True; json.dump(d, open(p, 'w'))"
 
 # Build the plugin environment as a user's first session does.
+step "env build (cold, about 5 min)"
 t1=$(date +%s)
 DATA="$HOME/.claude/plugins/data"
 mkdir -p "$DATA"  # find on a missing dir exits 1 and set -e ends the run silently
-claude mcp list >/dev/null 2>&1 || true
+claude mcp list </dev/null >/dev/null 2>&1 || true
 stamp=""
 for i in $(seq 1 180); do
     stamp="$(find "$DATA" -name env.stamp 2>/dev/null | head -n1)"
     [[ -n "$stamp" ]] && break
     if [[ "$i" -eq 3 ]] && ! find "$DATA" -name build.log 2>/dev/null | grep -q .; then
-        claude -p "Reply with OK." --model haiku >/dev/null 2>&1 || true
+        claude -p "Reply with OK." --model haiku </dev/null >/dev/null 2>&1 || true
     fi
     sleep 10
 done
 find "$DATA" -name build.log -exec cp {} /out/build.log \;
 [[ -n "$stamp" ]] || { echo "FAIL: plugin environment not built" >&2; exit 1; }
 t2=$(date +%s)
+# Servers that failed during the build are listed here, and a -p session
+# skips them (reported "failed", never started).
+rm -f "$HOME/.claude/mcp-needs-auth-cache.json"
+step "env built in $((t2 - t1)) s; session start"
 
 args=(-p "$(cat /out/prompt.txt)" --model "$MODEL" --effort "$EFFORT"
-      --output-format stream-json --verbose --permission-prompts none)
+      --output-format stream-json --verbose --include-hook-events --permission-prompts none)
 [[ -n "$ALLOWED_TOOLS" ]] && args+=(--allowed-tools "$ALLOWED_TOOLS")
 set +e
-claude "${args[@]}" >/out/trace.jsonl 2>/out/claude.stderr
+# </dev/null: claude reads stdin, which here is the rest of this script.
+claude "${args[@]}" </dev/null >/out/trace.jsonl 2>/out/claude.stderr &
+pid=$!
+for i in $(seq 1 60); do grep -q '"subtype":"init"' /out/trace.jsonl 2>/dev/null && break; sleep 1; done
+step "mcp: $(grep -m1 '"subtype":"init"' /out/trace.jsonl | grep -o '"name":"plugin:radio-analyst:[a-z-]*","status":"[a-z-]*"' | sed 's/"name":"plugin:radio-analyst://; s/","status":"/=/; s/"$//' | tr '\n' ' ')"
+wait "$pid"
 rc=$?
 set -e
 t3=$(date +%s)
 
+step "session done rc=$rc in $((t3 - t2)) s; copying workdir"
 mkdir -p /out/workdir
 find /work/run -mindepth 1 -maxdepth 1 ! -name input.ms -exec cp -r {} /out/workdir/ \;
 cat >/out/timings.env <<EOF
