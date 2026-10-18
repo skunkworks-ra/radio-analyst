@@ -99,6 +99,7 @@ python3 -c "import json, os; p = os.path.join(os.environ['HOME'], '.claude.json'
 # Build the plugin environment as a user's first session does.
 t1=$(date +%s)
 DATA="$HOME/.claude/plugins/data"
+mkdir -p "$DATA"  # find on a missing dir exits 1 and set -e ends the run silently
 claude mcp list >/dev/null 2>&1 || true
 stamp=""
 for i in $(seq 1 180); do
