@@ -1,9 +1,9 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "radio-analyst",
-  "description": "CASA data reduction for radio interferometers (VLA, MeerKAT, uGMRT): 53 MCP tools, interferometrist skills, and inspect/precal/calibrate/polcal/image workflows",
+  "description": "CASA data reduction for radio interferometers (VLA, MeerKAT, uGMRT): 54 MCP tools, interferometrist skills, and inspect/precal/calibrate/polcal/image workflows",
   "metadata": {
-    "description": "CASA data reduction for radio interferometers (VLA, MeerKAT, uGMRT): 53 MCP tools, interferometrist skills, and inspect/precal/calibrate/polcal/image workflows"
+    "description": "CASA data reduction for radio interferometers (VLA, MeerKAT, uGMRT): 54 MCP tools, interferometrist skills, and inspect/precal/calibrate/polcal/image workflows"
   },
   "owner": {
     "name": "Srikrishna Sekhar and Preshanth Jagannathan"
@@ -11,7 +11,7 @@
   "plugins": [
     {
       "name": "radio-analyst",
-      "description": "CASA data reduction for radio interferometers (VLA, MeerKAT, uGMRT): 53 MCP tools, interferometrist skills, and inspect/precal/calibrate/polcal/image workflows",
+      "description": "CASA data reduction for radio interferometers (VLA, MeerKAT, uGMRT): 54 MCP tools, interferometrist skills, and inspect/precal/calibrate/polcal/image workflows",
       "author": {
         "name": "Srikrishna Sekhar and Preshanth Jagannathan",
         "url": "https://github.com/skunkworks-ra"

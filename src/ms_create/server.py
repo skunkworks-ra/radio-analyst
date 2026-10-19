@@ -14,7 +14,7 @@ import os
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-from ms_create import __version__, import_asdm, reduction_log, sdm_summary
+from ms_create import __version__, import_asdm, reduction_log, report, sdm_summary
 from ms_inspect.util.dispatch import ToolResult, run_tool
 from ms_inspect.util.logs import init_server_logging
 
@@ -99,6 +99,24 @@ class ReductionLogInput(BaseModel):
             "Required unless the call ran with execute=true."
         ),
     )
+    keep_steps: list[int] | None = Field(
+        default=None,
+        description="(render) step numbers to replay; the rest are left out. Omit for all.",
+    )
+
+
+class ReportInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    workdir: str = Field(..., description="Directory holding reduction_log.jsonl.")
+    summary: str = Field(default="", description="Your overview of the reduction (plain text).")
+    decisions: str = Field(
+        default="", description="Decisions taken and the numbers they rest on (e.g. selfcal)."
+    )
+    caveats: str = Field(
+        default="", description="What the result does not support; checks skipped and why."
+    )
+    image_path: str = Field(default="", description="CASA image to show (plane 0). Optional.")
 
 
 class SDMSummaryInput(BaseModel):
@@ -169,6 +187,7 @@ async def ms_reduction_log(params: ReductionLogInput) -> ToolResult:
         params.skill_rule: (append) skill file / threshold cited.
         params.status:     (append) outcome tag.
         params.script_path: (append) script that was run; required unless execute=true.
+        params.keep_steps: (render) step numbers to replay; omit for all.
 
     Returns:
         JSON envelope: append → n_records; render → recipe + replay_script;
@@ -185,7 +204,42 @@ async def ms_reduction_log(params: ReductionLogInput) -> ToolResult:
         params.skill_rule,
         params.status,
         params.script_path,
+        params.keep_steps,
         _lock_path=params.workdir,
+    )
+
+
+@mcp.tool(
+    name="ms_report",
+    description=(
+        "Write <workdir>/report.html: your summary, decisions and caveats, the ledger as a "
+        "table with a keep box per step (composes keep_steps for the replay), the reduce "
+        "hook's open items, links to the HTML plots in the workdir, and one image plane. "
+        "Re-run to rebuild it."
+    ),
+    annotations={"readOnlyHint": False, "destructiveHint": False},
+)
+async def ms_report(params: ReportInput) -> ToolResult:
+    """
+    Build the HTML report of a reduction from the workdir.
+
+    Args:
+        params.workdir:    Directory holding reduction_log.jsonl.
+        params.summary:    Model-written overview.
+        params.decisions:  Decisions and the numbers they rest on.
+        params.caveats:    Limits of the result; skipped checks and why.
+        params.image_path: CASA image to show (plane 0). Optional.
+
+    Returns:
+        JSON envelope with report_path, n_steps, n_open_items, plots, image.
+    """
+    return await _run_tool(
+        report.run,
+        params.workdir,
+        params.summary,
+        params.decisions,
+        params.caveats,
+        params.image_path,
     )
 
 

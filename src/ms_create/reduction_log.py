@@ -146,7 +146,7 @@ _RUN_SCRIPT_HELPER = [
 ]
 
 
-def _replay_script(records: list[dict]) -> str:
+def _replay_script(records: list[dict], keep_steps: list[int] | None = None) -> str:
     """
     Render an EXECUTABLE replay of the recorded working calls.
 
@@ -167,6 +167,10 @@ def _replay_script(records: list[dict]) -> str:
         "",
     ]
     for r in records:
+        if keep_steps is not None and r.get("step") not in keep_steps:
+            lines.append(f"# step {r.get('step')}: dropped (not in keep_steps) — {r.get('tool')}")
+            lines.append("")
+            continue
         tool = r.get("tool", "?")
         params = r.get("params", {})
         rationale = r.get("rationale")
@@ -197,6 +201,7 @@ def run(
     skill_rule: str = "",
     status: str = "ok",
     script_path: str = "",
+    keep_steps: list[int] | None = None,
 ) -> dict:
     """
     Append to / render / list the reduction working-calls ledger.
@@ -212,6 +217,8 @@ def run(
         status:     (append) outcome tag; default 'ok'. Only shuttle working calls.
         script_path: (append) the script that was run; required unless the call
                     ran with execute=True. Its sha256 is stored for replay.
+        keep_steps: (render) step numbers to replay; the rest are emitted as
+                    'dropped' comments. None replays every step.
 
     Returns:
         Standard envelope. append → n_records; render → recipe + replay_script;
@@ -273,7 +280,7 @@ def run(
         )
 
     if action == "render":
-        script = _replay_script(records)
+        script = _replay_script(records, keep_steps)
         script_path = wd / "reduction_replay.py"
         write_script(script_path, script)
         return response_envelope(
@@ -284,6 +291,13 @@ def run(
                 "n_records": fmt_field(len(records)),
                 "recipe": fmt_field(records),
                 "replay_script": fmt_field(str(script_path)),
+                "dropped_steps": fmt_field(
+                    [
+                        r.get("step")
+                        for r in records
+                        if keep_steps is not None and r.get("step") not in keep_steps
+                    ]
+                ),
             },
             casa_calls=[f"read → {path}", f"write → {script_path}"],
         )

@@ -13,7 +13,7 @@ MeerKAT, and uGMRT:
 
 - **ms-inspect** — read-only inspection and diagnostics (34 tools, port 8000)
 - **ms-modify** — calibration, flagging, and MS modification (16 tools, port 8001)
-- **ms-create** — ASDM ingestion and reduction logging (3 tools, port 8002)
+- **ms-create** — ASDM ingestion, reduction logging and the report (4 tools, port 8002)
 
 `ms-inspect` began as Phase 1 only — Layer 1 (Orientation) and Layer 2
 (Instrument Sanity), 13 tools — and has since grown to cover pre-calibration,
@@ -123,7 +123,8 @@ radio-analyst/
 │   │   ├── exceptions.py          ← ASDMNotFoundError, ImportFailedError
 │   │   ├── sdm_summary.py         ← ms_sdm_summary (pre-conversion ASDM inspection)
 │   │   ├── import_asdm.py         ← ms_import_asdm
-│   │   └── reduction_log.py       ← ms_reduction_log
+│   │   ├── reduction_log.py       ← ms_reduction_log
+│   │   └── report.py              ← ms_report
 │   ├── ms_modify/
 │   │   ├── __init__.py            ← version string
 │   │   ├── server.py              ← FastMCP entry point (write, port 8001)
@@ -330,7 +331,8 @@ It has its own FastMCP server entry point (`ms_create.server`, port 8002).
 |------|--------|-------------|
 | `ms_sdm_summary` | `ms_create/sdm_summary.py` | Pre-conversion ASDM inspection (read-only, no casatools): telescope, config, band, per-SPW continuum-vs-line classification, HI-21cm coverage, correlation products, sources+intents, scan balance, max target elevation. Decide *what* a dataset is before importing it. |
 | `ms_import_asdm` | `ms_create/import_asdm.py` | Convert ASDM → MS; `ocorr_mode='co'`, `savecmds=True`, `applyflags=False`; writes `import_asdm.py` + `.flagonline.txt` |
-| `ms_reduction_log` | `ms_create/reduction_log.py` | Working-calls ledger: shuttle known-good calls into a per-reduction JSONL recipe. `action='append'` records one validated call; `'render'` emits the ordered recipe + replay script; `'list'` gives a compact step summary |
+| `ms_reduction_log` | `ms_create/reduction_log.py` | Working-calls ledger: shuttle known-good calls into a per-reduction JSONL recipe. `action='append'` records one validated call; `'render'` emits the ordered recipe + replay script (`keep_steps` replays a subset); `'list'` gives a compact step summary |
+| `ms_report` | `ms_create/report.py` | Write `report.html` in the workdir: the model's summary/decisions/caveats, the ledger with a keep box per step (composes `keep_steps` for `ms_reduction_log` render), the reduce hook's open items, the replay script, links to HTML plots, one image plane |
 
 Fixed parameters (not exposed): `ocorr_mode='co'` (cross-correlations only),
 `savecmds=True` (always write online flag file), `applyflags=False` (flagging

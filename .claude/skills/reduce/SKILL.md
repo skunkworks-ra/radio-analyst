@@ -107,3 +107,6 @@ When you stop, a hook scores your calls against `stages.json` and returns any
 open items: a check not run, an action not called, a step not in the ledger,
 a generated script edited without a record. Do them, or say in the report why
 each was skipped. It does not block anything else.
+
+Then build the report with the `report` skill (`radio-analyst:report` installed
+as a plugin).

@@ -193,3 +193,14 @@ class TestAppendRefusesWhatRenderCannotReplay:
         script.write_text("pass\n")
         p = subprocess.run([sys.executable, str(replay)], capture_output=True, text=True)
         assert p.returncode != 0 and "changed since it was recorded" in p.stderr
+
+
+def test_render_keep_steps_drops_the_rest(tmp_path):
+    for n in (1, 2, 3):
+        (tmp_path / f"s{n}.py").write_text("pass\n")
+        run("append", str(tmp_path), tool="manual", script_path=f"s{n}.py")
+    out = run("render", str(tmp_path), keep_steps=[1, 3])
+    text = (tmp_path / "reduction_replay.py").read_text()
+    assert out["data"]["dropped_steps"]["value"] == [2]
+    assert "# step 2: dropped (not in keep_steps)" in text
+    assert "s1.py" in text and "s3.py" in text and "s2.py" not in text
