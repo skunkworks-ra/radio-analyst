@@ -1,0 +1,437 @@
+{
+  "_draft": "Every step and check is taken from the named source; nothing added. Edit freely.",
+  "rule": "For each step: every `before` check, then `action`, then every `after` check, all before the next step's action. A check is already satisfied by an earlier ok call of the same tool on the same target if nothing in its `invalidated_by` ran on that target since (see `cache`). Then ms_reduction_log append (00-playbook 'Record every step').",
+  "stages": [
+    {
+      "stage": "inspect",
+      "skill_files": [
+        "01-workflow.md",
+        "01b-workflow-phase2.md",
+        "04-diagnostic-reasoning.md"
+      ],
+      "steps": [
+        {
+          "id": "i1",
+          "action": null,
+          "after": [
+            "ms_observation_info",
+            "ms_field_list",
+            "ms_scan_list",
+            "ms_scan_intent_summary",
+            "ms_spectral_window_list",
+            "ms_correlator_config"
+          ],
+          "source": "inspect.md Phase 1, in order"
+        },
+        {
+          "id": "i2",
+          "action": null,
+          "after": [
+            "ms_antenna_list",
+            "ms_baseline_lengths",
+            "ms_elevation_vs_time",
+            "ms_parallactic_angle_vs_time",
+            "ms_shadowing_report",
+            "ms_antenna_flag_fraction"
+          ],
+          "source": "inspect.md Phase 2, in order"
+        }
+      ]
+    },
+    {
+      "stage": "precal",
+      "skill_files": [
+        "10-precal-workflow.md"
+      ],
+      "steps": [
+        {
+          "id": "p1",
+          "action": null,
+          "after": [
+            "ms_workflow_status",
+            "ms_verify_import"
+          ],
+          "source": "precal.md 1-2"
+        },
+        {
+          "id": "p2",
+          "action": "ms_set_intents",
+          "when": "intents missing",
+          "after": [],
+          "source": "precal.md 3; no check named"
+        },
+        {
+          "id": "p3",
+          "action": "ms_apply_preflag",
+          "before": [
+            "ms_online_flag_stats"
+          ],
+          "after": [
+            "ms_flag_summary"
+          ],
+          "source": "precal.md 4-6; 10 Step 1-2"
+        },
+        {
+          "id": "p4",
+          "action": "ms_generate_priorcals",
+          "after": [
+            "ms_verify_priorcals"
+          ],
+          "source": "precal.md 7; 10 Step 3"
+        },
+        {
+          "id": "p5",
+          "action": "ms_setjy",
+          "after": [
+            "ms_verify_model"
+          ],
+          "source": "CLAUDE.md ms_verify_model 'after setjy'; precal.md 8 names only the warnings field"
+        },
+        {
+          "id": "p6",
+          "action": "ms_initial_bandpass",
+          "before": [
+            "ms_refant(bp_field)",
+            "ms_refant(phase_field)"
+          ],
+          "after": [
+            "ms_verify_caltables",
+            "ms_plot_caltable_library"
+          ],
+          "source": "precal.md 9-10; 10 Step 5-6"
+        },
+        {
+          "id": "p7",
+          "action": "ms_apply_initial_rflag",
+          "before": [
+            "ms_residual_stats",
+            "ms_verify_model"
+          ],
+          "after": [
+            "ms_flag_summary"
+          ],
+          "when": "model is not the 1 Jy default",
+          "source": "precal.md 11-13; 10 Step 7-8"
+        }
+      ]
+    },
+    {
+      "stage": "calibrate",
+      "skill_files": [
+        "07-calibration-execution.md"
+      ],
+      "steps": [
+        {
+          "id": "c1",
+          "action": null,
+          "after": [
+            "ms_workflow_status",
+            "ms_field_list",
+            "ms_spectral_window_list",
+            "ms_correlator_config",
+            "ms_antenna_list",
+            "ms_verify_priorcals",
+            "ms_refant"
+          ],
+          "source": "calibrate.md 1-2"
+        },
+        {
+          "id": "c2",
+          "action": "ms_gaincal(G0)",
+          "before": [
+            "ms_gaincal_snr_predict"
+          ],
+          "after": [
+            "ms_calsol_stats"
+          ],
+          "source": "calibrate.md 3-4; 07 Step 1. 07 says snr_predict 'before Step 4', calibrate.md says before G0",
+          "match": {
+            "gaintype": "^G$",
+            "calmode": "^p$"
+          }
+        },
+        {
+          "id": "c3",
+          "action": "ms_gaincal(K)",
+          "after": [
+            "ms_calsol_stats"
+          ],
+          "source": "calibrate.md 5; 07 Step 2; K is not flagged (07 caltable flagging)",
+          "match": {
+            "gaintype": "^K$"
+          }
+        },
+        {
+          "id": "c4",
+          "action": "ms_bandpass(B)",
+          "after": [
+            "ms_calsol_stats",
+            "ms_flag_caltable"
+          ],
+          "source": "calibrate.md 6; 07 Step 3 + caltable flagging"
+        },
+        {
+          "id": "c5",
+          "action": "ms_gaincal(G)",
+          "before": [
+            "ms_refant(flux,phase)",
+            "ms_verify_caltables",
+            "ms_flag_summary"
+          ],
+          "after": [
+            "ms_calsol_stats",
+            "ms_flag_summary",
+            "ms_flag_caltable when >= 10 solutions per antenna per field"
+          ],
+          "source": "calibrate.md 7-8; 07 Step 4b pre/post-flight, Step 5, caltable flagging",
+          "match": {
+            "gaintype": "^G$",
+            "calmode": "^ap$"
+          }
+        },
+        {
+          "id": "c6",
+          "action": "ms_fluxscale",
+          "after": [
+            "ms_plot_caltable_library"
+          ],
+          "source": "calibrate.md 9; 07 Step 6, 6b"
+        },
+        {
+          "id": "c7",
+          "action": "ms_applycal x3 (flux, phase, target)",
+          "before": [
+            "ms_antenna_list",
+            "ms_calsol_stats per table"
+          ],
+          "after": [
+            "ms_flag_summary(target)"
+          ],
+          "source": "07 antenna-set check, Step 7; calibrate.md 10-11"
+        }
+      ]
+    },
+    {
+      "stage": "postcal_flag",
+      "skill_files": [
+        "13-postcal-rfi-flagging.md"
+      ],
+      "steps": [
+        {
+          "id": "f1",
+          "action": "ms_postcal_flag(primaries)",
+          "before": [
+            "ms_verify_model",
+            "ms_flag_summary"
+          ],
+          "after": [
+            "ms_flag_summary"
+          ],
+          "source": "07 post-applycal; 13 Prerequisites, Step 1. 13 Steps 2-3 name no tool"
+        }
+      ],
+      "optional": true
+    },
+    {
+      "stage": "polcal",
+      "when": "polarization wanted",
+      "skill_files": [
+        "09-polcal-execution.md"
+      ],
+      "steps": [
+        {
+          "id": "o1",
+          "action": null,
+          "after": [
+            "ms_workflow_status",
+            "ms_pol_cal_conditions"
+          ],
+          "source": "polcal.md 1-2"
+        },
+        {
+          "id": "o2",
+          "action": "ms_setjy_polcal",
+          "after": [
+            "ms_verify_model(polcal_fields)"
+          ],
+          "source": "polcal.md 3; 09 line 174"
+        },
+        {
+          "id": "o3",
+          "action": "ms_gaincal(KCROSS)",
+          "after": [
+            "ms_calsol_stats"
+          ],
+          "source": "polcal.md 4",
+          "match": {
+            "gaintype": "^KCROSS$"
+          }
+        },
+        {
+          "id": "o4",
+          "action": "ms_polcal(Df)",
+          "after": [
+            "ms_calsol_stats",
+            "ms_flag_caltable"
+          ],
+          "source": "polcal.md 5; 07 caltable flagging (dterms.D)",
+          "match": {
+            "poltype": "^Df"
+          }
+        },
+        {
+          "id": "o5",
+          "action": "ms_polcal(Xf)",
+          "when": "angle standard observed",
+          "after": [],
+          "source": "polcal.md 6; no check named",
+          "match": {
+            "poltype": "^Xf"
+          }
+        },
+        {
+          "id": "o6",
+          "action": "ms_applycal(parang=True)",
+          "after": [],
+          "source": "polcal.md 7; no check named",
+          "match": {
+            "parang": "^True$",
+            "gaintable": "dterms"
+          }
+        }
+      ],
+      "optional": true
+    },
+    {
+      "stage": "image",
+      "skill_files": [
+        "11-imaging.md"
+      ],
+      "steps": [
+        {
+          "id": "m1",
+          "action": null,
+          "after": [
+            "ms_workflow_status",
+            "ms_observation_info",
+            "ms_spectral_window_list",
+            "ms_antenna_list",
+            "ms_baseline_lengths",
+            "ms_scan_list"
+          ],
+          "source": "image.md 1-3"
+        },
+        {
+          "id": "m2",
+          "action": "ms_tclean",
+          "before": [
+            "ms_corrected_stats(phase,target)"
+          ],
+          "after": [
+            "ms_image_stats"
+          ],
+          "source": "11 Step 0.5 (mandatory), Step 8-9; image.md 5-6. image.md omits corrected_stats"
+        }
+      ]
+    }
+  ],
+  "cache": {
+    "_note": "Target = ms_path, or caltable/image path, plus field. Classes from what each tool reads; edit freely. Each MS is its own target: nothing carries over from a parent MS to a split (calibrators.ms, working.ms). Decided 2026-10-18.",
+    "static": {
+      "tools": [
+        "ms_observation_info",
+        "ms_spectral_window_list",
+        "ms_correlator_config",
+        "ms_antenna_list",
+        "ms_baseline_lengths",
+        "ms_scan_list",
+        "ms_elevation_vs_time",
+        "ms_parallactic_angle_vs_time",
+        "ms_shadowing_report",
+        "ms_online_flag_stats"
+      ],
+      "invalidated_by": []
+    },
+    "intents": {
+      "tools": [
+        "ms_field_list",
+        "ms_scan_intent_summary",
+        "ms_pol_cal_conditions"
+      ],
+      "invalidated_by": [
+        "ms_set_intents"
+      ]
+    },
+    "flags": {
+      "tools": [
+        "ms_flag_summary",
+        "ms_antenna_flag_fraction",
+        "ms_refant",
+        "ms_rfi_channel_stats",
+        "ms_spw_amp_severity"
+      ],
+      "invalidated_by": [
+        "ms_apply_preflag",
+        "ms_apply_initial_rflag",
+        "ms_postcal_flag",
+        "ms_apply_rflag",
+        "ms_applycal"
+      ]
+    },
+    "model": {
+      "tools": [
+        "ms_verify_model"
+      ],
+      "invalidated_by": [
+        "ms_setjy",
+        "ms_setjy_polcal"
+      ]
+    },
+    "corrected": {
+      "tools": [
+        "ms_corrected_stats",
+        "ms_residual_stats"
+      ],
+      "invalidated_by": [
+        "ms_initial_bandpass",
+        "ms_applycal",
+        "ms_setjy",
+        "ms_apply_preflag",
+        "ms_apply_initial_rflag",
+        "ms_postcal_flag",
+        "ms_apply_rflag"
+      ]
+    },
+    "caltable": {
+      "tools": [
+        "ms_calsol_stats",
+        "ms_calsol_stats_detail",
+        "ms_calsol_plot",
+        "ms_plot_caltable_library",
+        "ms_verify_caltables",
+        "ms_verify_priorcals"
+      ],
+      "invalidated_by": [
+        "any action writing that caltable, incl. ms_flag_caltable"
+      ]
+    },
+    "image": {
+      "tools": [
+        "ms_image_stats"
+      ],
+      "invalidated_by": [
+        "ms_tclean with the same imagename"
+      ]
+    },
+    "always": {
+      "tools": [
+        "ms_workflow_status"
+      ],
+      "invalidated_by": [
+        "every action"
+      ]
+    }
+  },
+  "_match": "match: regex search on the action call's input field (calibrate.md / polcal.md call parameters).",
+  "_optional": "optional stage: if none of its actions was called, it is skipped and left out of the totals."
+}
