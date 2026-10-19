@@ -44,6 +44,12 @@ CONTRACT = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _no_project_dir(monkeypatch):
+    # set inside a Claude Code session; tests pass cwd explicitly instead
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+
+
 @pytest.fixture
 def contract(tmp_path, monkeypatch):
     path = tmp_path / "stages.json"
@@ -222,3 +228,14 @@ def test_selfcal_stage_skipped_when_not_chosen():
     contract = json.loads(reduce_contract.CONTRACT.read_text())
     lines = reduce_contract.score([], contract)["lines"]
     assert "[selfcal] skipped (optional, no action called)" in lines
+
+
+def test_log_stays_put_when_the_model_changes_directory(tmp_path, monkeypatch):
+    # run 20261019T065217Z: after `cd work`, the hook cwd moved and logging went silent
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    sub = tmp_path / "work"
+    sub.mkdir()
+    post(tmp_path, "Skill", {"skill": "reduce"})
+    post(sub, MCP + "ms_apply_preflag", {"ms_path": "a.ms"})
+    assert not (sub / reduce_hook.LOG_NAME).exists()
+    assert [r.get("tool") for r in log(tmp_path)][-1] == MCP + "ms_apply_preflag"

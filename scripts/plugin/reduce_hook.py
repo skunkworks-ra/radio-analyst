@@ -7,13 +7,15 @@
   Stop              score the logged MCP calls against stages.json; if items are open,
                     and no background task is running, send the model back once with the list
 
-The log is <cwd>/reduce_hooks.jsonl, one JSON line per event. Nothing is written
+The log is $CLAUDE_PROJECT_DIR/reduce_hooks.jsonl (the session's start directory;
+the hook's cwd follows any `cd` the model runs), one JSON line per event. Nothing is written
 in a session that never activated. Any error in this script exits 0 (fail open);
 at Stop the error is shown as a systemMessage so it is not silent. Stdlib only.
 """
 
 import hashlib
 import json
+import os
 import re
 import sys
 import time
@@ -65,7 +67,8 @@ def sha256(path: str) -> str | None:
 def handle(ev: dict) -> dict | None:
     event = ev.get("hook_event_name", "")
     session = ev.get("session_id", "")
-    log = Path(ev.get("cwd") or ".") / LOG_NAME
+    # not ev["cwd"]: it moves with the model's `cd` (run 20261019T065217Z went silent that way)
+    log = Path(os.environ.get("CLAUDE_PROJECT_DIR") or ev.get("cwd") or ".") / LOG_NAME
     records = read_log(log)
     active = is_active(records, session)
 
