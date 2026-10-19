@@ -69,8 +69,9 @@ command step or skill section it comes from.
 1. Run the `before` checks, then the action, then the `after` checks, before
    the next action. The checks are how you know the action worked; the skill
    file for the stage says how to read them.
-2. Then append the step that worked to the ledger with `ms_reduction_log`
-   (00-playbook.md, "Record every step"). One entry per step.
+2. Then append the call that worked to the ledger with `ms_reduction_log`,
+   as 00-playbook.md "Record every step" says: one entry per write call, the
+   tool's own name, literal params, and the `script_path` that ran.
 3. Do not re-run a check whose earlier result is still valid. `cache` in
    `stages.json` says which actions invalidate which checks. Each MS is its own
    target: a split (`calibrators.ms`, `working.ms`) starts uncached.
@@ -90,8 +91,10 @@ command step or skill section it comes from.
 ## Work off the tools when you need to, and record it
 
 You may edit a generated script or run your own CASA code when the science
-needs it. Then record it: a ledger entry naming the file and the change. The
-ledger must be enough to replay the reduction. Measure the image you report
+needs it. Then record it: a ledger entry with `script_path` set to the script
+that ran (`tool='manual'` for your own code), and the change in `rationale`.
+Read-only diagnostic scripts need no entry. The ledger must be enough to
+replay the reduction: replay re-runs each recorded script in order. Measure the image you report
 with `ms_image_stats` on the image the recorded step produced.
 
 ## At the end

@@ -174,3 +174,19 @@ def test_hook_fails_open_on_bad_input():
     )
     assert p.returncode == 0
     assert "reduce hook error" in p.stderr
+
+
+def test_edited_script_cleared_by_a_ledger_entry_naming_it(tmp_path, contract):
+    script = tmp_path / "tclean.py"
+    script.write_text("tclean(usemask='user')\n")
+    post(tmp_path, "Skill", {"skill": "reduce"})
+    resp = [{"type": "text", "text": json.dumps({"data": {"script_path": str(script)}})}]
+    post(tmp_path, MCP + "ms_apply_preflag", {"ms_path": "a.ms"}, resp)
+    script.write_text("tclean(usemask='pb')\n")
+    post(
+        tmp_path,
+        "mcp__plugin_radio-analyst_ms-create__ms_reduction_log",
+        {"params": {"action": "append", "tool": "manual", "script_path": str(script)}},
+    )
+    out = reduce_hook.handle(ev(tmp_path, "Stop"))
+    assert out is None or "edited after generation" not in out["reason"]

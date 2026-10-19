@@ -115,9 +115,15 @@ def handle(ev: dict) -> dict | None:
         r = score(calls, json.loads(CONTRACT.read_text()))
         items = list(r["open"])
         latest = {x["path"]: x["sha256"] for x in mine if x.get("event") == "script"}
+        # an edit is recorded once a ledger append names the script (the tool stores its hash)
+        recorded = {
+            c["input"].get("script_path")
+            for c in calls
+            if c["tool"] == "ms_reduction_log" and c["ok"] and c["input"].get("action") == "append"
+        }
         for path, digest in latest.items():
             now = sha256(path)
-            if digest and now and now != digest:
+            if digest and now and now != digest and path not in recorded:
                 items.append(
                     f"edited after generation: {path} (record the edit with ms_reduction_log)"
                 )

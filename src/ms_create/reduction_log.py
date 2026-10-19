@@ -14,13 +14,19 @@ Storage is a JSON-lines file `reduction_log.jsonl` in the workdir — one record
 per line, append-only, trivially diffable and greppable.
 
 Actions:
-  append  — record one working call (tool, params, outputs, rationale, rule)
-  render  — emit the ordered recipe and a replay Python script
+  append  — record one working call (tool, params, outputs, rationale, rule,
+            script_path). `tool` is the write tool's own name, or 'manual' for
+            work done off the tools; anything else is refused, so render can
+            map every entry. A call not run with execute=True must name the
+            script that was actually run; its sha256 is stored with it.
+  render  — emit the ordered recipe and a replay Python script: each entry with
+            a script re-runs that script (hash checked first), the rest call run()
   list    — compact summary (step, tool, rationale) of the recorded path
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -81,6 +87,63 @@ _RUN_REGISTRY: dict[str, str] = {
 }
 
 
+# What append accepts: the replayable write tools, set_intents (replayed from its
+# script), and 'manual' for off-tool work (a hand-edited or hand-written script).
+_APPENDABLE = frozenset(_RUN_REGISTRY) | {"ms_set_intents", "manual"}
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _validate_append(tool: str, params: dict, script_path: str, workdir: str) -> dict:
+    """Refuse an entry render could not replay; return the script fields to store."""
+    from ms_inspect.exceptions import ComputationError
+
+    if tool not in _APPENDABLE:
+        raise ComputationError(
+            f"tool {tool!r} is not a replayable step. Use the write tool's own name "
+            f"({', '.join(sorted(_APPENDABLE))}), one entry per call; 'manual' for work "
+            "off the tools. Record checks in the outputs of the step they verify.",
+            ms_path=workdir,
+        )
+    execute = params.get("execute", False)
+    if not isinstance(execute, bool):
+        raise ComputationError(
+            f"params.execute must be the literal true/false passed to the tool, got {execute!r}.",
+            ms_path=workdir,
+        )
+    if not script_path:
+        if tool == "manual" or not execute:
+            raise ComputationError(
+                f"script_path is required for {tool!r} unless it ran with execute=true: "
+                "name the script that was actually run (generated, edited, or your own).",
+                ms_path=workdir,
+            )
+        return {}
+    path = Path(script_path)
+    if not path.is_absolute():
+        path = Path(workdir) / path
+    if not path.is_file():
+        raise ComputationError(f"script_path does not exist: {path}", ms_path=workdir)
+    return {"script_path": str(path.resolve()), "script_sha256": _sha256(path)}
+
+
+_RUN_SCRIPT_HELPER = [
+    "import hashlib",
+    "import subprocess",
+    "import sys",
+    "",
+    "",
+    "def _run_script(path, sha256):",
+    "    with open(path, 'rb') as fh:",
+    "        if hashlib.sha256(fh.read()).hexdigest() != sha256:",
+    "            sys.exit(f'{path} changed since it was recorded; not replaying')",
+    "    subprocess.run([sys.executable, path], check=True)",
+    "",
+]
+
+
 def _replay_script(records: list[dict]) -> str:
     """
     Render an EXECUTABLE replay of the recorded working calls.
@@ -98,6 +161,7 @@ def _replay_script(records: list[dict]) -> str:
         "Review before running: paths and selections are dataset-specific.",
         '"""',
         "import importlib",
+        *_RUN_SCRIPT_HELPER,
         "",
     ]
     for r in records:
@@ -107,7 +171,9 @@ def _replay_script(records: list[dict]) -> str:
         if rationale:
             lines.append(f"# step {r.get('step')}: {rationale}")
         mod = _RUN_REGISTRY.get(tool)
-        if mod is None:
+        if r.get("script_path"):
+            lines.append(f"_run_script({r['script_path']!r}, {r.get('script_sha256')!r})  # {tool}")
+        elif mod is None:
             lines.append(f"# MANUAL STEP — no run() mapping for {tool!r}:")
             lines.append(f"#   params = {params!r}")
         else:
@@ -128,6 +194,7 @@ def run(
     rationale: str = "",
     skill_rule: str = "",
     status: str = "ok",
+    script_path: str = "",
 ) -> dict:
     """
     Append to / render / list the reduction working-calls ledger.
@@ -141,6 +208,8 @@ def run(
         rationale:  (append) why this step was done.
         skill_rule: (append) skill file / threshold cited, e.g. '07 Step 3'.
         status:     (append) outcome tag; default 'ok'. Only shuttle working calls.
+        script_path: (append) the script that was run; required unless the call
+                    ran with execute=True. Its sha256 is stored for replay.
 
     Returns:
         Standard envelope. append → n_records; render → recipe + replay_script;
@@ -155,6 +224,7 @@ def run(
     path = _log_path(workdir)
 
     if action == "append":
+        script = _validate_append(tool, params or {}, script_path, workdir)
         records = _read_records(path)
         record = {
             "step": len(records) + 1,
@@ -165,6 +235,7 @@ def run(
             "rationale": rationale,
             "skill_rule": skill_rule,
             "status": status,
+            **script,
         }
         with path.open("a") as fh:
             fh.write(json.dumps(record) + "\n")

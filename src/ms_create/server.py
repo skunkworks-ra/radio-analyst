@@ -76,13 +76,28 @@ class ReductionLogInput(BaseModel):
 
     action: str = Field(..., description="'append', 'render', or 'list'.")
     workdir: str = Field(..., description="Directory holding reduction_log.jsonl.")
-    tool: str = Field(default="", description="(append) tool/call name that worked.")
-    params: dict | None = Field(default=None, description="(append) exact working parameters.")
+    tool: str = Field(
+        default="",
+        description=(
+            "(append) the write tool's own name, e.g. 'ms_gaincal', one entry per call; "
+            "'manual' for work off the tools. Checks go in outputs, not their own entry."
+        ),
+    )
+    params: dict | None = Field(
+        default=None, description="(append) the literal parameters of that call."
+    )
     outputs: dict | None = Field(default=None, description="(append) salient outputs to record.")
     rationale: str = Field(default="", description="(append) why this step was done.")
     skill_rule: str = Field(default="", description="(append) skill file / threshold cited.")
     status: str = Field(
         default="ok", description="(append) outcome tag; shuttle only working calls."
+    )
+    script_path: str = Field(
+        default="",
+        description=(
+            "(append) the script that was actually run (generated, edited, or your own). "
+            "Required unless the call ran with execute=true."
+        ),
     )
 
 
@@ -153,6 +168,7 @@ async def ms_reduction_log(params: ReductionLogInput) -> ToolResult:
         params.rationale:  (append) why this step was done.
         params.skill_rule: (append) skill file / threshold cited.
         params.status:     (append) outcome tag.
+        params.script_path: (append) script that was run; required unless execute=true.
 
     Returns:
         JSON envelope: append → n_records; render → recipe + replay_script;
@@ -168,6 +184,7 @@ async def ms_reduction_log(params: ReductionLogInput) -> ToolResult:
         params.rationale,
         params.skill_rule,
         params.status,
+        params.script_path,
         _lock_path=params.workdir,
     )
 
