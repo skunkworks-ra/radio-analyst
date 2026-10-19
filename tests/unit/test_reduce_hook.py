@@ -190,3 +190,35 @@ def test_edited_script_cleared_by_a_ledger_entry_naming_it(tmp_path, contract):
     )
     out = reduce_hook.handle(ev(tmp_path, "Stop"))
     assert out is None or "edited after generation" not in out["reason"]
+
+
+def test_selfcal_calls_are_not_counted_as_calibration_or_first_image():
+    # real contract: G0, applycal and the first tclean must not pick up the selfcal calls
+    contract = json.loads(reduce_contract.CONTRACT.read_text())
+    mk = reduce_contract.make_call
+    calls = [
+        mk(
+            1,
+            MCP + "ms_gaincal",
+            {"gaintype": "G", "calmode": "p", "caltable": "w/initial_phase.G0"},
+            True,
+        ),
+        mk(2, MCP + "ms_applycal", {"gaintable": ["w/gain.fluxscaled"]}, True),
+        mk(3, MCP + "ms_tclean", {"imagename": "w/img"}, True),
+        mk(4, MCP + "ms_gaincal", {"gaintype": "G", "calmode": "p", "caltable": "w/pcal1.g"}, True),
+        mk(5, MCP + "ms_applycal", {"gaintable": ["w/gain.fluxscaled", "w/pcal1.g"]}, True),
+        mk(6, MCP + "ms_tclean", {"imagename": "w/img_sc1"}, True),
+    ]
+    lines = "\n".join(reduce_contract.score(calls, contract)["lines"])
+    assert "c2 ms_gaincal(G0): L1 " in lines
+    assert "c7 ms_applycal x3 (flux, phase, target): L2 " in lines
+    assert "m2 ms_tclean: L3 " in lines
+    assert "s1 ms_gaincal(selfcal): L4 " in lines
+    assert "s2 ms_applycal(selfcal): L5 " in lines
+    assert "s3 ms_tclean(selfcal): L6 " in lines
+
+
+def test_selfcal_stage_skipped_when_not_chosen():
+    contract = json.loads(reduce_contract.CONTRACT.read_text())
+    lines = reduce_contract.score([], contract)["lines"]
+    assert "[selfcal] skipped (optional, no action called)" in lines

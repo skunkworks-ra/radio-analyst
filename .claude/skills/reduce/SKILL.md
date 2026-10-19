@@ -75,7 +75,10 @@ command step or skill section it comes from.
 3. Do not re-run a check whose earlier result is still valid. `cache` in
    `stages.json` says which actions invalidate which checks. Each MS is its own
    target: a split (`calibrators.ms`, `working.ms`) starts uncached.
-4. `optional` stages (polcal, postcal_flag) may be skipped. Say so in the report.
+4. `optional` stages (polcal, postcal_flag, selfcal) may be skipped. Say so in the report.
+   Selfcal is never automatic: after the first image, assess it with 12-selfcal.md Step 0
+   (`ms_image_stats` and `ms_residual_stats`), then decide, and report the decision and
+   the numbers it rests on either way.
 
 ## Stage order
 
@@ -87,6 +90,7 @@ command step or skill section it comes from.
 | postcal_flag (optional) | 13-postcal-rfi-flagging.md | none |
 | polcal (optional) | 09-polcal-execution.md | polcal.md |
 | image | 11-imaging.md | image.md |
+| selfcal (optional, your decision) | 12-selfcal.md | none |
 
 ## Work off the tools when you need to, and record it
 

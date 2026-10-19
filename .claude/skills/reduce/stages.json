@@ -147,7 +147,8 @@
           "source": "calibrate.md 3-4; 07 Step 1. 07 says snr_predict 'before Step 4', calibrate.md says before G0",
           "match": {
             "gaintype": "^G$",
-            "calmode": "^p$"
+            "calmode": "^p$",
+            "caltable": "G0"
           }
         },
         {
@@ -207,7 +208,10 @@
           "after": [
             "ms_flag_summary(target)"
           ],
-          "source": "07 antenna-set check, Step 7; calibrate.md 10-11"
+          "source": "07 antenna-set check, Step 7; calibrate.md 10-11",
+          "match": {
+            "gaintable": "^(?!.*pcal)"
+          }
         }
       ]
     },
@@ -328,9 +332,55 @@
             "ms_corrected_stats(phase,target)"
           ],
           "after": [
+            "ms_image_stats",
+            "ms_residual_stats(target, selfcal decision)"
+          ],
+          "source": "11 Step 0.5 (mandatory), Step 8-9; image.md 5-6. image.md omits corrected_stats; 12 Step 0 (selfcal decision: model evaluates, may skip)",
+          "match": {
+            "imagename": "^(?!.*_sc)"
+          }
+        }
+      ]
+    },
+    {
+      "stage": "selfcal",
+      "optional": true,
+      "when": "the model's 12 Step 0 assessment says selfcal is warranted; its decision, never automatic",
+      "skill_files": [
+        "12-selfcal.md"
+      ],
+      "steps": [
+        {
+          "id": "s1",
+          "action": "ms_gaincal(selfcal)",
+          "match": {
+            "caltable": "pcal"
+          },
+          "after": [
+            "ms_calsol_stats",
+            "ms_plot_caltable_library"
+          ],
+          "source": "12 Step 1"
+        },
+        {
+          "id": "s2",
+          "action": "ms_applycal(selfcal)",
+          "match": {
+            "gaintable": "pcal"
+          },
+          "after": [],
+          "source": "12 Step 2; no check named"
+        },
+        {
+          "id": "s3",
+          "action": "ms_tclean(selfcal)",
+          "match": {
+            "imagename": "_sc"
+          },
+          "after": [
             "ms_image_stats"
           ],
-          "source": "11 Step 0.5 (mandatory), Step 8-9; image.md 5-6. image.md omits corrected_stats"
+          "source": "12 Step 3-4"
         }
       ]
     }
