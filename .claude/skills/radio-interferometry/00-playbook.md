@@ -44,7 +44,9 @@ its output has been checked. One entry per write call:
   `false`, as passed.
 - `script_path` is the script that actually ran: the generated one, the
   generated one after your edit, or your own (`manual`). Required unless the
-  call ran with `execute=true`. The ledger stores its hash; replay runs it.
+  call ran with `execute=true`; always required for `ms_set_intents` (use the
+  `set_intents.py` it writes) and `manual`. The ledger stores its hash; replay
+  runs it.
 - Checks (`ms_calsol_stats`, `ms_flag_summary`, ...) are not entries. Put
   their key numbers in the `outputs` of the step they verify.
 

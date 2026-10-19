@@ -114,10 +114,12 @@ def _validate_append(tool: str, params: dict, script_path: str, workdir: str) ->
             ms_path=workdir,
         )
     if not script_path:
-        if tool == "manual" or not execute:
+        # set_intents and manual have no run() to replay, so they always need the script
+        if tool not in _RUN_REGISTRY or not execute:
             raise ComputationError(
-                f"script_path is required for {tool!r} unless it ran with execute=true: "
-                "name the script that was actually run (generated, edited, or your own).",
+                f"script_path is required for {tool!r}"
+                + ("" if tool not in _RUN_REGISTRY else " unless it ran with execute=true")
+                + ": name the script that was actually run (generated, edited, or your own).",
                 ms_path=workdir,
             )
         return {}

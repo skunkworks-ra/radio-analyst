@@ -148,6 +148,14 @@ class TestAppendRefusesWhatRenderCannotReplay:
         with pytest.raises(ComputationError, match="script_path is required"):
             run("append", str(tmp_path), tool=tool, params={"execute": False})
 
+    @pytest.mark.parametrize("tool", ["ms_set_intents", "manual"])
+    def test_script_required_even_when_executed_if_no_run_mapping(self, tmp_path, tool):
+        # run 20261019T060646Z: set_intents appended with execute=true, no script -> MANUAL
+        from ms_inspect.exceptions import ComputationError
+
+        with pytest.raises(ComputationError, match="script_path is required"):
+            run("append", str(tmp_path), tool=tool, params={"execute": True})
+
     def test_missing_script_refused(self, tmp_path):
         from ms_inspect.exceptions import ComputationError
 
