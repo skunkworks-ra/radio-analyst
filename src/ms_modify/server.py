@@ -1802,12 +1802,17 @@ class TcleanInput(BaseModel):
         description="'modelcolumn' writes MODEL_DATA for self-cal (default). 'none' skips it.",
     )
     pblimit: float = Field(
-        default=-0.01,
+        default=-0.1,
         description=(
-            "Primary-beam gain cutoff. Default -0.01 (negative disables PB-based "
+            "Primary-beam gain cutoff. Default -0.1 (negative disables PB-based "
             "blanking, keeping low-gain regions and PB-sidelobe outliers visible). "
-            "CASA's default 0.2 blanks everything below 20% PB."
+            "CASA's default 0.2 blanks everything below 20% PB. The .pbcor noise "
+            "rises toward the edge of the PB."
         ),
+    )
+    pbmask: float | None = Field(
+        default=None,
+        description="Clean only where PB >= pbmask (usemask='pb'). None uses abs(pblimit).",
     )
     nchan: int | None = Field(
         default=None,
@@ -1920,6 +1925,7 @@ async def ms_tclean(params: TcleanInput) -> ToolResult:
         threshold=params.threshold,
         savemodel=params.savemodel,
         pblimit=params.pblimit,
+        pbmask=params.pbmask,
         nchan=params.nchan,
         start=params.start,
         width=params.width,

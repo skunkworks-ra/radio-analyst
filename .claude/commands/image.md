@@ -52,16 +52,17 @@ Prerequisite: CORRECTED_DATA populated on the target field(s) — run
    robust=0.5, niter=50000, threshold, savemodel='modelcolumn',
    workdir, execute=False)` → run the generated script. Wait for completion.
 
-6. `ms_image_stats(imagename.image.pbcor, psf_path=imagename.psf)`
-   — quality metrics.
+6. `ms_image_stats(imagename.image.pbcor, psf_path=imagename.psf,
+   pb_level=abs(pblimit), png_path=imagename.png)` — quality metrics; open the
+   PNG per 11-imaging.md §Step 9.
 
 7. Apply 11-imaging.md §Step 9 gates:
-   - rms_jy vs. radiometer prediction (2× tolerance)
-   - dynamic_range thresholds per field type
+   - residual_rms_jy vs. radiometer prediction (2× tolerance)
+   - residual_dynamic_range thresholds per field type
    - beam_major_arcsec vs. expected_beam_major_arcsec (20% tolerance)
    - peak_jy sanity check
 
-If `rms_jy > 3 ×` radiometer estimate, escalate — the problem is calibration,
+If `residual_rms_jy > 3 ×` radiometer estimate, escalate — the problem is calibration,
 not imaging. `ms_residual_stats` on the target's CORRECTED column before
 re-imaging.
 

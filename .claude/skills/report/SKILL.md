@@ -22,11 +22,24 @@ measure anything new for the report.
 
 1. `ms_reduction_log(action='render', workdir=<workdir>)`, so the report carries
    the current replay script.
-2. Write the three sections as plain text, a blank line between paragraphs:
+2. Write the three sections so a reviewer can scan them and find each choice
+   in the code. One item per line, no paragraphs:
+   - `## <stage>` lines as subheadings: inspect, precal, calibrate, image.
+   - `- ` lines as items, one fact or one decision each.
+   - Every parameter as `` `name = value` ``, e.g. `` `refant = ea21` ``,
+     `` `pblimit = -0.1` ``.
+   - Every decision ends with its ledger step and its source:
+     `[step 6, model choice]` when you chose the value, `[step 6, skill 10]`
+     when a skill rule set it. The report links the tag to that step's row,
+     where the parameters that differ from the tool default are highlighted
+     with their script line.
+
+   What goes in each section:
    - `summary`: the data, what was done stage by stage, the final image numbers
-     (rms, peak, dynamic range, beam) from `ms_image_stats`.
+     (`residual_rms_jy` with its `rms_region`, peak, `residual_dynamic_range`,
+     beam) from `ms_image_stats`.
    - `decisions`: each choice that changed the result (refant, flagging,
-     solints, selfcal yes or no) and the numbers it rests on.
+     solints, imaging parameters, selfcal yes or no) and the numbers it rests on.
    - `caveats`: what the result does not support, every check skipped and why,
      every step done off the tools.
 3. `ms_report(workdir, summary, decisions, caveats, image_path=<final image>.image.pbcor)`.

@@ -127,6 +127,23 @@ class TestSpecmodeMvc:
         assert "specmode     = 'mvc'" in script
 
 
+class TestPbMask:
+    def test_default_pblimit_and_pbmask(self, tmp_path, real_ms_calibrated):
+        script, _ = _run(tmp_path, real_ms_calibrated)
+        assert "pblimit      = -0.1," in script
+        assert "usemask      = 'pb'," in script
+        assert "pbmask       = 0.1," in script
+
+    def test_pbmask_follows_pblimit(self, tmp_path, real_ms_calibrated):
+        script, _ = _run(tmp_path, real_ms_calibrated, pblimit=-0.2)
+        assert "pbmask       = 0.2," in script
+
+    def test_explicit_pbmask(self, tmp_path, real_ms_calibrated):
+        script, _ = _run(tmp_path, real_ms_calibrated, pbmask=0.3)
+        assert "pblimit      = -0.1," in script
+        assert "pbmask       = 0.3," in script
+
+
 class TestCubeArgs:
     def test_cube_args_rendered_for_cube(self, tmp_path, real_ms_calibrated):
         script, _ = _run(

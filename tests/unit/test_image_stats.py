@@ -7,6 +7,7 @@ error path using a mock ia.
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -188,3 +189,53 @@ class TestRunPathValidation:
         assert result["data"]["dynamic_range"]["value"] == pytest.approx(
             0.5 / (1.4826 * 0.001), rel=1e-3
         )
+
+
+class TestResidualRms:
+    def test_siblings(self):
+        from ms_inspect.tools.image_stats import _siblings
+
+        for name, res, pb in [
+            ("t.image.pbcor", "t.residual", "t.pb"),
+            ("t.image", "t.residual", "t.pb"),
+            ("t.image.tt0", "t.residual.tt0", "t.pb.tt0"),
+            ("t.image.pbcor.tt0", "t.residual.tt0", "t.pb.tt0"),
+        ]:
+            r, p = _siblings(f"/d/{name}")
+            assert (r.name, p.name) == (res, pb)
+
+    def test_missing_siblings_unavailable(self, tmp_path):
+        from ms_inspect.tools.image_stats import _residual_rms
+
+        calls: list[str] = []
+        rms, region, why = _residual_rms(str(tmp_path / "t.image.pbcor"), 0.1, calls)
+        assert rms is None
+        assert "not found" in why
+        assert region["pb_level"] == 0.1
+
+    def test_rms_only_inside_pb(self, tmp_path):
+        import numpy as np
+
+        from ms_inspect.tools import image_stats
+
+        rng = np.random.default_rng(0)
+        res = rng.normal(0, 1.0, (64, 64))
+        res[:, :32] *= 100.0  # loud edge, outside the PB level
+        pb = np.zeros((64, 64))
+        pb[:, 32:] = 0.5
+        arrays = {"t.residual": res, "t.pb": pb}
+        for n in arrays:
+            (tmp_path / n).mkdir()
+
+        def fake_open(path):
+            ia = MagicMock()
+            ia.getchunk.return_value = arrays[Path(path).name]
+            cm = MagicMock()
+            cm.__enter__.return_value = ia
+            return cm
+
+        with patch.object(image_stats, "open_image", side_effect=fake_open):
+            rms, region, why = image_stats._residual_rms(str(tmp_path / "t.image.pbcor"), 0.1, [])
+        assert why is None
+        assert region["n_pixels"] == 64 * 32
+        assert 0.9 < rms < 1.1

@@ -89,6 +89,7 @@ def _build_script(
     threshold: str,
     savemodel: str,
     pblimit: float,
+    pbmask: float,
     nchan: int | None,
     start: str | None,
     width: str | None,
@@ -173,6 +174,8 @@ summary = tclean(
     threshold    = {threshold!r},
     pbcor        = True,
     pblimit      = {pblimit},
+    usemask      = 'pb',
+    pbmask       = {pbmask},
     savemodel    = {savemodel!r},
     fullsummary  = False,
 )
@@ -222,7 +225,8 @@ def run(
     niter: int = 50000,
     threshold: str = "1.0mJy",
     savemodel: str = "modelcolumn",
-    pblimit: float = -0.01,
+    pblimit: float = -0.1,
+    pbmask: float | None = None,
     nchan: int | None = None,
     start: str | None = None,
     width: str | None = None,
@@ -264,11 +268,14 @@ def run(
         robust:      Briggs robust parameter (default 0.5).
         niter:       Maximum clean iterations (default 50000).
         threshold:   Clean stopping threshold, e.g. '0.5mJy'.
-        pblimit:     Primary-beam gain cutoff. Default -0.01 (negative disables
+        pblimit:     Primary-beam gain cutoff. Default -0.1 (negative disables
                      PB-based blanking, so low-gain regions and sources out in
                      the PB sidelobes stay visible in the image — important for
                      spotting outliers). CASA's own default is 0.2, which blanks
-                     everything below 20% PB.
+                     everything below 20% PB. The .pbcor noise rises toward the
+                     edge of the PB.
+        pbmask:      Clean only where PB >= pbmask (usemask='pb'). None
+                     (default) uses abs(pblimit).
         savemodel:   'modelcolumn' writes MODEL_DATA for self-cal (default).
         nchan:       Number of output channels for the cube (specmode='cube'
                      only; None = all). For a polarization frequency cube,
@@ -294,6 +301,8 @@ def run(
 
     if imsize is None:
         imsize = [512, 512]
+    if pbmask is None:
+        pbmask = abs(pblimit)
 
     if gridder in ("wproject", "awp2", "awproject") and wprojplanes is None:
         warnings.append(
@@ -390,6 +399,7 @@ def run(
         threshold=threshold,
         savemodel=savemodel,
         pblimit=pblimit,
+        pbmask=pbmask,
         nchan=nchan,
         start=start,
         width=width,
@@ -444,6 +454,8 @@ def run(
         threshold=threshold,
         pbcor=True,
         pblimit=pblimit,
+        usemask="pb",
+        pbmask=pbmask,
         savemodel=savemodel,
         fullsummary=False,
     )

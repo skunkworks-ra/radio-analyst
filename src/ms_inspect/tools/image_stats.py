@@ -14,6 +14,13 @@ polarization cube) it additionally returns `n_planes` and `planes` — a
 per-(Stokes, channel) list of rms_jy / peak_jy / dynamic_range. The scalar
 fields above remain whole-image summaries.
 
+`residual_rms_jy` is the noise to compare with the radiometer estimate: the
+robust RMS of the sibling `.residual` image where the sibling `.pb` is at or
+above `pb_level`. The whole-image `rms_jy` of a `.pbcor` image includes the
+PB edge, where the noise is divided by a small gain. `rms_region` carries the
+two paths, the PB level and the pixel count. `png_path`, if given, writes
+plane 0 as a PNG with the PB contour at `pb_level`, for the model to look at.
+
 `detection` is a descriptive label over dynamic_range, and
 `detection_thresholds` carries the two constants behind it. Neither is a
 go/no-go: whether a given peak-to-noise is sufficient depends on the science
@@ -205,9 +212,90 @@ def _extract_beam(beam_info: dict) -> tuple[float | None, float | None, float | 
         return None, None, None
 
 
+def _siblings(image_path: str) -> tuple[Path, Path]:
+    """(.residual, .pb) next to an .image or .image.pbcor (or .tt0 variants)."""
+    p = Path(image_path).expanduser().resolve()
+    name = p.name
+    for suffix in (".image.pbcor.tt0", ".image.tt0", ".image.pbcor", ".image"):
+        if name.endswith(suffix):
+            base = name[: -len(suffix)]
+            tt = ".tt0" if suffix.endswith(".tt0") else ""
+            return p.parent / f"{base}.residual{tt}", p.parent / f"{base}.pb{tt}"
+    return p.parent / f"{name}.residual", p.parent / f"{name}.pb"
+
+
+def _residual_rms(
+    image_path: str, pb_level: float, casa_calls: list[str]
+) -> tuple[float | None, dict, str | None]:
+    """Robust RMS of the sibling .residual where the sibling .pb >= pb_level."""
+    residual, pb = _siblings(image_path)
+    region = {
+        "residual_path": str(residual),
+        "pb_path": str(pb),
+        "pb_level": pb_level,
+        "n_pixels": None,
+    }
+    missing = [str(x) for x in (residual, pb) if not x.exists()]
+    if missing:
+        return None, region, f"not found: {', '.join(missing)}"
+    import numpy as np
+
+    with open_image(str(pb)) as ia_pb:
+        pb_pix = np.asarray(ia_pb.getchunk(), dtype=float)
+    with open_image(str(residual)) as ia_res:
+        res_pix = np.asarray(ia_res.getchunk(), dtype=float)
+    casa_calls.append(f"ia.getchunk() on {residual.name} where {pb.name} >= {pb_level}")
+    if pb_pix.shape != res_pix.shape:
+        return None, region, f"shape mismatch: pb {pb_pix.shape}, residual {res_pix.shape}"
+    vals = res_pix[(pb_pix >= pb_level) & np.isfinite(res_pix)]
+    region["n_pixels"] = int(vals.size)
+    if vals.size == 0:
+        return None, region, f"no pixels with pb >= {pb_level}"
+    mad = float(np.median(np.abs(vals - np.median(vals))))
+    return _MAD_TO_SIGMA * mad, region, None
+
+
+def _write_png(image_path: str, png_path: str, pb_level: float) -> str:
+    """Plane 0 as a PNG, viridis over the 1st to 99.9th percentile, PB contour in white."""
+    import numpy as np
+    from bokeh.palettes import Viridis256
+    from PIL import Image
+
+    with open_image(image_path) as ia:
+        shape = [int(n) for n in ia.shape()]
+        trc = [shape[0] - 1, shape[1] - 1] + [0] * (len(shape) - 2)
+        plane = np.asarray(ia.getchunk(blc=[0] * len(shape), trc=trc), dtype=float)
+    plane = plane.reshape(shape[0], shape[1]).T[::-1]  # CASA (x, y) -> rows top-down
+    finite = plane[np.isfinite(plane)]
+    lo, hi = (
+        (float(np.percentile(finite, 1)), float(np.percentile(finite, 99.9)))
+        if finite.size
+        else (0.0, 1.0)
+    )
+    idx = np.clip((np.nan_to_num(plane, nan=lo) - lo) / ((hi - lo) or 1.0), 0, 1)
+    lut = np.array([[int(h[i : i + 2], 16) for i in (1, 3, 5)] for h in Viridis256], np.uint8)
+    rgb = lut[(idx * 255).astype(int)]
+    _, pb = _siblings(image_path)
+    if pb.exists():
+        with open_image(str(pb)) as ia_pb:
+            pbs = [int(n) for n in ia_pb.shape()]
+            pbtrc = [pbs[0] - 1, pbs[1] - 1] + [0] * (len(pbs) - 2)
+            pbp = np.asarray(ia_pb.getchunk(blc=[0] * len(pbs), trc=pbtrc), dtype=float)
+        inside = (pbp.reshape(pbs[0], pbs[1]).T[::-1] >= pb_level).astype(np.int8)
+        if inside.shape == idx.shape:
+            edge = (np.abs(np.diff(inside, axis=0, prepend=inside[:1])) > 0) | (
+                np.abs(np.diff(inside, axis=1, prepend=inside[:, :1])) > 0
+            )
+            rgb[edge] = 255
+    Image.fromarray(rgb).save(png_path)
+    return f"plane 0; colour 1st to 99.9th percentile ({lo:.4g} to {hi:.4g} Jy/beam); white line pb = {pb_level}"
+
+
 def run(
     image_path: str,
     psf_path: str | None = None,
+    pb_level: float = 0.1,
+    png_path: str | None = None,
 ) -> dict:
     """
     Compute quality metrics for a CASA image.
@@ -221,6 +309,8 @@ def run(
                     If provided, the restoring beam is also read from the PSF
                     header as a cross-check; the primary beam is always taken
                     from image_path.
+        pb_level:   PB level for the residual RMS region (default 0.1).
+        png_path:   If given, write plane 0 as a PNG here.
 
     Returns:
         Standard response envelope with rms_jy, peak_jy, dynamic_range,
@@ -317,6 +407,26 @@ def run(
             }
         ),
     }
+
+    res_rms, region, why = _residual_rms(image_path, pb_level, casa_calls)
+    data["residual_rms_jy"] = fmt_field(
+        round(res_rms, 9) if res_rms is not None else None,
+        flag="COMPLETE" if res_rms is not None else "UNAVAILABLE",
+        note=why or "1.4826 x MAD of .residual where .pb >= pb_level",
+    )
+    data["residual_dynamic_range"] = fmt_field(
+        round(abs(peak_val) / res_rms, 1) if res_rms else None,
+        flag="COMPLETE" if res_rms else "UNAVAILABLE",
+        note="peak_jy / residual_rms_jy",
+    )
+    data["rms_region"] = fmt_field(region)
+
+    if png_path:
+        try:
+            note = _write_png(image_path, png_path, pb_level)
+            data["png_path"] = fmt_field(png_path, note=note)
+        except Exception as exc:
+            data["png_path"] = fmt_field(None, flag="UNAVAILABLE", note=str(exc))
 
     if beam_major is not None:
         data["beam_major_arcsec"] = fmt_field(round(beam_major, 4))

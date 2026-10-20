@@ -78,3 +78,48 @@ def test_missing_workdir_raises(tmp_path):
 
     with pytest.raises(ComputationError):
         report.run(str(tmp_path / "nope"))
+
+
+def test_sections_render_headings_lists_code_and_step_links(workdir):
+    text = (
+        "## Calibrate\n"
+        "- refant `refant = ea21` [step 2, model choice]\n"
+        "- solint per skill 07 [step 2, skill 07]\n"
+        "Plain line."
+    )
+    report.run(str(workdir), decisions=text)
+    page = (workdir / "report.html").read_text()
+    assert "<h3>Calibrate</h3>" in page
+    assert "<ul><li>refant <code>refant = ea21</code>" in page
+    assert '<a href="#step-2" class="choice">[step 2, model choice]</a>' in page
+    assert '<a href="#step-2">[step 2, skill 07]</a>' in page
+    assert "<p>Plain line.</p>" in page
+    assert 'id="step-2"' in page
+
+
+def test_params_differing_from_tool_default_are_highlighted(workdir):
+    (workdir / "gaincal_G0.py").write_text("x = 1\n    calmode      = 'p',\n")
+    report.run(str(workdir))
+    page = (workdir / "report.html").read_text()
+    # calmode 'p' differs from ms_gaincal's default; its script line is given
+    assert '<div class="set">calmode = &quot;p&quot; <i>(default' in page
+    assert "script line 2)" in page
+    # execute=False is the default: not highlighted
+    assert "<div>execute = false</div>" in page
+
+
+def test_dead_script_path_is_plain_text(tmp_path):
+    script = tmp_path / "applycal.py"
+    script.write_text("print(1)\n")
+    reduction_log.run(
+        "append",
+        str(tmp_path),
+        tool="ms_applycal",
+        params={"execute": False},
+        script_path=str(script),
+    )
+    script.unlink()  # e.g. a container path that does not exist where the report is read
+    report.run(str(tmp_path))
+    steps = (tmp_path / "report.html").read_text().split("<h2>Steps")[1].split("<h2>Open")[0]
+    assert "applycal.py" in steps
+    assert 'href="applycal.py"' not in steps

@@ -278,21 +278,37 @@ Call `ms_image_stats` on the pbcor image:
 ms_image_stats(
     image_path  = {WORKDIR}/{imagename}.image.pbcor,
     psf_path    = {WORKDIR}/{imagename}.psf,
+    pb_level    = 0.1,                                  # abs(pblimit) of the tclean call
+    png_path    = {WORKDIR}/{imagename}.png,
 )
 ```
+
+**Which RMS.** Compare `residual_rms_jy` with the radiometer estimate, not
+`rms_jy`. `residual_rms_jy` is measured on the `.residual` where the `.pb` is at
+or above `pb_level`; `rms_region` gives the paths and pixel count, and you
+quote them with the number. `rms_jy` is the whole `.pbcor` plane: towards the
+PB edge the noise is divided by a small gain, so it reads high, and on an
+extended source it also includes source pixels. Always write this in the
+report: "The .pbcor image noise rises toward the PB edge; the RMS quoted is
+from the .residual inside PB >= {pb_level}."
+
+**Look at the image.** Open `png_path` with Read when the clean did not
+converge (stopcode not 2 or 8), when `residual_rms_jy` is more than 2 times the
+radiometer estimate, or before you quote a flux. The white line is
+PB = `pb_level`; judge only what is inside it.
 
 Quality gates:
 
 | Metric | Expected | Action if not met |
 |---|---|---|
-| `rms_jy` | Within 2× of radiometer estimate | > 2×: residual RFI or calibration artefacts; check CORRECTED column |
-| `dynamic_range` | > 100 for calibrators; > 20 for typical targets | < 20: imaging artefacts dominant; check PSF sidelobes |
+| `residual_rms_jy` | Within 2× of radiometer estimate | > 2×: residual RFI, calibration artefacts or a dynamic-range limit; look at the PNG, then check CORRECTED |
+| `residual_dynamic_range` | > 100 for calibrators; > 20 for typical targets | < 20: imaging artefacts dominant; check PSF sidelobes |
 | `beam_major_arcsec` | Close to `lambda/max_baseline_m * (180*3600/pi)` | Large deviation: uv coverage gaps or flagging holes |
 | `peak_jy` | Positive, above threshold | Negative peak > rms: clean diverged; reduce gain or niter |
 
-If `rms_jy` is > 3× the radiometer estimate, run `ms_residual_stats` on the
-CORRECTED column before re-imaging — the problem is likely in the calibration,
-not the imaging parameters.
+If `residual_rms_jy` is > 3× the radiometer estimate, run `ms_residual_stats`
+on the CORRECTED column before re-imaging — the problem is likely in the
+calibration, not the imaging parameters.
 
 ### Reading `detection`
 

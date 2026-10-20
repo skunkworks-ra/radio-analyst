@@ -493,6 +493,17 @@ class ImageStatsInput(BaseModel):
             "as a cross-check."
         ),
     )
+    pb_level: float = Field(
+        default=0.1,
+        description=(
+            "PB level for residual_rms_jy: RMS of the sibling .residual where the "
+            "sibling .pb >= pb_level."
+        ),
+    )
+    png_path: str | None = Field(
+        default=None,
+        description="If given, write plane 0 as a PNG here (open it with Read to see the image).",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1706,7 +1717,8 @@ async def ms_gaincal_snr_predict(params: GaincalSnrPredictInput) -> ToolResult:
     name="ms_image_stats",
     description=(
         "Image quality metrics from a CASA image: MAD-based robust RMS, peak, "
-        "dynamic range, restoring beam. Run after tclean to assess first-pass quality."
+        "dynamic range, restoring beam, and residual_rms_jy from the sibling .residual "
+        "where .pb >= pb_level. png_path writes plane 0 as a PNG. Run after tclean."
     ),
     annotations={
         "title": "Image Statistics",
@@ -1735,7 +1747,9 @@ async def ms_image_stats(params: ImageStatsInput) -> ToolResult:
         beam_major_arcsec, beam_minor_arcsec, beam_pa_deg.
         If psf_path provided, also psf_beam_major_arcsec etc.
     """
-    return await _run_tool(image_stats.run, params.image_path, params.psf_path)
+    return await _run_tool(
+        image_stats.run, params.image_path, params.psf_path, params.pb_level, params.png_path
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -109,7 +109,10 @@ class ReportInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     workdir: str = Field(..., description="Directory holding reduction_log.jsonl.")
-    summary: str = Field(default="", description="Your overview of the reduction (plain text).")
+    summary: str = Field(
+        default="",
+        description="Your overview: '## ' subheadings, '- ' items, `name = value`, [step N, ...] tags.",
+    )
     decisions: str = Field(
         default="", description="Decisions taken and the numbers they rest on (e.g. selfcal)."
     )

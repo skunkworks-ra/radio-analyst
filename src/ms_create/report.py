@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -40,7 +41,17 @@ th { background: #eee; }
 pre { margin: 0; white-space: pre-wrap; font-size: 12px; }
 tr.dropped { opacity: 0.4; }
 #keep { width: 100%; font-family: monospace; }
+code { background: #eef3ff; padding: 0 3px; }
+.choice { background: #fff3c4; }
+td.params div { font-family: monospace; font-size: 12px; }
+td.params div.set { background: #fff3c4; }
 """
+
+_PB_NOTE = (
+    "<p><i>The .pbcor image noise rises toward the PB edge, where the noise is divided by "
+    "a small gain. Quote the RMS from the .residual inside the PB (ms_image_stats "
+    "residual_rms_jy and its rms_region), not from this plane.</i></p>"
+)
 
 _KEEP_JS = """
 function updateKeep() {
@@ -70,10 +81,86 @@ def _read_jsonl(path: Path) -> list[dict]:
     return out
 
 
+def _inline(line: str) -> str:
+    """Escape, then `name = value` as code and [step N, ...] as a link to that row."""
+    out = html.escape(line, quote=False)
+    out = re.sub(r"`([^`]+)`", r"<code>\1</code>", out)
+
+    def _step(m: re.Match) -> str:
+        cls = ' class="choice"' if "model choice" in m.group(0) else ""
+        return f'<a href="#step-{m.group(1)}"{cls}>{m.group(0)}</a>'
+
+    return re.sub(r"\[step (\d+)[^\]]*\]", _step, out)
+
+
 def _paragraphs(text: str) -> str:
-    return "".join(
-        f"<p>{html.escape(p).replace(chr(10), '<br>')}</p>" for p in text.split("\n\n") if p.strip()
-    )
+    """'## ' lines are subheadings, '- ' lines are list items, other lines paragraphs."""
+    parts: list[str] = []
+    items: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("- "):
+            items.append(f"<li>{_inline(line[2:])}</li>")
+            continue
+        if items:
+            parts.append("<ul>" + "".join(items) + "</ul>")
+            items = []
+        if line.startswith("## "):
+            parts.append(f"<h3>{_inline(line[3:])}</h3>")
+        elif line:
+            parts.append(f"<p>{_inline(line)}</p>")
+    if items:
+        parts.append("<ul>" + "".join(items) + "</ul>")
+    return "".join(parts)
+
+
+def _defaults(tool: str) -> dict:
+    """The tool's own defaults, from its run() signature; {} if unknown."""
+    import importlib
+    import inspect
+
+    from ms_create.reduction_log import _RUN_REGISTRY
+
+    try:
+        fn = importlib.import_module(_RUN_REGISTRY[tool]).run
+        return {
+            k: v.default
+            for k, v in inspect.signature(fn).parameters.items()
+            if v.default is not inspect.Parameter.empty
+        }
+    except Exception:
+        return {}
+
+
+def _script_line(script: str, name: str) -> int | None:
+    """First line in the script that assigns `name` (e.g. 'pblimit      = -0.1')."""
+    try:
+        lines = Path(script).read_text().splitlines()
+    except OSError:
+        return None
+    pat = re.compile(rf"^\s*{re.escape(name)}\s*=")
+    return next((i for i, ln in enumerate(lines, 1) if pat.match(ln)), None)
+
+
+def _params_cell(tool: str, params: dict | None, script: str) -> str:
+    """One line per parameter; a value that differs from the tool default is highlighted."""
+    if not params:
+        return "<td></td>"
+    defaults = _defaults(tool)
+    rows = []
+    for k, v in params.items():
+        val = html.escape(json.dumps(v, default=str))
+        # Required arguments (no default) and unknown tools are shown plain.
+        if k not in defaults or defaults[k] == v:
+            rows.append(f"<div>{html.escape(k)} = {val}</div>")
+            continue
+        where = [f"default {html.escape(json.dumps(defaults[k], default=str))}"]
+        line = _script_line(script, k) if script else None
+        if line:
+            where.append(f"script line {line}")
+        note = f" <i>({', '.join(where)})</i>" if where else ""
+        rows.append(f'<div class="set">{html.escape(k)} = {val}{note}</div>')
+    return f'<td class="params">{"".join(rows)}</td>'
 
 
 def _pre(obj) -> str:
@@ -86,18 +173,23 @@ def _steps_table(records: list[dict], wd: Path) -> str:
     rows = []
     for r in records:
         step = r.get("step")
-        script = r.get("script_path", "")
-        if script:
-            rel = Path(script).name if Path(script).parent == wd.resolve() else script
-            script = f'<a href="{html.escape(rel)}">{html.escape(Path(script).name)}</a>'
+        script_path = r.get("script_path", "")
+        local = wd / Path(script_path).name if script_path else None
+        script = ""
+        if local is not None and local.is_file():
+            script = f'<a href="{html.escape(local.name)}">{html.escape(local.name)}</a>'
+        elif script_path:
+            script = html.escape(Path(script_path).name)
+        tool = str(r.get("tool", ""))
         rows.append(
-            "<tr>"
+            f'<tr id="step-{step}">'
             f'<td><input type="checkbox" class="keep" data-step="{step}" checked '
             'onchange="updateKeep()"></td>'
             f"<td>{step}</td><td>{html.escape(str(r.get('tool', '')))}</td>"
             f"<td>{html.escape(str(r.get('rationale', '')))}"
             f"<br><i>{html.escape(str(r.get('skill_rule', '')))}</i></td>"
-            f"<td>{_pre(r.get('params'))}</td><td>{_pre(r.get('outputs'))}</td><td>{script}</td>"
+            f"{_params_cell(tool, r.get('params'), str(local) if local else '')}"
+            f"<td>{_pre(r.get('outputs'))}</td><td>{script}</td>"
             "</tr>"
         )
     head = (
@@ -242,6 +334,7 @@ def run(
         *(f"<h2>{t}</h2>{b}" for t, b in sections if b),
         "<h2>Image</h2>",
         img_div,
+        _PB_NOTE if image_path else "",
         "<h2>Steps</h2>",
         "<p>Untick a step to drop it from the replay, then give the line below to the model. "
         "A dropped step's products are not made, so later steps that use them will fail.</p>",

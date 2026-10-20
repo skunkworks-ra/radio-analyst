@@ -18,7 +18,16 @@
       "Bash(rm -f */table.lock)",
       "mcp__ms-inspect__*",
       "mcp__ms-modify__*",
-      "mcp__ms-create__*"
+      "mcp__ms-create__*",
+      "Bash(nvidia-smi)",
+      "Bash(nvidia-smi --query*)",
+      "Bash(git merge-base *)",
+      "Bash(podman ps)",
+      "Bash(podman ps *)",
+      "Bash(claude --version)",
+      "Bash(distrobox list*)",
+      "Bash(podman images *)",
+      "Bash(git check-ignore *)"
     ]
   }
 }
