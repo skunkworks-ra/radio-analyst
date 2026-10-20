@@ -53,7 +53,7 @@ if [[ -z "$RA_DATA" ]]; then
     need_pixi
     MANIFEST="$RA_ROOT/pixi.toml"
     pixi install --manifest-path "$MANIFEST" --quiet
-    if ! pixi run --manifest-path "$MANIFEST" python -c "import casatools" 2>/dev/null; then
+    if ! pixi run --manifest-path "$MANIFEST" python -c "from casaconfig import config; config.logfile = '/dev/null'; import casatools" 2>/dev/null; then
         echo "[$SERVER] Installing CASA tools (first run only)..." >&2
         pixi run --manifest-path "$MANIFEST" python -m pip install casatools casatasks --quiet
     fi

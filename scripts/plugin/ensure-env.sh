@@ -115,11 +115,11 @@ run_build() {
     # An environment without casatools is a failed build: no stamp is
     # written, so the next session retries.
     mkdir -p "$HOME/.casa/data"
-    if ! "$prefix/bin/python" -c 'import casatools' 2>/dev/null; then
+    if ! "$prefix/bin/python" -c "from casaconfig import config; config.logfile = '/dev/null'; import casatools" 2>/dev/null; then
         echo "casatools not importable; trying pip install casatools casatasks"
         "$prefix/bin/python" -m pip install casatools casatasks --quiet ||
             echo "WARNING: pip install of casatools/casatasks failed"
-        "$prefix/bin/python" -c 'import casatools' ||
+        "$prefix/bin/python" -c "from casaconfig import config; config.logfile = '/dev/null'; import casatools" ||
             { echo "ERROR: casatools still not importable; build failed" >&2; exit 1; }
     fi
 
