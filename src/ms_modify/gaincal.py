@@ -52,12 +52,14 @@ def _build_script(
     parang: bool,
     smodel: list[float] | None = None,
     spwmap: list[list[int]] | None = None,
+    gainfield: list[str] | None = None,
 ) -> str:
     from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
     from ms_modify.pathguard import SAFE_RM_TABLE_SNIPPET as safe_rm
 
     smodel_line = f"    smodel={smodel!r},\n" if smodel is not None else ""
     spwmap_line = f"    spwmap={spwmap!r},\n" if spwmap is not None else ""
+    gainfield_line = f"    gainfield={gainfield!r},\n" if gainfield is not None else ""
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -85,7 +87,7 @@ gaincal(
     minblperant={minblperant},
     solnorm={solnorm},
 {smodel_line}    gaintable={gaintable!r},
-    interp={interp!r},
+{gainfield_line}    interp={interp!r},
 {spwmap_line}    parang={parang},
 )
 _record_stage({workdir!r}, "gaincal", {caltable!r})
@@ -114,6 +116,7 @@ def run(
     smodel: list[float] | None = None,
     target_fields: str = "",
     execute: bool = False,
+    gainfield: list[str] | None = None,
 ) -> dict:
     """
     Solve for antenna gain calibration solutions.
@@ -145,6 +148,11 @@ def run(
                       Empty (default) infers them from intents; raises if it cannot.
         execute:      If False (default), write script and return.
                       If True, run gaincal in-process.
+        gainfield:    Optional per-prior-table field selection (aligned to
+                      gaintable): which field's solutions each prior applies,
+                      e.g. ['', '', 'J1822-0938'] to take a multi-field gain
+                      table's rows from the phase calibrator only. Default
+                      None → CASA default, solutions from every field.
 
     Returns:
         Standard response envelope with script_path always present.
@@ -173,6 +181,15 @@ def run(
         raise ComputationError(
             f"spwmap length ({len(spwmap)}) must match gaintable length ({len(gaintable)}). "
             "Pass a per-table list-of-lists, e.g. [[], [0,0,0,0]].",
+            ms_path=ms_path,
+        )
+
+    if gainfield is not None and len(gainfield) != len(gaintable):
+        from ms_inspect.exceptions import ComputationError
+
+        raise ComputationError(
+            f"gainfield length ({len(gainfield)}) must match gaintable length "
+            f"({len(gaintable)}). Use '' for a table whose solutions apply from every field.",
             ms_path=ms_path,
         )
 
@@ -220,6 +237,7 @@ def run(
             parang=parang,
             smodel=smodel,
             spwmap=spwmap,
+            gainfield=gainfield,
         ),
     )
     casa_calls.append(f"write_script → {script}")
@@ -286,6 +304,8 @@ def run(
         kwargs["smodel"] = smodel
     if spwmap is not None:
         kwargs["spwmap"] = spwmap
+    if gainfield is not None:
+        kwargs["gainfield"] = gainfield
     try:
         gaincal(**kwargs)
     except Exception as e:

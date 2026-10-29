@@ -66,14 +66,32 @@ ms_gaincal(
     ms_path   = {VIS},
     caltable  = f"{WORKDIR}/pcal1.g",
     field     = {TARGET_FIELD},
+    spw       = {ALL_SPW},
     solint    = 'inf',
+    refant    = {REFANT},
     gaintype  = 'G',
     calmode   = 'p',
     minsnr    = 3.0,
-    gaintable = {PRIORCALS},
+    gaintable = {PRIORCALS} + [delay.K, bandpass.B, gain.fluxscaled],
+    gainfield = [''] * len(PRIORCALS) + ['', '', {PHASE_FIELD}],
+    interp    = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'linear'],
+    workdir   = {WORKDIR},
     execute   = False,
 )
 ```
+
+**The gaintable is the full target stack from 07 Step 7c, not the priorcals
+alone.** gaincal solves against DATA with `gaintable` applied on the fly, never
+against CORRECTED. With only the priorcals, `pcal1.g` absorbs the delay,
+bandpass and gain corrections as well as the residual phase errors: the
+solutions show tens to hundreds of degrees, and the flux scale is lost. If the
+polarisation tables were applied (09 Step 5), append `kcross.K`, `dterms.D` and
+`polangle.X` with `gainfield=''` and `interp='nearest'`.
+
+`gainfield` takes `gain.fluxscaled` from `{PHASE_FIELD}` only, exactly as the
+apply in Step 2 does. Without it the solve draws rows from every field,
+interpolated in time, and a target scan next to a flux-calibrator scan picks up
+that field's solutions.
 
 Parameter choices:
 
@@ -121,14 +139,28 @@ scans indicate the solution is fitting noise — consider longer `solint`.
 
 ```python
 ms_applycal(
-    ms_path   = {VIS},
-    gaintable = [{PRIORCALS}, f"{WORKDIR}/pcal1.g"],
-    field     = {TARGET_FIELD},
-    execute   = False,
+    ms_path    = {VIS},
+    field      = {TARGET_FIELD},
+    gaintable  = {PRIORCALS} + [delay.K, bandpass.B, gain.fluxscaled, f"{WORKDIR}/pcal1.g"],
+    gainfield  = [''] * len(PRIORCALS) + ['', '', {PHASE_FIELD}, ''],
+    interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'linear', 'nearest'],
+    calwt      = False,
+    applymode  = 'calflag',
+    workdir    = {WORKDIR},
+    execute    = False,
 )
 ```
 
 Generate, review, run as background job. This overwrites CORRECTED_DATA.
+
+**applycal writes CORRECTED from DATA, so the stack must be complete.** Pass the
+same tables as the first-pass apply (07 Step 7c, plus the polarisation tables if
+09 Step 5 applied them), then `pcal1.g` last. A stack of the priorcals and
+`pcal1.g` alone discards the delay, bandpass and flux-scaled gains.
+
+`pcal1.g` takes `gainfield=''` and `interp='nearest'`: with `solint='inf'` each
+target scan has its own solution, and `nearest` picks it. `linear` would
+interpolate between scans of different pointings in a mosaic.
 
 ---
 

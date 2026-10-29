@@ -44,11 +44,13 @@ def _build_script(
     interp: list[str],
     parang: bool,
     spwmap: list[list[int]] | None = None,
+    gainfield: list[str] | None = None,
 ) -> str:
     from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
     from ms_modify.pathguard import SAFE_RM_TABLE_SNIPPET as safe_rm
 
     spwmap_line = f"    spwmap={spwmap!r},\n" if spwmap is not None else ""
+    gainfield_line = f"    gainfield={gainfield!r},\n" if gainfield is not None else ""
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -71,7 +73,7 @@ polcal(
     combine={combine!r},
     refant={refant!r},
     gaintable={gaintable!r},
-    interp={interp!r},
+{gainfield_line}    interp={interp!r},
 {spwmap_line})
 _record_stage({workdir!r}, "polcal", {caltable!r})
 print("Done. Caltable written to: {caltable}")
@@ -93,6 +95,7 @@ def run(
     parang: bool = True,
     target_fields: str = "",
     execute: bool = False,
+    gainfield: list[str] | None = None,
 ) -> dict:
     """
     Solve for polarisation calibration solutions.
@@ -117,6 +120,9 @@ def run(
                       Empty (default) infers them from intents; raises if it cannot.
         execute:      If False (default), write script and return.
                       If True, run polcal in-process.
+        gainfield:    Optional per-prior-table field selection (aligned to
+                      gaintable): which field's solutions each prior applies.
+                      Default None → CASA default, solutions from every field.
 
     Returns:
         Standard response envelope with script_path always present.
@@ -158,6 +164,15 @@ def run(
             ms_path=ms_path,
         )
 
+    if gainfield is not None and len(gainfield) != len(gaintable):
+        from ms_inspect.exceptions import ComputationError
+
+        raise ComputationError(
+            f"gainfield length ({len(gainfield)}) must match gaintable length "
+            f"({len(gaintable)}). Use '' for a table whose solutions apply from every field.",
+            ms_path=ms_path,
+        )
+
     workdir_path = Path(workdir)
     if not workdir_path.exists():
         from ms_inspect.exceptions import ComputationError
@@ -196,6 +211,7 @@ def run(
             interp=interp,
             parang=parang,
             spwmap=spwmap,
+            gainfield=gainfield,
         ),
     )
     casa_calls.append(f"write_script → {script}")
@@ -257,6 +273,8 @@ def run(
         )
         if spwmap is not None:
             polcal_kwargs["spwmap"] = spwmap
+        if gainfield is not None:
+            polcal_kwargs["gainfield"] = gainfield
         polcal(**polcal_kwargs)
     except Exception as e:
         raise PolcalFailedError(

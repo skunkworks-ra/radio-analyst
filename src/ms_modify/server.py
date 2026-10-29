@@ -615,6 +615,13 @@ class PolcalInput(BaseModel):
             "Kcross) across all SPWs. Empty → CASA identity (default per-SPW behaviour)."
         ),
     )
+    gainfield: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional per-prior-table field selection (aligned to gaintable): which "
+            "field's solutions each prior applies. Empty → solutions from every field."
+        ),
+    )
     parang: bool = Field(
         default=True,
         description="Apply parallactic angle correction (default True, critical for polcal).",
@@ -1235,6 +1242,15 @@ class GaincalInput(BaseModel):
             "needed if a prior used combine='spw' (VLA multiband delay)."
         ),
     )
+    gainfield: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional per-prior-table field selection (aligned to gaintable): which "
+            "field's solutions each prior applies, e.g. ['', '', 'J1822-0938'] to take "
+            "a multi-field gain table's rows from the phase calibrator only (selfcal). "
+            "Empty → solutions from every field."
+        ),
+    )
     parang: bool = Field(default=True, description="Apply parallactic angle correction.")
     target_fields: str = Field(
         default="",
@@ -1457,6 +1473,7 @@ async def ms_gaincal(params: GaincalInput) -> ToolResult:
         params.smodel,
         params.target_fields,
         params.execute,
+        gainfield=params.gainfield or None,
     )
 
 
@@ -1517,6 +1534,7 @@ async def ms_polcal(params: PolcalInput) -> ToolResult:
         params.parang,
         params.target_fields,
         params.execute,
+        gainfield=params.gainfield or None,
     )
 
 

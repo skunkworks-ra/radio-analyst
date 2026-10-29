@@ -96,7 +96,7 @@ The following table maps each polcal step to the exact MCP tool and key paramete
 | Cross-hand delay | `ms_gaincal` | `gaintype='KCROSS'`, `smodel=[1,0,1,0]`, `combine='scan,spw'` | Must run before D-terms; wideband combine recommended |
 | D-term leakage | `ms_polcal` | `poltype='Df'` or `'Df+QU'`, `solint='inf'`, `combine='scan'` | `Df` for known-pol/zero-pol sources (no PA needed); `Df+QU` only for unknown-pol sources (needs ≥30° PA) |
 | Position angle | `ms_polcal` | `poltype='Xf'`, `solint='inf'`, `combine='scan'` | Run whenever a Cat A pol standard is present (`pol_angle_calibrator.category == 'A'`); independent of PA coverage; requires D-terms in gaintable |
-| Apply all tables | `ms_applycal` | Pass all 7 tables: priorcals → K → B → G → Kcross → D → X | Table order is required by RIME; `parang=True` mandatory |
+| Apply all tables | `ms_applycal` | One call per field type, as 07 Step 7: priorcals → K → B → `gain.fluxscaled` → Kcross → D → X | Table order is required by RIME; `parang=True` mandatory; see Step 5 |
 
 ---
 
@@ -326,24 +326,48 @@ polcal(
 `parang=True` is mandatory in applycal for polarimetric data. Without it, the
 parallactic angle correction is not applied and the D-term corrections are wrong.
 
-```python
-applycal(
-    vis=ms_path,
-    field='{ALL_FIELDS}',
-    gaintable=[
-        '{PRIORCALS}',
-        'delay.K',
-        'bandpass.B',
-        'gain.G',
-        'kcross.K',
-        'dterms.D',
-        'polangle.X',
-    ],
-    calwt=False,
-    parang=True,            # CRITICAL — must be True for polarimetric data
-    flagbackup=True,
+Apply per field type, exactly as 07 Step 7 does, with the three polarisation
+tables appended. The gain table is **`gain.fluxscaled`**, not `gain.G`: `gain.G`
+carries the phase calibrator's pre-fluxscale amplitudes, so applying it leaves
+the target off the flux scale. The solves in Steps 2–4 may use `gain.G` as a
+prior; the final apply may not.
+
+```
+POLTABLES = [kcross.K, dterms.D, polangle.X]
+POLFIELD  = ['', '', '']
+POLINTERP = ['nearest', 'nearest', 'nearest']   # one solution each (solint='inf', combine='scan')
+
+# 5a — each calibrator: once per calibrator field, its own gain rows
+ms_applycal(
+    ms_path    = {VIS},
+    field      = <calibrator field>,
+    gaintable  = {PRIORCALS} + [delay.K, bandpass.B, gain.fluxscaled] + POLTABLES,
+    gainfield  = [''] * len(PRIORCALS) + ['', '', <calibrator field>] + POLFIELD,
+    interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'nearest'] + POLINTERP,
+    parang     = True,     # CRITICAL — must be True for polarimetric data
+    calwt      = False,
+    applymode  = 'calflag',
+    workdir    = {WORKDIR},
+    execute    = False,
+)
+
+# 5b — science target: the phase calibrator's gain rows, interpolated in time
+ms_applycal(
+    ms_path    = {VIS},
+    field      = {TARGET_FIELD},
+    gaintable  = {PRIORCALS} + [delay.K, bandpass.B, gain.fluxscaled] + POLTABLES,
+    gainfield  = [''] * len(PRIORCALS) + ['', '', {PHASE_FIELD}] + POLFIELD,
+    interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'linear'] + POLINTERP,
+    parang     = True,
+    calwt      = False,
+    applymode  = 'calflag',
+    workdir    = {WORKDIR},
+    execute    = False,
 )
 ```
+
+If Kcross was solved multiband (`combine='scan,spw'`, Step 2), pass `spwmap`
+with `[0]*n_spw` in the `kcross.K` slot and identity elsewhere.
 
 **Table order matters:** apply in the order listed. Applying Kcross before D-terms
 and D-terms before Xf is required by the RIME (Radio Interferometer Measurement Equation).

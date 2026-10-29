@@ -48,6 +48,41 @@ class TestScriptGeneration:
         script_path = Path(result["data"]["script_path"]["value"])
         assert script_path.exists()
         assert "field='3C147'" in script_path.read_text()
+        assert "gainfield=" not in script_path.read_text()
+
+    def test_gainfield_written_when_given(self, real_ms_raw, tmp_path):
+        workdir = _make_workdir(tmp_path)
+        prior = workdir / "gain.G"
+        prior.mkdir()
+        result = run(
+            real_ms_raw,
+            "3C147",
+            str(workdir / "pol.df"),
+            str(workdir),
+            poltype="Df",
+            gaintable=[str(prior)],
+            gainfield=["3C147"],
+            execute=False,
+        )
+        text = Path(result["data"]["script_path"]["value"]).read_text()
+        assert "gainfield=['3C147']," in text
+
+    def test_gainfield_length_mismatch_raises(self, real_ms_raw, tmp_path):
+        from ms_inspect.exceptions import ComputationError
+
+        workdir = _make_workdir(tmp_path)
+        prior = workdir / "gain.G"
+        prior.mkdir()
+        with pytest.raises(ComputationError, match="gainfield length"):
+            run(
+                real_ms_raw,
+                "3C147",
+                str(workdir / "pol.df"),
+                str(workdir),
+                poltype="Df",
+                gaintable=[str(prior)],
+                gainfield=[],
+            )
 
 
 class TestSpwCoverageWiring:

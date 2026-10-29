@@ -57,8 +57,10 @@ must already exist — run `/calibrate` first if not.
    gaintable=[priorcals + K + B + G + kcross + dterms],
    caltable=workdir/xfcal.X, execute=False)` → run.
 
-7. Applycal with `parang=True` (mandatory). Pass all 7 tables in order:
-   priorcals → K → B → G → kcross → dterms → xfcal.
+7. Applycal with `parang=True` (mandatory), one call per field type as
+   09-polcal-execution.md Step 5: priorcals → K → B → `gain.fluxscaled` →
+   kcross → dterms → xfcal, with the gainfield and interp that step gives.
+   Never `gain.G` here: it leaves the target off the flux scale.
 
 **Output:** summary of each polcal step, D-term amplitude distribution,
 confirmation that CORRECTED_DATA contains polarization solutions for the
