@@ -35,7 +35,7 @@ OR exists but is empty (`n_total_solutions = 0`).
    ms_flag_summary(ms_path={VIS}, field={FLUX_FIELD})
    ```
    - If > 50% of the data is flagged → escalate to **Pre-flagging review**
-     (Section CALIBRATION_PREFLAG in 10-precal-workflow.md)
+     (10-precal-workflow.md Steps 2 and 8)
    - If < 50% but still high (30–50%) → gaincal may have failed due to insufficient SNR
      → Try **Retry option A** below
 
@@ -46,7 +46,7 @@ OR exists but is empty (`n_total_solutions = 0`).
    - **If all three fail:** go to Retry option B
 
 5. **Retry option B: Relax solution thresholds**
-   - Change: `minsnr=3.0` (from 5.0) and `minblperant=3` (from 4)
+   - Change: `minsnr=2.0` (the Step 4 gain solve already uses 3.0) and `minblperant=3` (from 4)
    - Keep: same refant (use the ranked list's top antenna)
    - **If this produces a caltable:** note in summary as "degraded SNR, lower minblperant"
    - **If still fails:** escalate (see **Escalation** below)
@@ -137,7 +137,7 @@ exceeds the source-type threshold (e.g., > 8% for bright cal, > 12% for phase ca
 
 3. **Check for RFI in online flags:**
    ```
-   ms_online_flag_stats(flag_file={ORIGINAL_ASDM}/.flagonline.txt)
+   ms_online_flag_stats(flag_file=<ms_name>.flagonline.txt)   # written by ms_import_asdm
    # Examine: reason_breakdown (look for RFI-like categories)
    ```
    - If heavy RFI flagging in online flags → data quality is already poor

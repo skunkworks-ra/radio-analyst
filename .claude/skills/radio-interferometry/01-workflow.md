@@ -159,4 +159,4 @@ behaved correctly and the geometry is consistent.
 - Antenna names are purely numeric → broken UVFITS export. Cannot proceed.
 - Orphaned antenna IDs → incomplete antenna table. Cannot proceed.
 
-**What to note:**
+Step 2.1's notes and Steps 2.2–2.6 continue in `01b-workflow-phase2.md`.

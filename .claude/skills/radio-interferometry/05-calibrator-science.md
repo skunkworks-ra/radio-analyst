@@ -22,7 +22,7 @@ the entire calibration chain.
 Applies to: VLA (all bands), uGMRT (approximately)
 Sources: 3C286, 3C48, 3C138, 3C147, CasA, CygA, TauA, VirA
 Scale: tied to Baars et al. 1977, updated with VLA monitoring data
-CASA model name: `perley-butler-2017`
+CASA standard name: `Perley-Butler 2017`
 
 ### Reynolds 1994 (MeerKAT default for PKS1934-638)
 Applies to: MeerKAT, ATCA
@@ -86,12 +86,13 @@ If `ms_baseline_lengths` shows the maximum baseline exceeds the safe range,
 ## Polarisation calibration roles
 
 ### 3C286 and 3C138 (VLA)
-Both are linearly polarised (~11% at L-band for 3C286, ~8% for 3C138).
+Both are linearly polarised (3C286 ~9–10% at L-band, rising toward ~11–13% at higher bands; 3C138 ~8% at L-band). `ms_setjy_polcal` takes the per-band values from the catalogue; do not use these round numbers in a model.
 They are used for:
 1. **Absolute polarisation angle calibration:** `polcal(poltype='Xf')`
    Requires knowing the intrinsic EVPA of the source (tabulated).
    3C286 intrinsic EVPA: ~33° at L-band (defined relative to IAU convention).
-2. **D-term calibration:** combined with PA coverage from `ms_parallactic_angle_vs_time`.
+2. **D-term calibration:** with its known model, `poltype='Df'`, which needs no
+   PA coverage (`09-polcal-execution.md`).
 
 ### 3C48 at S-band (2–4 GHz)
 3C48 has low but usable linear polarisation at S-band and above, and is commonly
@@ -213,8 +214,9 @@ In a standard VLA L-band/S-band reduction:
 4. `gaincal(calmode='ap')` → flux calibrator (amplitude+phase, long solint)
 5. `fluxscale` → transfer flux scale from flux cal to phase cal
 6. `ms_setjy_polcal` → set full pol model (Stokes I + polindex + polangle) on angle cal
-7. `polcal(poltype='Kcross')` → cross-hand delay from angle cal
-8. `polcal(poltype='Df')` → D-terms from leakage cal with good PA coverage
+7. `gaincal(gaintype='KCROSS')` → cross-hand delay from angle cal
+8. `polcal(poltype='Df')` on a known- or zero-pol leakage cal (no PA coverage
+   needed), or `poltype='Df+QU'` on an unknown-pol source (PA coverage needed)
 9. `polcal(poltype='Xf')` → absolute PA from 3C286 or 3C138 (or 3C48 at S-band)
 10. `applycal(parang=True)` → apply all tables with parallactic angle correction
 

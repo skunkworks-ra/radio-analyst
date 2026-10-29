@@ -45,11 +45,12 @@ must already exist — run `/calibrate` first if not.
    and then redo the calibration solve: it was made against a Stokes-I model.
 
 4. Cross-hand delay: `ms_gaincal(…, field=angle_cal, gaintype='KCROSS',
-   solint='inf', combine='scan,spw', smodel=[1, 0, 1, 0],
+   solint='inf', combine='scan', smodel=[1, 0, 1, 0],
    gaintable=[priorcals + K + B + G], caltable=workdir/kcross.K, execute=False)`
    → run. `ms_calsol_stats(kcross.K)` — delay must be stable.
 
-5. D-term leakage: `ms_polcal(…, field=leakage_cal, poltype='Df+QU',
+5. D-term leakage: `ms_polcal(…, field=leakage_cal, poltype=<recommended_df_poltype:
+   'Df' for a known- or zero-pol source, 'Df+QU' for an unknown-pol one>,
    solint='inf', combine='scan', gaintable=[priorcals + K + B + G + kcross],
    caltable=workdir/dterms.D, execute=False)` → run.
    `ms_calsol_stats(dterms.D)` — D-term amplitudes < 0.1 expected.

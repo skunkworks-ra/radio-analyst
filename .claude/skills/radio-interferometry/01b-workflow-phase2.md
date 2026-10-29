@@ -1,6 +1,11 @@
 # 01b — Phase 2 Workflow: Instrument Sanity Steps
 
-Run these after Phase 1 is clean. See `01-workflow.md` for Phase 1 steps.
+Run these after Phase 1 is clean. See `01-workflow.md` for Phase 1 steps and
+the Step 2.1 stop conditions.
+
+### Step 2.1 — `ms_antenna_list` (continued)
+
+**What to note:**
 
 - Any antenna with position `(0, 0, 0)` → placeholder position.
   Baselines involving this antenna are geometrically wrong.
@@ -57,12 +62,14 @@ Do NOT use `pa_feed_deg` values for actual D-term solutions until
 cross-validation against `casatools.measures` is complete.
 Use `pa_sky_deg` range for coverage assessment only.
 
-**Coverage thresholds (ALT-AZ arrays — VLA, MeerKAT, uGMRT):**
-- `pa_sky_range_deg < 30°`: insufficient for D-term solutions.
-  Full polarimetric calibration requires ≥ 60° of PA coverage.
-  Recommend observing a calibrator at different hour angles or
-  using a known-polarisation calibrator (3C286, 3C138 at VLA).
-- `pa_sky_range_deg ≥ 60°`: adequate for standard D-term solutions.
+**What the coverage is for (ALT-AZ arrays — VLA, MeerKAT, uGMRT):**
+PA coverage matters for one path only: a `Df+QU` leakage solve on a source of
+*unknown* polarisation (usually the phase calibrator). A zero-pol or known-pol
+leakage calibrator (`Df`), and the position-angle solve (`Xf`), need none.
+So at inspection, record `pa_sky_range_deg` per calibrator and do not grade it.
+`09-polcal-execution.md` "PA coverage for a Df+QU solve" says what each range
+allows you to claim: ≥ 60° well conditioned, 30–60° usable, 10–30° marginal,
+< 10° degenerate.
 - Equatorial mount detected: PA is constant. D-term coverage criterion
   does not apply — use a different polarisation calibration strategy.
 
@@ -103,7 +110,10 @@ Use `pa_sky_deg` range for coverage assessment only.
 **What to note:**
 - Cross-check `n_flag_commands_online` (from FLAG_CMD). High online flag
   counts on an antenna that shows low flag fraction in the data means the
-  online flags were not applied — run `flagcmd(action='apply')` before proceeding.
+  online flags are not applied yet. Before preflag that is expected: import
+  uses `applyflags=False`, and `ms_apply_preflag` applies them. After preflag
+  it means preflag missed them; check its `preflag_cmds.txt`. Never apply them
+  off the tools.
 - Highly-flagged antennas contribute short or intermediate baselines
   preferentially (they tend to be core antennas taken offline for maintenance).
   This can artificially compress the effective minimum baseline and inflate

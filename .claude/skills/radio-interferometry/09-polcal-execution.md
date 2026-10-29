@@ -93,8 +93,8 @@ The following table maps each polcal step to the exact MCP tool and key paramete
 | Step | Tool | Key parameters | Note |
 |------|------|----------------|------|
 | Angle model setup | `ms_setjy_polcal` | `field`, `reffreq_ghz`, `polindex_deg=3`, `polangle_deg=4` | Run once per angle cal; populates MODEL for Df/Xf solves |
-| Cross-hand delay | `ms_gaincal` | `gaintype='KCROSS'`, `smodel=[1,0,1,0]`, `combine='scan,spw'` | Must run before D-terms; wideband combine recommended |
-| D-term leakage | `ms_polcal` | `poltype='Df'` or `'Df+QU'`, `solint='inf'`, `combine='scan'` | `Df` for known-pol/zero-pol sources (no PA needed); `Df+QU` only for unknown-pol sources (needs ≥30° PA) |
+| Cross-hand delay | `ms_gaincal` | `gaintype='KCROSS'`, `smodel=[1,0,1,0]`, `combine='scan'` | Must run before D-terms; per-SPW by default, `'scan,spw'` is a deliberate multiband choice (Step 2) |
+| D-term leakage | `ms_polcal` | `poltype='Df'` or `'Df+QU'`, `solint='inf'`, `combine='scan'` | `Df` for known-pol/zero-pol sources (no PA needed); `Df+QU` only for unknown-pol sources (PA coverage as a continuum, above) |
 | Position angle | `ms_polcal` | `poltype='Xf'`, `solint='inf'`, `combine='scan'` | Run whenever a Cat A pol standard is present (`pol_angle_calibrator.category == 'A'`); independent of PA coverage; requires D-terms in gaintable |
 | Apply all tables | `ms_applycal` | One call per field type, as 07 Step 7: priorcals → K → B → `gain.fluxscaled` → Kcross → D → X | Table order is required by RIME; `parang=True` mandatory; see Step 5 |
 
@@ -243,8 +243,8 @@ coverage is required **only** for the unknown-pol (`Df+QU`) path. Use the tool's
 | Zero-pol primary leakage cal (Cat C: 3C84, 3C147, OQ208, J0713+4349, J2355+4950) | `poltype='Df'` | not needed (single scan) |
 | Angle cal with known model — 3C286 / 3C138 / 3C48 (model from `fit_from_catalogue`) | `poltype='Df'` | not needed (≥2 scans) |
 | Any catalogue source with known Q,U | `poltype='Df'` | not needed |
-| Source of **unknown** Q,U (e.g. the phase cal) | `poltype='Df+QU'` | **required**: ≥ threshold (default 30°; NRAO suggests 60°), ≥3 scans |
-| Unknown-pol source **below** the PA threshold | neither — flag; pick a known-pol source instead | — |
+| Source of **unknown** Q,U (e.g. the phase cal) | `poltype='Df+QU'` | **required**, as a continuum ("PA coverage for a Df+QU solve" above); ≥3 scans |
+| Unknown-pol source with thin coverage | prefer a known-pol or zero-pol source from `leakage_cal_candidates` with `Df`; if there is none, solve and limit the claims as the coverage table says | — |
 
 `poltype='Df'` solves for D-terms assuming the source Q,U are known from the
 `setjy(standard='manual')` model (or that the source is unpolarised). This is the
@@ -386,7 +386,7 @@ and D-terms before Xf is required by the RIME (Radio Interferometer Measurement 
 | D-terms (leakage) | `dterms.D` |
 | Position angle | `polangle.X` |
 
-These are written alongside `delay.K`, `bandpass.B`, `gain.G` in `/data/jobs/{WORKFLOW_ID}/`.
+These are written alongside `delay.K`, `bandpass.B`, `gain.G` in `{WORKDIR}`.
 
 ---
 
@@ -406,7 +406,7 @@ These are written alongside `delay.K`, `bandpass.B`, `gain.G` in `/data/jobs/{WO
 
 | Check | Good | Action if not good |
 |---|---|---|
-| PA coverage (Df+QU only) | ≥ 30° (NRAO: 60°) | Below floor: don't attempt Df+QU; use a known-pol/zero-pol source with plain Df instead |
+| PA coverage (Df+QU only) | ≥ 60° well conditioned | Thinner: prefer a known/zero-pol source with plain Df; otherwise solve and quote the coverage beside every polarisation number |
 | Kcross amplitude | < 2 ns | Flag in summary; check if earlier calibration is correct |
 | D-term amplitude (median) | < 5% | Flag in summary; if < 10%, proceed with caution |
 | D-term outlier antennas | 0–1 | Flag affected antennas; exclude from applycal if > 20% |

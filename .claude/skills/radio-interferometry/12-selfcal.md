@@ -47,8 +47,10 @@ From the first-pass `ms_image_stats` result:
 | 100–500 | Moderate phase errors — selfcal will likely improve image | Proceed |
 | > 500 | Good first-pass — selfcal may still yield marginal improvement | Proceed; modest gains expected |
 
-Also call `ms_residual_stats` on the CORRECTED column (full MS, target field only)
-to confirm the residuals are not dominated by RFI or bad baselines:
+Also call `ms_residual_stats` on the target to confirm the residuals are not
+dominated by RFI or bad baselines. It takes one integer FIELD_ID: for a mosaic,
+run it once per pointing (IDs from `ms_field_list` on this MS) and judge by the
+worst:
 
 ```python
 ms_residual_stats(

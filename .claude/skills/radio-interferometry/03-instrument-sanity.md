@@ -85,17 +85,18 @@ as the source moves. This rotation allows:
 2. **Cross-hand phase calibration:** rotation of the parallactic angle
    modulates the cross-hand visibilities.
 
-Without PA coverage, D-terms are degenerate with the source polarisation
-and cannot be solved for independently.
+Without PA coverage, D-terms are degenerate with the source polarisation *when
+that polarisation is unknown*. A leakage calibrator of known or zero
+polarisation (`poltype='Df'`) breaks the degeneracy by its model, and needs no
+coverage. So does the position-angle solve (`Xf`).
 
-### Coverage requirements (sky-frame PA range)
+### Coverage (sky-frame PA range), for a `Df+QU` solve only
 
-| PA range | Status |
-|----------|--------|
-| < 30° | Insufficient. D-term solutions will be unreliable. |
-| 30°–60° | Marginal. May be acceptable with a known-polarisation calibrator. |
-| ≥ 60° | Adequate for standard CASA `polcal` D-term solutions. |
-| ≥ 120° | Excellent. Robust D-term solutions. |
+Coverage is a continuum, not a pass mark. `09-polcal-execution.md` "PA coverage
+for a Df+QU solve" gives what each range supports and what to say about the
+result: ≥ 60° well conditioned (≥ 120° robust), 30–60° usable, 10–30° marginal,
+< 10° degenerate. Below 60°, prefer a known- or zero-pol source from
+`leakage_cal_candidates` if the observation has one.
 
 ### Equatorial mounts (WSRT, some older arrays)
 
@@ -158,7 +159,7 @@ Look for antennas with flag fraction substantially above the array median.
 | Single antenna, flag fraction 30–80% | Intermittent electronics, bad correlator connection |
 | Multiple adjacent antennas high | Arm-level failure (uGMRT) or baseline-board issue (VLA) |
 | All antennas high in a single scan | RFI event, correlator restart, pointing error |
-| High `n_flag_commands_online` but low data flag fraction | Online flags not applied — run `flagcmd(action='apply')` |
+| High `n_flag_commands_online` but low data flag fraction | Online flags not applied yet: expected before preflag (`ms_apply_preflag` applies them); after preflag, check its `preflag_cmds.txt` |
 
 ### Impact on calibration
 

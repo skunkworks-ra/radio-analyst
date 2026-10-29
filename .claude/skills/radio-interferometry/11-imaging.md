@@ -16,7 +16,7 @@ All placeholders are populated from Phase 1–2 tool outputs before calling `ms_
 | Placeholder | Source tool | What to extract |
 |---|---|---|
 | `{VIS}` | provided | full MS path (not calibrators.ms) |
-| `{TARGET_FIELD}` | user confirmed (see Step 0) | CASA field selection string, e.g. `'2~8'` or `'3C391_C1'` |
+| `{TARGET_FIELD}` | user confirmed (see Step 0) | field **names**, comma-separated, e.g. `'3C391_C1,3C391_C2'` (never numeric IDs; 07 "Field selection") |
 | `{IS_MOSAIC}` | user confirmed (see Step 0) | True if imaging multiple pointings together |
 | `{STOKES}` | user confirmed | default `'I'`; `'IQUV'` etc. accepted |
 | `{POINTING_CENTERS}` | `ms_field_list` | RA/Dec of each target pointing (mosaic only) |
@@ -290,6 +290,7 @@ ms_tclean(
     niter        = 50000,
     threshold    = {threshold},
     savemodel    = 'modelcolumn',
+    pblimit      = -0.1,           # Step 9 reads pb_level = abs(pblimit)
     workdir      = {WORKDIR},
     execute      = False,
 )

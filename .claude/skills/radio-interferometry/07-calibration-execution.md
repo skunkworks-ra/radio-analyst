@@ -335,7 +335,7 @@ ms_calsol_stats(caltable_path = {WORKDIR}/bandpass.B, verbosity = 'full')
 
 | Field | Index | Threshold | Action if exceeded |
 |---|---|---|---|
-| `overall_flagged_frac` | scalar | < 0.10 | 0.10–0.20 → note; > 0.20 → loop to CALIBRATION_PREFLAG |
+| `overall_flagged_frac` | scalar | < 0.10 | 0.10–0.20 → note; > 0.20 → loop back to RFI excision (10 Steps 2 and 8; 13 Step 1 on the primaries) |
 | `n_antennas_lost` | scalar | ≤ 1 | 2–3 → check refant and bp_field; > 3 → hard stop |
 | `phase_rms_deg[ant, spw, field=bp_field_idx]` | all antennas | < 10° | 10–30° → warn; > 30° → delay solve likely failed; re-run Step 2. On a single-solution bandpass `phase_rms_axis` is `channel`: scatter across the band about the mean, so a leftover delay slope shows here |
 | `amp_array[ant, spw, field=bp_field_idx, :]` | all antennas | smooth, ~1.0 | Large mid-band excursions → suspect antenna; edge roll-off is normal |
@@ -514,7 +514,7 @@ place will bias the fluxscale transfer.
 
 | Field | Index | Threshold | Action if exceeded |
 |---|---|---|---|
-| `overall_flagged_frac` | scalar | < 0.08 | 0.08–0.15 → note; > 0.15 → loop to CALIBRATION_PREFLAG |
+| `overall_flagged_frac` | scalar | < 0.08 | 0.08–0.15 → note; > 0.15 → loop back to RFI excision (10 Steps 2 and 8; 13 Step 1 on the primaries) |
 | `n_antennas_lost` | scalar | ≤ 1 | > 3 → check data quality and refant |
 | `amp_std[ant, spw, field=flux_idx]` | flux cal | < 5% of `amp_mean` | > 15% → suspect antenna or RFI |
 | `phase_rms_deg[ant, spw, field=flux_idx]` | flux cal | < 20° | > 45° → ionospheric or bad data |
@@ -545,10 +545,19 @@ ms_fluxscale(
 )
 ```
 
-**Check the returned flux density:** compare the derived flux density of the
-phase calibrator against the VLA calibrator manual or known source monitoring.
-Values deviating by > 20% from the expected value suggest a problem with the
-prior caltables or the flux calibrator model.
+**Check the returned flux density** against an expected value you fetch, not one
+you remember:
+
+```
+ms_phase_cal_lookup(ra_deg=<phase cal RA>, dec_deg=<phase cal Dec>,
+                    band_code=<band>, array_config=<config>)
+```
+
+It returns the VLA calibrator list's flux at the band. Phase calibrators are
+variable quasars and the list's epoch is old, so a difference of tens of percent
+is common and is not by itself a failure. Treat > 20% as a prompt to check the
+prior caltables and the flux calibrator model; an order-of-magnitude difference
+is the `usescratch` signature below. Quote both numbers in the report.
 
 **An order-of-magnitude-low flux (e.g. ~10× low) is the signature of a mixed
 `usescratch` MODEL_DATA collision, not a calibration problem.** It happens when
@@ -619,7 +628,7 @@ Advance to applycal only when all of the following hold:
 | fluxscale derived flux density | within 20% of expected |
 | `gain.fluxscaled` exists on disk | confirmed |
 
-If BP or gain flagged fraction exceeds threshold: loop to CALIBRATION_PREFLAG.
+If BP or gain flagged fraction exceeds threshold: loop back to RFI excision (10 Steps 2 and 8; 13 Step 1 on the primaries).
 More RFI excision in the DATA column is needed before the solutions will be usable.
 
 If `n_antennas_lost > 3`: do not loop blindly. Check whether the lost antennas

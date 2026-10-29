@@ -42,11 +42,9 @@ ms_calsol_stats outlier gate fails.
    - `ms_correlator_config(calibrators.ms)` → corrstring_casa
    - `ms_antenna_list(calibrators.ms)` → recommended_minblperant
    - `ms_verify_priorcals(workdir)` → priorcals_list
-   - `ms_refant(calibrators.ms, field=bp_field)` → refant
+   - `ms_refant(calibrators.ms, field=<each calibrator>)` → refant healthy on all of them
 
-3. `ms_gaincal_snr_predict(calibrators.ms, field=bp_field, solint_seconds=<integration>, flux_jy=<from setjy>)`
-   — predictive pre-flight. If > 20% of (antenna, SpW) pairs predict SNR < 3,
-   relax solint before launching gaincal.
+3. The SNR pre-flight for the gain solve runs before step 7, not here: see 7.
 
 4. Initial phase (G0): `ms_gaincal(…, gaintype='G', calmode='p', solint='int',
    spw=center_channels_string, caltable=workdir/initial_phase.G0, execute=False)`
@@ -57,11 +55,16 @@ ms_calsol_stats outlier gate fails.
    `ms_calsol_stats(delay.K)` — delay_rms_ns outlier gate.
 
 6. Bandpass (B): `ms_bandpass(…, solint='inf', combine='scan',
-   spw=wide_channels_string, gaintable=[priorcals + K + G0],
+   spw=all_spw_string, gaintable=[priorcals + G0 + K],
+   interp=['' per priorcal, '', 'nearest,nearestflag'],
    caltable=workdir/bandpass.B, execute=False)` → run.
-   `ms_calsol_stats(bandpass.B)` — bandpass SNR per SpW.
+   `ms_calsol_stats(bandpass.B)` — bandpass SNR per SpW. Then
+   `ms_flag_caltable(bandpass.B, sigma=5.0)` before it is used (07 Step 3).
 
-7. Gain solve on all calibrators in one call (skill 07 Step 4):
+7. `ms_gaincal_snr_predict(calibrators.ms, field=flux_field, solint_seconds=-1,
+   flux_jy=<from setjy>)` and apply the 07 "solint SNR check" table. Then the
+   gain solve on all calibrators in one call (skill 07 Step 4, which has the
+   interp list):
    `ms_gaincal(…, field='<flux_field>,<phase_fields>', gaintype='G',
    calmode='ap', solint='inf', gaintable=[priorcals + K + B],
    caltable=workdir/gain.G, execute=False)` → run.

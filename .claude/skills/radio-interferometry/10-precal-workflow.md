@@ -148,8 +148,9 @@ verify with `ms_verify_priorcals`:
 | `requantizer.rq` | VLA WIDAR data; it matters for 3-bit samplers | Pass it whenever gencal writes it. On 8-bit data the solutions are the same value over and over, which is harmless. Skip only for pre-WIDAR data, not by observation date |
 | `antpos.ap` | No | Skip silently if gencal returns empty; note if returned with rows |
 
-A missing `gain_curves.gc` or `opacities.opac` means `gencal` could not access
-the telescope correction database. Do not proceed — escalate.
+A missing `gain_curves.gc` (any band), or a missing `opacities.opac` at K-band
+and above, means `gencal` could not access the telescope correction database.
+Do not proceed — escalate. Below K-band a missing `opacities.opac` is expected.
 
 ---
 
@@ -403,16 +404,17 @@ After Step 8, make a go/no-go decision:
 | Overall flag fraction < 30% AND no caltable failures | Proceed to calibration solve |
 | Overall flag fraction 30–50% | Proceed with explicit note in summary |
 | Overall flag fraction > 50% | Escalate — dataset may not calibrate well |
-| Per-calibrator flag fraction ≥ 50% on the gain calibrator | Relax rflag thresholds and re-run Step 8 — do not proceed |
+| Per-calibrator flag fraction ≥ 50% on the gain calibrator | Do not proceed. Step 8 never runs on this field, so the flags came from preflag or the online flags: find the driver with `ms_flag_summary` (per antenna, SpW, scan) before changing anything |
 | `gain_curves.gc` missing | Hard stop — do not proceed |
 | `opacities.opac` missing at K-band and above | Hard stop — do not proceed |
 | Initial bandpass caltables invalid | Hard stop — diagnose before proceeding |
 | Specific antenna > 80% flagged | Note and exclude from refant; proceed |
 
 **Refant check:** After Step 8, re-check the chosen refant's flag fraction in
-`calibrators.ms`. If it exceeds 50%, switch to the next antenna in the
-`refant_list` from `ms_refant` and re-run Step 6 (initial bandpass) before
-passing to the calibration solve.
+`calibrators.ms`. If it exceeds 50%, pass the next antenna in the
+`refant_list` from `ms_refant` to the calibration solve. Do not re-run Step 6:
+the initial bandpass is a one-shot bootstrap for the residual rflag, and its
+refant does not carry into skill 07.
 
 Pass the following forward to the calibration solve:
 - `refant`: top-ranked surviving antenna from `ms_refant`
