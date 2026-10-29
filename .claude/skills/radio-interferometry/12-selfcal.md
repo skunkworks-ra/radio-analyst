@@ -3,9 +3,13 @@
 ## Purpose
 
 Run one round of phase-only self-calibration after the first-pass image
-(Skill 11). Compare dynamic range and RMS before and after. If improvement
-is significant, recommend a full selfcal loop to the user and stop — do not
-iterate automatically.
+(Skill 11). Compare dynamic range and RMS before and after. Do not iterate
+automatically.
+
+**Who decides.** Whether to selfcal (Step 0) and whether to go further (Step 5)
+is a judgment call: in an interactive session, the user's; hands-off, the
+strongest model in the run. It is never a default the run takes because no one
+decided. Either way, report the decision and the numbers it rests on.
 
 Self-calibration amplitude+phase, multi-round loops, and convergence
 management are Phase 5 and are not in scope here.
@@ -234,4 +238,6 @@ with convergence management (not implemented yet — flag as a manual next step)
 the limiting factor, not antenna-based phase errors. Identify the most likely
 alternative (remaining RFI, calibration transfer error, source structure).
 
-**Stop here.** Do not iterate automatically. The user decides whether to proceed.
+**Stop here.** Do not iterate automatically. In an interactive session the user
+decides whether to proceed; hands-off, record the recommendation in the report
+and end the run.

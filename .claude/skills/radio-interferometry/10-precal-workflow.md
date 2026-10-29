@@ -145,7 +145,7 @@ verify with `ms_verify_priorcals`:
 |-------|----------|-----------|
 | `gain_curves.gc` | Yes — hard stop | Data cannot be calibrated without elevation gain curves |
 | `opacities.opac` | K-band and above | Empty table: hard stop at K-band and above; note and continue below K-band |
-| `requantizer.rq` | VLA post-2011 only | Safe to skip for pre-WIDAR data; note in summary |
+| `requantizer.rq` | VLA WIDAR data; it matters for 3-bit samplers | Pass it whenever gencal writes it. On 8-bit data the solutions are the same value over and over, which is harmless. Skip only for pre-WIDAR data, not by observation date |
 | `antpos.ap` | No | Skip silently if gencal returns empty; note if returned with rows |
 
 A missing `gain_curves.gc` or `opacities.opac` means `gencal` could not access
@@ -188,10 +188,25 @@ codes no range for it. That is expected, not a defect — but it means the model
 is unverified at your band, so treat a surprising flux scale as plausible
 rather than impossible.
 
-**If polarization calibration is in scope for this dataset, call `ms_setjy` with
-`usescratch=True`** (default is `False`). `ms_setjy_polcal` forces `usescratch=True`
-later, and `usescratch` cannot be mixed within one MS without corrupting the flux
-scale. Set it consistently from the start. See skill 09 Step 1 and skill 07 Step 6.
+**If polarization calibration is in the run scope, set every model here, once,
+before the initial bandpass:**
+
+1. `ms_pol_cal_conditions` → the angle calibrator (`pol_angle_calibrator`).
+2. `ms_setjy(usescratch=True, exclude_fields=<angle cal>)`. `usescratch` cannot
+   be mixed within one MS without corrupting the flux scale, and
+   `ms_setjy_polcal` always uses `True`.
+3. `ms_setjy_polcal` on the angle cal (skill 09 Step 1 has the detail).
+4. `ms_verify_model(field=<all cals>, polcal_fields=<angle cal>)`.
+
+The angle cal is usually also the flux and bandpass cal. Done this way it carries
+its full Stokes model through the initial bandpass, the residual rflag, the gain
+solve and fluxscale. Excluding it from `ms_setjy` and deferring `ms_setjy_polcal`
+to the polcal stage would leave it at the 1 Jy default for all of those. Skill
+09 Step 1 is then already done; do not re-run it.
+
+A zero-polarisation leakage calibrator (3C84, 3C147 at low frequency) needs no
+model of its own: a `Df` solve assumes unit Stokes I and zero Q, U and solves
+for the leakage.
 
 ---
 

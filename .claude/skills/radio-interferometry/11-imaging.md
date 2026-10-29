@@ -96,9 +96,24 @@ Default to `'mfs'` unless the user explicitly asks for a cube.
 | `{BANDWIDTH_HZ} / {CENTER_FREQ_HZ} > 0.2` | `'mtmfs'`, `nterms=2` | Wideband; also produces a spectral index map |
 | Otherwise | `'hogbom'` | Default for first-pass |
 
-Multiscale CLEAN is deferred. Run hogbom first; if the residual image shows
-coherent extended structure after the first pass, re-run with `deconvolver='multiscale'`
-and scales derived from the synthesized beam.
+**Extended emission needs a scale-sensitive deconvolver.** Hogbom models the sky
+as point components; on emission much larger than the beam (a supernova remnant
+such as 3C391, a radio halo, a nearby galaxy) it leaves the extended flux in the
+residual and the RMS reads high. That is a modelling failure, not noise. When the
+source is known or seen to be extended, use `deconvolver='multiscale'` (scales
+from the synthesized beam: 0, then ~2–3× and ~5–10× the beam in pixels, up to
+the largest structure) or `deconvolver='asp'`. Which one, and which scales, is a
+judgment (T3), and worth stating in the report.
+
+Tool gap: `ms_tclean` does not yet take `scales`, so multiscale cannot be set up
+through it. Until it does, `asp`, which chooses its own scales, is the route
+through the tool. A hand-edited script with `scales` must be recorded in the
+ledger as an edit.
+
+**Masking.** `ms_tclean` cleans inside the primary-beam mask (`usemask='pb'`).
+Do not switch to CASA's automatic masking (`usemask='auto-multithresh'`): it
+generates poor masks. A hand-made mask, or a mask derived from a previous image
+outside CASA's auto-masking, is the alternative.
 
 ---
 
@@ -180,20 +195,38 @@ fresnel = {DISH_DIAMETER_M}**2 / ({MAX_BASELINE_M} * lambda_m)
 
 | Condition | `gridder` | `wprojplanes` |
 |---|---|---|
-| Mosaic AND telescope in `{VLA, ALMA}` AND W-terms required | `'awp2'` | from Step 5 |
-| Mosaic AND telescope in `{VLA, ALMA}` AND W-terms not required | `'awp2'` | not set |
-| Mosaic AND telescope NOT in `{VLA, ALMA}` | see note below | from Step 5 if required |
+| Mosaic, first pass, not A-configuration, telescope in `{VLA, ALMA}` | `'mosaic'` | not set |
+| Mosaic, A-configuration | **check memory first** (below), then decide | — |
+| Mosaic, telescope NOT in `{VLA, ALMA}` | `'mosaic'` only if CASA has a primary-beam model for it; else see note below | — |
 | Single pointing AND W-terms required | `'wproject'` | from Step 5 |
 | Single pointing AND W-terms not required | `'standard'` | not set |
 
-Match against the **canonical** telescope name returned by `ms_inspect`
+**First pass on a mosaic is `gridder='mosaic'`.** The A-projection gridders
+(`awproject`, `awp2`) cost far more memory and time, and are a later choice
+when the science needs wide-field polarisation or beam-squint correction.
+
+**A-configuration: check that the image fits before calling tclean.** The
+resolution sets a small cell, so a mosaic footprint becomes a very large image.
+CASA needs roughly
+
+```
+memory_bytes ≈ 5.5 × nterms × nscales × (imsize_x × imsize_y × 4 bytes)
+```
+
+where 4 bytes is one float pixel, `nterms` is 1 unless `mtmfs`, and `nscales`
+is 1 for hogbom. Compare this with the machine's free memory (`free -b` via
+Bash). If it does not fit, do not start tclean: report the estimate and the
+memory, and image fewer pointings, a smaller region, or on a larger machine.
+This is a T3 or user decision, not a default.
+
+Match the telescope against the **canonical** name returned by `ms_inspect`
 (`telescope` field) — `VLA`, not the raw `MS::OBSERVATION::TELESCOPE_NAME`
 string, which may be `EVLA` or `JVLA`. Name normalization happens in the
 telescope profile (`src/ms_inspect/data/telescopes/*.yaml`, `aliases`).
 
-**Unsupported mosaic telescope:** use `'wproject'` if W-terms required, else
-`'standard'`. Warn the user: primary beam mosaicing is not applied automatically
-for this telescope — the image will not be primary-beam corrected across pointings.
+**Telescope without a CASA primary-beam model:** use `'wproject'` if W-terms
+are required, else `'standard'`, and warn the user that the pointings will not
+be primary-beam corrected as a mosaic.
 
 ---
 

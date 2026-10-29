@@ -102,8 +102,12 @@ The following table maps each polcal step to the exact MCP tool and key paramete
 
 ## Step 1 — Set the polarisation calibrator model
 
-Before any polcal solve, populate the MODEL column for the angle calibrator
-with `ms_setjy_polcal`. The generated script is a self-contained
+**This step runs in precal (10 Step 4), before the initial bandpass**, whenever
+polarisation is in the run scope: the model is set once, right, up front. On
+reaching polcal, confirm it with `ms_verify_model(polcal_fields=<angle cal>)`
+and do not re-run it. The rest of this step describes what that call does.
+
+`ms_setjy_polcal` populates the MODEL column for the angle calibrator. The generated script is a self-contained
 **probe → fit → apply**:
 
 1. **Probe** — runs `setjy(standard='Perley-Butler 2017', usescratch=False)` once

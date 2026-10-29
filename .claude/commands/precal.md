@@ -16,6 +16,9 @@ allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_observation_info,
                mcp__plugin_radio-analyst_ms-modify__ms_generate_priorcals,
                mcp__plugin_radio-analyst_ms-inspect__ms_verify_priorcals,
                mcp__plugin_radio-analyst_ms-modify__ms_setjy,
+               mcp__plugin_radio-analyst_ms-inspect__ms_pol_cal_conditions,
+               mcp__plugin_radio-analyst_ms-modify__ms_setjy_polcal,
+               mcp__plugin_radio-analyst_ms-inspect__ms_verify_model,
                mcp__plugin_radio-analyst_ms-inspect__ms_refant,
                mcp__plugin_radio-analyst_ms-modify__ms_initial_bandpass,
                mcp__plugin_radio-analyst_ms-inspect__ms_verify_caltables,
@@ -61,9 +64,13 @@ decision gate.
 
 8. `ms_setjy(calibrators.ms, workdir, execute=False)` → run.
    Check warnings field for resolved calibrators (3C84 uvrange gate).
+   If polarisation is in the run scope, follow 10-precal-workflow.md Step 4
+   instead: `usescratch=True`, the angle cal excluded, then `ms_setjy_polcal`
+   on it and `ms_verify_model(polcal_fields=...)`, all before step 10.
 
-9. `ms_refant(calibrators.ms, field=bp_field)` — choose refant.
-   If top-ranked refant is > 30% flagged, use rank-2.
+9. `ms_refant(calibrators.ms, field=<each calibrator>)`, once per calibrator
+   field. Choose the highest-ranked antenna healthy on all of them
+   (10-precal-workflow.md Step 5).
 
 10. `ms_initial_bandpass(calibrators.ms, bp_field, refant, workdir,
     priorcals=<from step 7>, uvrange=<if 3C84>, execute=False)` → run.

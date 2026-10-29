@@ -1767,7 +1767,10 @@ class TcleanInput(BaseModel):
     )
     gridder: str = Field(
         default="standard",
-        description="'standard', 'wproject' (W-term single pointing), or 'awp2' (mosaic, EVLA/ALMA).",
+        description=(
+            "'standard', 'wproject' (W-term single pointing), 'mosaic' (first-pass "
+            "mosaic), or 'awproject'/'awp2' (A-projection; a later, costlier choice)."
+        ),
     )
     wprojplanes: int | None = Field(
         default=None,
@@ -1907,7 +1910,7 @@ async def ms_tclean(params: TcleanInput) -> ToolResult:
                             (specmode='cube' only; ignored otherwise).
         params.deconvolver: 'hogbom' or 'mtmfs'.
         params.nterms:      Taylor terms (pass 2 for mtmfs; omit for hogbom).
-        params.gridder:     'standard', 'wproject', or 'awp2'.
+        params.gridder:     'standard', 'wproject', 'mosaic', 'awproject' or 'awp2'.
         params.wprojplanes: W-projection planes (omit if Fresnel >= 0.9).
         params.cell:        Cell size string.
         params.imsize:      Image size [nx, ny].

@@ -355,10 +355,11 @@ Both polarizations on a given antenna should show the same amplitude shape withi
 Solving all fields together produces one table that fluxscale can directly use
 to compare flux and phase calibrator solutions.
 
-`solnorm=False` is required — we need the absolute amplitude scale. Gain
-amplitudes for the flux calibrator should be close to 1.0 (setjy already set
-the correct model). Phase calibrator amplitudes will be higher (fainter source
-→ larger correction); fluxscale rescales them in Step 5.
+`solnorm=False` is required — we need the absolute amplitude scale. With
+`solnorm=False` the flux calibrator's gain amplitudes need not sit near 1.0;
+what matters is that they are stable, without jumps from scan to scan or
+between neighbouring solutions. Phase calibrator amplitudes will differ (its
+model is the 1 Jy default); fluxscale rescales them in Step 6.
 
 **Call:**
 ```
@@ -517,8 +518,8 @@ place will bias the fluxscale transfer.
 | `n_antennas_lost` | scalar | ≤ 1 | > 3 → check data quality and refant |
 | `amp_std[ant, spw, field=flux_idx]` | flux cal | < 5% of `amp_mean` | > 15% → suspect antenna or RFI |
 | `phase_rms_deg[ant, spw, field=flux_idx]` | flux cal | < 20° | > 45° → ionospheric or bad data |
-| `amp_mean[ant, spw, field=flux_idx]` | flux cal | close to 1.0 | Large deviation → setjy model may be wrong |
-| `amp_mean[ant, spw, field=phase_idx]` | phase cal | systematically higher than flux cal | Expected — fluxscale will correct this |
+| `amp_std[ant, spw, field=flux_idx]` over time | flux cal | stable; no jumps between solutions | A jump on one antenna → that antenna; on all antennas at once → the model or the data at that time. The level itself need not be 1.0 (`solnorm=False`) |
+| `amp_mean[ant, spw, field=phase_idx]` | phase cal | on its own level, offset from the flux cal | Expected (its model is the 1 Jy default) — fluxscale will correct this |
 | `outliers.low_snr` | list | empty | non-empty → inspect named antennas; use Recovery Tree 2 (07b) if > 20% of antennas listed |
 | `outliers.amp_outliers` | list | empty | non-empty → inspect named antennas; an amplitude outlier on the flux cal is a hard flag before applycal |
 
@@ -597,7 +598,7 @@ For each successfully plotted table, open the HTML dashboard and verify:
 | `initial_phase.G0` | Phase RMS < 60° across all antennas; no single antenna wildly outlying |
 | `delay.K` | Delays within ±30 ns; both polarizations consistent; heatmap mostly unflagged |
 | `bandpass.B` | Smooth amplitude vs channel per SPW; edge roll-off expected; no mid-band spikes |
-| `gain.G` | Flux cal amplitudes close to 1.0; phase cal amplitudes systematically higher (correct); phase RMS < 20° |
+| `gain.G` | Flux cal amplitudes steady in time, no jumps (the level need not be 1.0); phase cal amplitudes on their own level (correct); phase RMS < 20° |
 | `gain.fluxscaled` | Flux and phase cal amplitudes now comparable in scale |
 
 If any dashboard shows a hard anomaly (antenna completely missing, half the

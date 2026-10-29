@@ -81,14 +81,20 @@ antennas have SNR < 2.0.
    - **If SNR improves with a different refant:** use the better refant for all remaining steps
    - **If SNR remains low regardless of refant:** the data quality is poor; continue to next option
 
-3. **Check if solint is too tight (too much vector-averaging):**
-   - Current: `solint='inf'` (one solution over all scans)
-   - **Retry with:** `solint='int'` (one solution per integration)
-   - **Rationale:** Per-integration solutions have more data per fit; time variations
-     are solved independently rather than averaged away
-   - **Risk:** produces more solutions to flag; limits applycal interpolation
-   - **If SNR improves:** use `solint='int'` and proceed
-   - **If SNR stays low:** continue to next option
+3. **Average more data per solution, and compare. This is empirical.**
+   SNR per solution grows with the data averaged into it, so a shorter solint
+   *lowers* SNR. Never shorten solint to fix low SNR. Solve three variants,
+   each into its own caltable:
+   - a longer solint (e.g. 2× the current, or the whole scan if it is shorter);
+   - `combine='scan'` at the current solint (weak calibrators only, never the
+     flux calibrator; see option 5);
+   - both together.
+
+   Inspect each with `ms_calsol_stats` and keep the one with the least solution
+   noise (the lowest `phase_rms_deg` / `amp_std` scatter at an acceptable
+   flagged fraction). Record all three and the choice in the ledger
+   `rationale`. The cost is time resolution: a gain that varies faster than the
+   solint is averaged away.
 
 4. **Check bandpass quality:**
    - Return to Step 3 and inspect bandpass with `ms_calsol_stats`
@@ -146,12 +152,12 @@ exceeds the source-type threshold (e.g., > 8% for bright cal, > 12% for phase ca
      - Retry with `refant` set to an antenna NOT in the high-flag list
    - **If spread across all antennas:** systematic RFI; loop to precal
 
-5. **Retry with longer solint (if source is unresolved):**
-   - Current: `solint='inf'`
-   - **Retry with:** `solint='10s'` or `solint='1min'` (example; adjust to data)
-   - **Rationale:** shorter integrations capture more data per fit; longer solutions reduce outlier detection
-   - **If flag_delta decreases:** use the longer solint
-   - **If flag_delta unchanged:** the issue is not integration time; escalate
+5. **Retry with more data per solution (if source is unresolved):**
+   Solutions flagged for low SNR take their data with them under `calflag`, so
+   raising SNR can lower the flag jump. Use the three-variant comparison in
+   Recovery Tree 2 option 3 (longer solint, `combine='scan'`, both) and keep the
+   least noisy solution. If the flag delta is unchanged across all three, the
+   cause is not SNR; escalate.
 
 6. **Escalation:** If flag_delta remains > threshold after refant and solint tweaks:
    - Possible causes: strong RFI environment, broken receiver chain, sky interference
@@ -187,10 +193,9 @@ exceeds the source-type threshold (e.g., > 8% for bright cal, > 12% for phase ca
    - **If still low:** continue to next option
 
 4. **Check solint vs data density:**
-   - If `solint='inf'` and the calibrator was observed in very few scans (< 3)
-   - **Retry with:** `solint='int'` (per-integration solutions)
-   - **Rationale:** more solutions per antenna across more integrations
-   - **If coverage improves:** use per-integration solint
+   - Low coverage means solutions failed `minsnr`, and a shorter solint makes each
+     solution weaker. Use the three-variant comparison in Recovery Tree 2
+     option 3 and keep the least noisy solution with coverage above 50%.
    - **If still low:** continue to next option
 
 5. **Check prior caltables (delay.K, bandpass.B):**

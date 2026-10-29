@@ -43,8 +43,8 @@ Prerequisite: CORRECTED_DATA populated on the target field(s) — run
    - cell (§3): 1 / (max_baseline_lambda × 3), rounded to 1 sf
    - imsize (§4): primary-beam-FWHM / cell, rounded up to composite number
    - Fresnel check (§5) → wprojplanes
-   - gridder (§6): 'awp2' mosaic + EVLA/ALMA, 'wproject' single-pointing + W,
-     else 'standard'
+   - gridder (§6): 'mosaic' for a first-pass mosaic (A-configuration: memory
+     check first), 'wproject' single-pointing + W, else 'standard'
    - threshold (§7): 3 × radiometer RMS from SEFD table; format as mJy
 
 5. `ms_tclean(ms_path, imagename, field, stokes, specmode, deconvolver,

@@ -39,8 +39,10 @@ must already exist — run `/calibrate` first if not.
      alongside every polarisation number; consider a better-covered field from
      `leakage_cal_candidates` and say so if you switch.
 
-3. `ms_setjy_polcal(ms_path, field=angle_cal, reffreq_ghz=<band centre>,
-   workdir, execute=False)` → run. Populates MODEL for the angle cal.
+3. The angle cal's polarised model was set in precal (10 Step 4). Confirm it
+   with `ms_verify_model(field=<all cals>, polcal_fields=angle_cal)`. Run
+   `ms_setjy_polcal` here only if precal ran without polarisation in scope,
+   and then redo the calibration solve: it was made against a Stokes-I model.
 
 4. Cross-hand delay: `ms_gaincal(…, field=angle_cal, gaintype='KCROSS',
    solint='inf', combine='scan,spw', smodel=[1, 0, 1, 0],

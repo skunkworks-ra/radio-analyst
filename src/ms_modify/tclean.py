@@ -253,7 +253,8 @@ def run(
                      wideband flux normalization.
         deconvolver: 'hogbom' or 'mtmfs' (default 'hogbom').
         nterms:      Taylor terms for mtmfs (default None; pass 2 for mtmfs).
-        gridder:     'standard', 'wproject', or 'awp2' (default 'standard').
+        gridder:     'standard', 'wproject', 'mosaic', 'awproject' or 'awp2'
+                     (default 'standard'). First-pass mosaics use 'mosaic'.
         wprojplanes: W-projection planes (None = omit; set for wproject/awp2
                      when W-terms are required per Fresnel criterion). If
                      omitted for those gridders, CASA silently defaults to 1

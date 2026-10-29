@@ -88,6 +88,18 @@
           "source": "CLAUDE.md ms_verify_model 'after setjy'; precal.md 8 names only the warnings field"
         },
         {
+          "id": "p5b",
+          "action": "ms_setjy_polcal",
+          "when": "polarisation in the run scope",
+          "before": [
+            "ms_pol_cal_conditions"
+          ],
+          "after": [
+            "ms_verify_model(polcal_fields)"
+          ],
+          "source": "10 Step 4; 09 Step 1. Polarised model set once, before the initial bandpass (decided 2026-10-28)"
+        },
+        {
           "id": "p6",
           "action": "ms_initial_bandpass",
           "before": [
@@ -251,14 +263,6 @@
             "ms_pol_cal_conditions"
           ],
           "source": "polcal.md 1-2"
-        },
-        {
-          "id": "o2",
-          "action": "ms_setjy_polcal",
-          "after": [
-            "ms_verify_model(polcal_fields)"
-          ],
-          "source": "polcal.md 3; 09 line 174"
         },
         {
           "id": "o3",
