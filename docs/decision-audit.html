@@ -1,0 +1,456 @@
+<title>Decision Tier Audit</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: one reading column (~72ch) with wide tables allowed to scroll; a sticky stage index on top. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --ink: #16202b;
+  --muted: #566270;
+  --rule: #d6dce2;
+  --accent: #1d5b86;
+  --t1: #5f6b78;
+  --t2: #1f7a75;
+  --t3: #a85a12;
+  --crit: #b42318;
+  --high: #c2410c;
+  --med: #8a6100;
+  --low: #4b5563;
+  --code-bg: #eef1f4;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f151b; --surface: #161e26; --ink: #e3e8ee; --muted: #9aa6b2; --rule: #2a3540;
+    --accent: #6fb0dc; --t1: #9aa6b2; --t2: #5cc4bd; --t3: #e39a52;
+    --crit: #f2776b; --high: #f59a5b; --med: #e0b64a; --low: #a8b1bc; --code-bg: #1d2731;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f151b; --surface: #161e26; --ink: #e3e8ee; --muted: #9aa6b2; --rule: #2a3540;
+  --accent: #6fb0dc; --t1: #9aa6b2; --t2: #5cc4bd; --t3: #e39a52;
+  --crit: #f2776b; --high: #f59a5b; --med: #e0b64a; --low: #a8b1bc; --code-bg: #1d2731;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--f-body);
+  font-size: 15.5px; line-height: 1.6; margin: 0;
+}
+.wrap {
+  max-width: 1040px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 64px;
+}
+.prose { max-width: 72ch; }
+h1, h2, h3 { font-family: var(--f-display); font-weight: 600; text-wrap: balance; line-height: 1.2; }
+h1 { font-size: 2.1rem; margin: 0 0 6px; letter-spacing: -0.01em; }
+h2 { font-size: 1.5rem; margin: 48px 0 12px; padding-top: 12px; border-top: 2px solid var(--ink); }
+h3 { font-size: 1.15rem; margin: 0; }
+p { margin: 0 0 12px; }
+a { color: var(--accent); }
+code, .mono { font-family: var(--f-mono); font-size: 0.86em; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+.eyebrow { font-family: var(--f-mono); font-size: 0.78rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 0.9rem; margin: 10px 0 18px; }
+.lede { font-size: 1.08rem; }
+
+nav.index {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--bg); border-bottom: 1px solid var(--rule);
+  margin: 0 calc(-1 * max(16px, env(safe-area-inset-left, 0px)));
+  padding: 8px max(16px, env(safe-area-inset-left, 0px));
+  display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.86rem;
+}
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+nav.index a { text-decoration: none; color: var(--muted); }
+nav.index a:hover, nav.index a:focus-visible { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.tier { display: inline-block; font-family: var(--f-mono); font-size: 0.76rem; font-weight: 500; padding: 1px 7px; border-radius: 3px; border: 1px solid currentColor; white-space: nowrap; }
+.T1 { color: var(--t1); } .T2 { color: var(--t2); } .T3 { color: var(--t3); }
+.sev { display: inline-block; font-family: var(--f-mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; padding: 0 6px; border-radius: 3px; color: var(--surface); white-space: nowrap; }
+.sev.crit { background: var(--crit); } .sev.high { background: var(--high); } .sev.med { background: var(--med); } .sev.low { background: var(--low); }
+.state { font-family: var(--f-mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; padding: 0 6px; border-radius: 3px; border: 1px solid var(--t2); color: var(--t2); white-space: nowrap; }
+.state.partial { border-color: var(--med); color: var(--med); }
+
+.tiers { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 14px 0; }
+.tiers > div { background: var(--surface); border: 1px solid var(--rule); border-top: 3px solid; padding: 12px 14px; min-width: 0; }
+.tiers .t1b { border-top-color: var(--t1); } .tiers .t2b { border-top-color: var(--t2); } .tiers .t3b { border-top-color: var(--t3); }
+.tiers h3 { margin-bottom: 4px; }
+.tiers p { font-size: 0.93rem; margin: 0; }
+
+.callout { background: var(--surface); border: 1px solid var(--rule); border-left: 4px solid var(--accent); padding: 12px 16px; margin: 16px 0; max-width: 80ch; }
+.callout p:last-child { margin: 0; }
+
+.scroll { overflow-x: auto; margin: 12px 0; border: 1px solid var(--rule); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; vertical-align: top; padding: 7px 10px; border-bottom: 1px solid var(--rule); }
+th { font-family: var(--f-display); font-weight: 600; font-size: 0.86rem; background: var(--code-bg); position: sticky; top: 0; }
+tr:last-child td { border-bottom: 0; }
+td.id { font-family: var(--f-mono); white-space: nowrap; }
+td.nowrap { white-space: nowrap; }
+
+.step { background: var(--surface); border: 1px solid var(--rule); padding: 14px 16px; margin: 12px 0; }
+.step header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 8px; }
+.step header .id { font-family: var(--f-mono); color: var(--muted); }
+.step dl { display: grid; grid-template-columns: 9.5em minmax(0, 1fr); gap: 4px 14px; margin: 0; font-size: 0.93rem; }
+.step dt { color: var(--muted); font-weight: 500; }
+.step dd { margin: 0; min-width: 0; }
+.step .change { color: var(--t3); font-weight: 500; }
+@media (max-width: 560px) { .step dl { grid-template-columns: 1fr; } .step dt { margin-top: 6px; } }
+
+ol.findings { padding-left: 0; list-style: none; counter-reset: f; }
+ol.findings li { background: var(--surface); border: 1px solid var(--rule); padding: 12px 16px; margin: 10px 0; counter-increment: f; }
+ol.findings li > .head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; margin-bottom: 6px; }
+ol.findings li > .head::before { content: "A" counter(f); font-family: var(--f-mono); color: var(--muted); }
+ol.findings p { margin: 4px 0; font-size: 0.94rem; }
+.src { font-family: var(--f-mono); font-size: 0.8rem; color: var(--muted); }
+
+ul.q { padding-left: 1.2em; } ul.q li { margin: 6px 0; }
+footer { margin-top: 48px; color: var(--muted); font-size: 0.86rem; border-top: 1px solid var(--rule); padding-top: 12px; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+html { scroll-behavior: smooth; }
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">radio-analyst · design working document</div>
+  <h1>Decision Tier Audit</h1>
+  <div class="meta">
+    <span>Updated 2026-10-28</span>
+    <span>Skills at <code>main@b590e74</code></span>
+    <span>Driver at <code>origin/driver-v2@3f6687d</code>, <code>origin/scope-split@b16d126</code></span>
+    <span>Status: 25 of 30 fixed or closed on branch <code>skills-audit</code>; open: A5, A10, A11, A14, A27</span>
+  </div>
+  <p class="prose lede">Every decision in a reduction, from inspection to selfcal, sorted by who should make it: the loop with no model, a small model following a skill rule, or Opus making a judgment. Each step lists the inputs the decision needs, what the skill says, and what has to be injected for the answer to be worth having. The skills audit that this pass turned up is at the end.</p>
+</header>
+
+<nav class="index" aria-label="Sections">
+  <a href="#tiers">Tiers</a><a href="#driver">Driver fit</a><a href="#summary">Summary</a>
+  <a href="#inspect">Inspect</a><a href="#precal">Precal</a><a href="#calibrate">Calibrate</a>
+  <a href="#postcal">Post-cal flag</a><a href="#polcal">Polcal</a><a href="#image">Image</a><a href="#selfcal">Selfcal</a>
+  <a href="#findings">Audit</a><a href="#haiku">Haiku reading</a><a href="#evidence">April evidence</a><a href="#questions">Questions</a><a href="#next">Next</a>
+</nav>
+
+<h2 id="tiers">The three tiers</h2>
+<div class="tiers">
+  <div class="t1b"><h3><span class="tier T1">T1</span> Loop, no model</h3><p>A fixed sequence of tool calls, or arithmetic over tool outputs. The loop runs it and puts the results in the brief. Every <code>before</code>/<code>after</code> check in <code>stages.json</code> is T1.</p></div>
+  <div class="t2b"><h3><span class="tier T2">T2</span> Small model</h3><p>A parameter set by a skill rule from named measured values: a lookup table, a ranking with a stated tie-break, a fixed call template. A skill table answers the question.</p></div>
+  <div class="t3b"><h3><span class="tier T3">T3</span> Opus</h3><p>A trade-off that needs the science goal, an anomaly, a recovery, or a review of a result against outside knowledge. Also any T2 step whose posterior check comes back anomalous.</p></div>
+</div>
+<div class="callout prose">
+  <p><strong>The rule that keeps this honest.</strong> The brief is built from ground truth with no model in the path. A small model may <em>act</em> beside Opus; it never <em>summarises</em> data for Opus to decide on. A mis-summary turns into a confident wrong decision and leaves nothing on disk to show it.</p>
+</div>
+
+<h2 id="driver">Where this fits the driver</h2>
+<div class="prose">
+  <p>On <code>driver-v2</code> the model decides and the loop executes, and they never run at the same time (<code>PLAN.md</code>, "The turn"). Two of its rules shape where the tiers can live:</p>
+  <ul>
+    <li><strong>The driver holds no tool list and no stage→tool table.</strong> The "leash" was dropped on purpose, because a stage table would refuse legitimate recovery (<code>07b</code>).</li>
+    <li><strong>The driver may report a number but never name a verdict.</strong> No threshold file; the thresholds live in the skills.</li>
+  </ul>
+  <p>So tier routing has to be <em>skill-owned data</em> that the driver reads, never driver code. The natural home is <code>.claude/skills/reduce/stages.json</code>: give each step a <code>tier</code> and an <code>escalate_when</code> naming the check that sends it to T3. The driver reads both fields the same way it reads the labels from <code>ms_workflow_status</code>, and holds no copy of them. The T1 checks follow the same pattern: the loop runs whatever <code>before</code>/<code>after</code> the contract names, and knows no tool names of its own.</p>
+  <p><code>scope-split</code> carries the analyst-side groundwork: the versioned <code>stage_log</code>, <code>ms_workflow_status</code> reading state from the stage log, and archiving a caltable on retry instead of deleting it. The tier fields depend on that, and the driver itself moves to a separate harness repository.</p>
+  <p class="callout"><strong>Open for Krishna:</strong> does a <code>tier</code> field in <code>stages.json</code> count as the stage table the plan rejected? I'd argue it doesn't: it selects a <em>model</em>, never refuses a <em>decision</em>, and an escalation only raises the tier.</p>
+</div>
+
+<h2 id="summary">Summary, all 24 steps</h2>
+<p class="prose">"Changed" marks a tier that moved after reading the skill text, compared with the first draft from the conversation. The audit IDs refer to the findings below.</p>
+<div class="scroll"><table>
+<thead><tr><th>Step</th><th>Action</th><th>Tier</th><th>Escalate to T3 when</th><th>Inject</th><th>Audit</th></tr></thead>
+<tbody>
+<tr><td class="id">i1, i2</td><td>Phase 1 + 2 inspection (12 tools)</td><td class="nowrap"><span class="tier T1">T1</span> run · <span class="tier T2">T2</span> roles</td><td>intents missing or a field role ambiguous</td><td>run scope</td><td>A3, A19, A23</td></tr>
+<tr><td class="id">p1</td><td>workflow_status, verify_import</td><td><span class="tier T1">T1</span></td><td>—</td><td></td><td></td></tr>
+<tr><td class="id">p2</td><td><code>ms_set_intents</code></td><td><span class="tier T2">T2</span></td><td>an uncatalogued field, or nominating a leakage cal</td><td></td><td></td></tr>
+<tr><td class="id">p3</td><td><code>ms_apply_preflag</code></td><td><span class="tier T2">T2</span></td><td>flag fraction after preflag &gt; 40%</td><td></td><td></td></tr>
+<tr><td class="id">p4</td><td><code>ms_generate_priorcals</code></td><td><span class="tier T2">T2</span></td><td><code>gain_curves.gc</code> missing</td><td></td><td>A8</td></tr>
+<tr><td class="id">p5</td><td><code>ms_setjy</code></td><td><span class="tier T2">T2</span></td><td>manual flux, P-band override, resolved cal, pol overlap</td><td></td><td>A16</td></tr>
+<tr><td class="id">p6</td><td><code>ms_initial_bandpass</code> + refant</td><td><span class="tier T2">T2</span></td><td>uvrange UNAVAILABLE; no antenna healthy on all fields</td><td></td><td>A6, A20</td></tr>
+<tr><td class="id">p7</td><td><code>ms_apply_initial_rflag</code></td><td><span class="tier T2">T2</span> <span class="change">changed</span></td><td>flag delta &gt; 30% or p95/median &gt; 8</td><td>worked distributions</td><td>A7</td></tr>
+<tr><td class="id">c1</td><td>calibration orientation (7 tools)</td><td><span class="tier T1">T1</span></td><td>—</td><td></td><td></td></tr>
+<tr><td class="id">c2</td><td><code>ms_gaincal</code> G0</td><td><span class="tier T2">T2</span></td><td>predicted SNR &lt; 3 at every solint tried</td><td></td><td>A5</td></tr>
+<tr><td class="id">c3</td><td><code>ms_gaincal</code> K</td><td><span class="tier T2">T2</span></td><td>|delay| &gt; 50 ns, or ±200 ns (feed swap)</td><td></td><td>A5</td></tr>
+<tr><td class="id">c4</td><td><code>ms_bandpass</code> B</td><td><span class="tier T2">T2</span></td><td>caltable flagged ≥ 30%; &gt; 3 antennas lost</td><td></td><td>A5</td></tr>
+<tr><td class="id">c5</td><td><code>ms_gaincal</code> G</td><td><span class="tier T2">T2</span></td><td>any post-flight check routes to 07b</td><td>07b worked cases</td><td>A17, A18</td></tr>
+<tr><td class="id">c6</td><td><code>ms_fluxscale</code></td><td class="nowrap"><span class="tier T2">T2</span> call · <span class="tier T3">T3</span> review</td><td>always reviewed</td><td>expected flux (callist)</td><td>A9</td></tr>
+<tr><td class="id">c7</td><td><code>ms_applycal</code> ×3</td><td><span class="tier T2">T2</span></td><td>antenna-set intersection &lt; 0.5</td><td></td><td>A14</td></tr>
+<tr><td class="id">f1</td><td><code>ms_postcal_flag</code></td><td><span class="tier T3">T3</span></td><td>—</td><td>24A-376 worked case</td><td></td></tr>
+<tr><td class="id">o1</td><td>pol conditions</td><td><span class="tier T3">T3</span></td><td>—</td><td>J1454 24° case; 3C84 at C-band</td><td>A3, A16</td></tr>
+<tr><td class="id">o2</td><td><code>ms_setjy_polcal</code></td><td><span class="tier T2">T2</span></td><td><code>ms_verify_model</code> shows a Stokes-I clobber</td><td></td><td></td></tr>
+<tr><td class="id">o3</td><td><code>ms_gaincal</code> KCROSS</td><td><span class="tier T2">T2</span></td><td>Kcross &gt; 2 ns</td><td></td><td>A4, A20, A21</td></tr>
+<tr><td class="id">o4</td><td><code>ms_polcal</code> Df</td><td><span class="tier T2">T2</span></td><td>median D &gt; 10%, or array-wide</td><td></td><td>A3</td></tr>
+<tr><td class="id">o5</td><td><code>ms_polcal</code> Xf</td><td><span class="tier T2">T2</span></td><td>PA residual &gt; 10°</td><td></td><td></td></tr>
+<tr><td class="id">o6</td><td><code>ms_applycal</code> parang</td><td><span class="tier T2">T2</span></td><td>—</td><td></td><td>A2</td></tr>
+<tr><td class="id">m1</td><td>imaging orientation (6 tools)</td><td><span class="tier T1">T1</span></td><td>—</td><td></td><td></td></tr>
+<tr><td class="id">m2</td><td><code>ms_tclean</code></td><td class="nowrap"><span class="tier T1">T1</span> geometry · <span class="tier T3">T3</span> choices</td><td>residual RMS &gt; 2× radiometer; DR &lt; 20</td><td>run scope / science goal</td><td>A10–A12</td></tr>
+<tr><td class="id">s0</td><td>selfcal: whether</td><td><span class="tier T3">T3</span></td><td>—</td><td>DR before/after cases</td><td></td></tr>
+<tr><td class="id">s1–s3</td><td>gaincal, applycal, tclean</td><td><span class="tier T2">T2</span></td><td>DR falls; peak drops</td><td>ngVLA selfcal memos</td><td>A1, A21</td></tr>
+</tbody></table></div>
+<p class="prose">Tally: T1 for 6 groups of checks and the arithmetic; T2 for 17 action steps; T3 for 4 standing decisions (post-cal flagging, polarisation strategy, imaging choices, selfcal) plus 2 reviews (fluxscale, the image). Judgment clusters where an analyst slows down: flagging, polarisation, imaging, and checking a result against what it should be.</p>
+
+<h2 id="inspect">Inspect</h2>
+<div class="step"><header><span class="id">i1 · i2</span><h3>Orientation and instrument sanity</h3><span class="tier T1">T1</span><span class="tier T2">T2</span></header><dl>
+<dt>Calls</dt><dd>12 tools in a fixed order (<code>stages.json</code> i1, i2). No parameters to choose.</dd>
+<dt>Skill says</dt><dd><code>01-workflow.md</code>, <code>01b</code>, <code>04-diagnostic-reasoning.md</code>: a five-section report and a go/no-go.</dd>
+<dt>Decision</dt><dd>Field roles (flux, BP, phase, leakage, target), and go/no-go.</dd>
+<dt>Inputs</dt><dd><code>ms_field_list</code> intents and <code>nearest_phase_cal</code>; <code>ms_scan_intent_summary</code>; elevation and PA ranges.</dd>
+<dt>Verdict</dt><dd>The loop runs the tools. Assigning roles from populated intents is T2. If intents are missing or contradict the catalogue, it goes to T3.</dd>
+<dt>Inject</dt><dd>The run scope: Stokes I or full polarisation, continuum or line. Without it, later steps (setjy <code>usescratch</code>, polcal, imaging) cannot be decided. The driver already has a free-text run scope (T10, <code>3f6687d</code>).</dd>
+</dl></div>
+
+<h2 id="precal">Precal</h2>
+<div class="step"><header><span class="id">p1</span><h3>State probe</h3><span class="tier T1">T1</span></header><dl>
+<dt>Calls</dt><dd><code>ms_workflow_status</code>, <code>ms_verify_import</code>.</dd><dt>Verdict</dt><dd>Pure probe. The loop already does this as "Sense".</dd></dl></div>
+
+<div class="step"><header><span class="id">p2</span><h3>Set intents</h3><span class="tier T2">T2</span></header><dl>
+<dt>Skill says</dt><dd><code>00-playbook.md:11</code>; CLAUDE.md <code>set_intents</code> logic: catalogue match plus a cone search.</dd>
+<dt>Decision</dt><dd>Whether to run (intents missing), and <code>pol_leakage_fields</code>.</dd>
+<dt>Verdict</dt><dd>Catalogue matching is T2. Nominating an uncatalogued leakage cal is a strategy call and goes to T3. In April, Sonnet's run labelled the phase cal J1822-0938 as the target by default; check whether the cone search fixes that on 3C391.</dd></dl></div>
+
+<div class="step"><header><span class="id">p3</span><h3>Preflag and calibrator split</h3><span class="tier T2">T2</span></header><dl>
+<dt>Skill says</dt><dd><code>10:102–135</code>. Online flags applied as-is; quack 5 s; flag-fraction bands &lt;10 / 10–25 / 25–40 / &gt;40%.</dd>
+<dt>Inputs</dt><dd><code>ms_online_flag_stats</code> (<code>n_commands</code>, <code>reason_breakdown</code>); <code>ms_flag_summary</code> after.</dd>
+<dt>Verdict</dt><dd>Close to T1: the parameters are fixed. T2 because the calibrator fields come from p2. Goes to T3 above 40%, where the cause has to be found.</dd></dl></div>
+
+<div class="step"><header><span class="id">p4</span><h3>Prior caltables</h3><span class="tier T2">T2</span></header><dl>
+<dt>Skill says</dt><dd><code>10:139–152</code>. Which tables are required depends on the band.</dd>
+<dt>Verdict</dt><dd>A band lookup. The text contradicts itself on <code>opacities.opac</code> (A8).</dd></dl></div>
+
+<div class="step"><header><span class="id">p5</span><h3>Flux model (setjy)</h3><span class="tier T2">T2</span></header><dl>
+<dt>Skill says</dt><dd><code>10:156–194</code>, <code>07:56–89</code>. Never pass <code>standard</code>; <code>usescratch=True</code> when polarisation is in scope.</dd>
+<dt>Inputs</dt><dd>Run scope (polarisation or not); the <code>flux_standard_resolution</code>, <code>skipped_no_standard</code> and <code>n_range_checked</code> fields in the response.</dd>
+<dt>Verdict</dt><dd>T2 on the normal path. T3 for manual flux, a P-band override, a resolved calibrator, or a pol-angle cal that overlaps a flux cal (<code>exclude_fields</code>). The leakage cal's model is a gap (A16).</dd></dl></div>
+
+<div class="step"><header><span class="id">p6</span><h3>Refant and initial bandpass</h3><span class="tier T2">T2</span></header><dl>
+<dt>Skill says</dt><dd><code>10:198–281</code>. Rank on every calibrator; take the highest antenna that is healthy on all of them; uvrange from the <code>ms_field_list</code> warnings; <code>applycal_field=bp_field</code>.</dd>
+<dt>Inputs</dt><dd><code>ms_refant</code> once per calibrator field (<code>flag_score</code>, <code>geo_score</code>); the bandpass field's <code>resolved_source</code> and warnings.</dd>
+<dt>Verdict</dt><dd>T2. The rule is explicit, and the April runs agreed (both chose ea21). T3 when uvrange is UNAVAILABLE or no antenna is healthy everywhere. The text contradicts itself on re-running this step (A6).</dd></dl></div>
+
+<div class="step"><header><span class="id">p7</span><h3>Initial rflag on residuals</h3><span class="tier T2">T2</span> <span class="change">moved from T3</span></header><dl>
+<dt>Skill says</dt><dd><code>10:319–378</code>. Bandpass cal only, and only with a real model. A p95/median band table; 7σ instead of 5σ when the phase cal is below 30° elevation; flag-delta bands.</dd>
+<dt>Inputs</dt><dd><code>ms_verify_model</code>; <code>ms_residual_stats</code> per SpW and the <code>chan_*</code> arrays; minimum phase-cal elevation from i2.</dd>
+<dt>Verdict</dt><dd>The skill gives explicit rules, so T2. Goes to T3 when the delta is &gt; 30% or p95/median &gt; 8, where the question becomes finding a bad scan or SpW. The go/no-go gate tells you to re-run this step on the gain calibrator, which the step forbids (A7). That is the exact April failure.</dd>
+<dt>Inject</dt><dd>Two or three worked residual distributions: clean, narrowband RFI, broadband RFI.</dd></dl></div>
+
+<h2 id="calibrate">Calibrate</h2>
+<div class="step"><header><span class="id">c1</span><h3>Orientation</h3><span class="tier T1">T1</span></header><dl><dt>Verdict</dt><dd>Seven probes; also fills the placeholder table (<code>07:20–41</code>) from tool outputs. Filling the placeholders is T1 arithmetic and lookup.</dd></dl></div>
+
+<div class="step"><header><span class="id">c2</span><h3>Initial phase, G0</h3><span class="tier T2">T2</span></header><dl>
+<dt>Skill says</dt><dd><code>07:106–130</code> SNR check, <code>07:221–258</code> call. Central channels, <code>solint='int'</code>.</dd>
+<dt>Inputs</dt><dd><code>ms_gaincal_snr_predict</code> <code>predicted_snr_per_spw</code>; <code>flux_jy</code> from setjy.</dd>
+<dt>Verdict</dt><dd>T2: shortest solint that clears the predicted SNR, using the skill table. T3 if no solint gets there.</dd></dl></div>
+
+<div class="step"><header><span class="id">c3 · c4</span><h3>Delay K, bandpass B</h3><span class="tier T2">T2</span></header><dl>
+<dt>Skill says</dt><dd><code>07:262–348</code>. Fixed templates; <code>nearest,nearestflag</code> interp for K; tfcrop on B before it is used.</dd>
+<dt>Inputs</dt><dd><code>ms_calsol_stats</code> (<code>delay_ns</code>, <code>phase_rms_deg</code>, <code>n_antennas_lost</code>, outliers); <code>ms_flag_caltable</code> flagged fraction.</dd>
+<dt>Verdict</dt><dd>T2 for the calls. T3 for a feed swap (±200 ns), a B caltable flagged ≥ 30% (fix upstream rather than loosening sigma), or &gt; 3 antennas lost.</dd></dl></div>
+
+<div class="step"><header><span class="id">c5</span><h3>Gain G and recovery</h3><span class="tier T2">T2</span></header><dl>
+<dt>Skill says</dt><dd><code>07:352–523</code>, recovery trees in <code>07b</code>. A source-type classification (bright, phase, weak, resolved) sets the flag-jump tolerances.</dd>
+<dt>Verdict</dt><dd>Calls and checks are T2. The source classification is a catalogue lookup (T2) except for resolved calibrators. Any route into <code>07b</code> is T3, since recovery is diagnosis.</dd>
+<dt>Inject</dt><dd>One worked case per recovery tree. 07b has the trees but no worked runs.</dd></dl></div>
+
+<div class="step"><header><span class="id">c6</span><h3>Fluxscale</h3><span class="tier T2">T2</span><span class="tier T3">T3</span></header><dl>
+<dt>Skill says</dt><dd><code>07:527–565</code>. Compare the derived phase-cal flux with "the VLA calibrator manual or known source monitoring"; a 10× low flux means a <code>usescratch</code> collision.</dd>
+<dt>Verdict</dt><dd>The call is T2. The review is T3, and it lacks an input: no step hands the expected flux to the model (A9). <code>ms_phase_cal_lookup</code> already returns the callist flux per band. Add it to the brief, with a note that phase calibrators vary.</dd></dl></div>
+
+<div class="step"><header><span class="id">c7</span><h3>Applycal ×3</h3><span class="tier T2">T2</span></header><dl>
+<dt>Skill says</dt><dd><code>07:630–745</code>. Antenna-set intersection before applying; then fixed gainfield/interp per field type.</dd>
+<dt>Verdict</dt><dd>The gainfield/interp mapping is a template (T2). The intersection is set arithmetic over <code>ms_calsol_stats</code> outputs that the model currently does by hand. It should be T1 (A14). Below 0.5 it goes to T3.</dd></dl></div>
+
+<h2 id="postcal">Post-cal flagging</h2>
+<div class="step"><header><span class="id">f1</span><h3>Residual clip on the primaries, triage on the target</h3><span class="tier T3">T3</span></header><dl>
+<dt>Skill says</dt><dd><code>13</code> in full: clip at N × the thermal floor from clean SpWs; iterate from the base flags with <code>calonly</code> interim applies; triage the target per channel and per half-SpW.</dd>
+<dt>Inputs</dt><dd><code>ms_spw_amp_severity</code>, <code>ms_residual_stats</code> <code>chan_*</code>, flag versions. Per-channel MAD of Re(CORRECTED) on the target has no tool yet (<code>13:146–149</code>).</dd>
+<dt>Verdict</dt><dd>T3 confirmed. Choosing the clean SpWs, N, the stopping point, and plateau-versus-spike all need judgment, and there is a known missing measurement.</dd>
+<dt>Inject</dt><dd>The 24A-376 numbers already in the skill, written out as a worked case with before/after flag fractions.</dd></dl></div>
+
+<h2 id="polcal">Polcal</h2>
+<div class="step"><header><span class="id">o1</span><h3>Polarisation strategy</h3><span class="tier T3">T3</span></header><dl>
+<dt>Skill says</dt><dd><code>09:17–85</code>. Xf and Df are independent; Df poltype follows source knowledge; PA coverage is a continuum.</dd>
+<dt>Inputs</dt><dd><code>ms_pol_cal_conditions</code>: <code>pol_angle_calibrator</code>, <code>leakage_calibrator.effective_role_at_band</code>, <code>pa_spread_deg</code>, <code>leakage_cal_candidates</code>, <code>recommended_df_poltype</code>; run scope.</dd>
+<dt>Verdict</dt><dd>T3. The leakage source, what can be claimed at a given coverage, and switching sources are all trade-offs against the science goal.</dd>
+<dt>Inject</dt><dd>The J1454 24° case (<code>docs/session_context.md:65</code>). For 3C391: 3C84 (J0319+4130) is in the MS and is low-pol at C-band, so it is the natural <code>Df</code> source. Sonnet's April run never set a model for it (A16).</dd></dl></div>
+
+<div class="step"><header><span class="id">o2–o6</span><h3>Model, Kcross, Df, Xf, apply</h3><span class="tier T2">T2</span></header><dl>
+<dt>Skill says</dt><dd><code>09:103–351</code>. Fixed templates once o1 has decided.</dd>
+<dt>Verdict</dt><dd>T2 for each, following o1's decisions. Escalate on Kcross &gt; 2 ns, median D &gt; 10%, or PA residual &gt; 10°. The apply template has a flux-scale defect (A2), the Kcross <code>combine</code> guidance contradicts itself (A4), and a gate contradicts the coverage continuum (A3).</dd></dl></div>
+
+<h2 id="image">Image</h2>
+<div class="step"><header><span class="id">m1 · m2</span><h3>First image</h3><span class="tier T1">T1</span><span class="tier T3">T3</span></header><dl>
+<dt>Skill says</dt><dd><code>11</code>. Ask the user which fields and which Stokes; a coherence gate on CORRECTED; cell, imsize, W-term and threshold derived by formula; gridder from a table.</dd>
+<dt>Verdict</dt><dd>Cell, imsize, <code>wprojplanes</code> and the radiometer threshold are arithmetic over tool outputs, so T1. They could ship as labelled <code>suggested.*</code> values, which the contract allows. Field selection, weighting, deconvolver and gridder depend on the science goal: T3. The review of <code>ms_image_stats</code> is T3; in April, Haiku explained away an RMS 9.5× the radiometer estimate.</dd>
+<dt>Inject</dt><dd>The run scope stands in for "ask the user" (A11). Expert defaults for an extended-source mosaic (A12).</dd></dl></div>
+
+<h2 id="selfcal">Selfcal</h2>
+<div class="step"><header><span class="id">s0–s3</span><h3>Whether, then one phase-only round</h3><span class="tier T3">T3</span><span class="tier T2">T2</span></header><dl>
+<dt>Skill says</dt><dd><code>12</code>. DR bands decide whether; phase-only, <code>solint='inf'</code>; compare DR before and after; stop and recommend.</dd>
+<dt>Verdict</dt><dd>The decision whether to selfcal is T3. The round itself is T2 once A1 is fixed. As written, the templates drop the calibration stack.</dd>
+<dt>Inject</dt><dd>Before/after examples, including one where selfcal should not run.</dd></dl></div>
+
+<h2 id="findings">Skills audit</h2>
+<p class="prose">Read against <code>main@b590e74</code>. Severity is about the science outcome if a model follows the text literally. Line numbers are for the file named, before the A1/A2 edits.</p>
+<p class="prose"><strong>Coverage.</strong> Every file under <code>radio-interferometry/</code> (00–13, 07b, 09b, SKILL.md), <code>reduce/SKILL.md</code> and <code>stages.json</code>, and the six command files in <code>.claude/commands/</code>, read in full. Not read: <code>wildcat/</code>, which nothing links to (CLAUDE.md calls it unreachable from SKILL.md). Tool signatures were checked for the defaults and arguments the fixes depend on. That check found A5 is covered by the tools, and A21 is new.</p>
+<ol class="findings">
+<li><div class="head"><span class="sev crit">critical</span><span class="state">fixed</span><strong>Selfcal templates drop the calibration stack</strong></div>
+<p><em>Fixed on <code>skills-audit</code>:</em> both calls carry the full 07 Step 7c stack, with refant, gainfield, interp and spw. The solve takes <code>gain.fluxscaled</code> from the phase cal only, using the new <code>gainfield</code> pass-through (A21).</p>
+<p><code>ms_gaincal</code> solves with <code>gaintable={PRIORCALS}</code> only, and <code>ms_applycal</code> applies <code>[PRIORCALS, pcal1.g]</code>. applycal writes CORRECTED from DATA, so K, B and <code>gain.fluxscaled</code> are discarded, and the selfcal solve absorbs the whole calibration. Neither call passes refant, gainfield or interp.</p>
+<p>Evidence: Sonnet, April: selfcal phase RMS 50–150°, peak −40%.</p>
+<p class="src">12-selfcal.md:65–75, 122–128</p></li>
+<li><div class="head"><span class="sev crit">critical</span><span class="state">fixed</span><strong>Polcal apply uses <code>gain.G</code>, not <code>gain.fluxscaled</code></strong></div>
+<p><em>Fixed:</em> 09 Step 5 is now per field type with <code>gain.fluxscaled</code>, gainfield, interp and the spwmap note. The tool API table and <code>commands/polcal.md</code> step 7 point to it.</p>
+<p>Step 5 applies one stack to all fields with <code>gain.G</code> and no gainfield or interp. The target loses its flux scale and takes solutions from whichever field is nearest in time. Skill 07's per-field-type applycal is the correct pattern. Sonnet corrected this on its own in April; a smaller model may not.</p>
+<p class="src">09-polcal-execution.md:330–345</p></li>
+<li><div class="head"><span class="sev high">high</span><span class="state">fixed</span><strong>The old PA-coverage belief survives in four files</strong></div>
+<p>09's opening section says PA coverage matters only for <code>Df+QU</code>, and gives a continuum. But the 09 decision table and summary say "below threshold → neither". <code>01b</code> says "&lt; 30°: insufficient for D-term solutions; full polarimetric calibration requires ≥ 60°". <code>03</code> says "&lt; 30°: insufficient". <code>05</code> lists "D-terms from leakage cal with good PA coverage". SKILL.md has the model read <code>01b</code> first, so the wrong belief is in place before 09 is ever opened. <code>commands/polcal.md</code> also hardcodes <code>poltype='Df+QU'</code>, against 09's own table.</p>
+<p class="src">09:242–243, 381 vs 64–78; 01b-workflow-phase2.md:60–64; 03-instrument-sanity.md:91–98; 05-calibrator-science.md:94, 217; commands/polcal.md:50</p></li>
+<li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong>Kcross combine: "recommended" vs "do not assume"</strong></div>
+<p>The API table recommends <code>combine='scan,spw'</code>. Step 2 says per-SpW is the default and not to assume multiband. If the wrong one is picked, SpWs 1..N are silently uncorrected unless spwmap is passed.</p>
+<p class="src">09-polcal-execution.md:96–97 vs 207–220</p></li>
+<li><div class="head"><span class="sev low">low</span><strong><code>parang=True</code> "always", but missing from most templates</strong></div>
+<p>The rule says every gaincal, bandpass and applycal call; Steps 1–3 and 7a–7c omit it. Downgraded: <code>ms_gaincal</code>, <code>ms_bandpass</code> and <code>ms_applycal</code> all default to <code>parang=True</code>, so leaving it out does no harm. This is a documentation inconsistency only.</p>
+<p class="src">07-calibration-execution.md:773–777 vs 228–325, 689–738</p></li>
+<li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong>"Never re-run initial bandpass" vs "re-run Step 6"</strong></div>
+<p>Step 6 forbids re-running it. The refant check after Step 8 says to switch refant and re-run Step 6.</p>
+<p class="src">10-precal-workflow.md:278–281 vs 397–400</p></li>
+<li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong>Gate re-runs rflag on the gain calibrator</strong></div>
+<p>"≥ 50% on the gain calibrator → relax rflag thresholds and re-run Step 8". Step 8 runs only on the bandpass cal and never on the phase cal. This is the April over-flagging (J1822-0938 at 51%).</p>
+<p class="src">10-precal-workflow.md:391 vs 345–355</p></li>
+<li><div class="head"><span class="sev low">low</span><span class="state">fixed</span><strong><code>opacities.opac</code> required or not</strong></div>
+<p>The table says it is required only at K-band and above. The paragraph after it says a missing table means do not proceed.</p>
+<p class="src">10-precal-workflow.md:147 vs 151–152</p></li>
+<li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong>Fluxscale review has no expected value to compare against</strong></div>
+<p>The skill says to compare with "the VLA calibrator manual". No step puts that number in front of the model. <code>ms_phase_cal_lookup</code> returns the callist flux per band.</p>
+<p class="src">07-calibration-execution.md:547–550</p></li>
+<li><div class="head"><span class="sev med">medium</span><strong>Radiometer estimate: polarisations and efficiency</strong></div>
+<p><code>SEFD / sqrt(2·Δν·t·n_bl)</code> is the single-polarisation noise. Stokes I from two polarisations is √2 lower, there is no correlator efficiency term, and Δν should be the unflagged bandwidth. This is the reference for the "&gt; 2× radiometer" gate, so it matters. Needs expert confirmation.</p>
+<p class="src">11-imaging.md:202–206</p></li>
+<li><div class="head"><span class="sev med">medium</span><strong>Imaging asks a user who isn't there</strong></div>
+<p>Step 0 asks the user which fields and which Stokes. In the driver there is no user; the run scope has to supply both.</p>
+<p class="src">11-imaging.md:36–52</p></li>
+<li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong>Gridder for a VLA mosaic: two files disagree</strong></div>
+<p><code>02</code> says a mosaic requires <code>gridder='mosaic'</code>. <code>11</code> and <code>commands/image.md</code> say <code>awp2</code> for every VLA mosaic. A model that reads both has to pick one. Confirm <code>awp2</code> in casatasks 6.7, and when it is worth its cost over <code>mosaic</code>.</p>
+<p class="src">02-orientation.md:112 vs 11-imaging.md:181–187; commands/image.md:46</p></li>
+<li><div class="head"><span class="sev low">low</span><span class="state">fixed</span><strong>Stale output path</strong></div>
+<p><code>/data/jobs/{WORKFLOW_ID}/</code> is from an older layout.</p>
+<p class="src">09-polcal-execution.md:361</p></li>
+<li><div class="head"><span class="sev med">medium</span><strong>The model does set arithmetic by hand</strong></div>
+<p>The antenna-set intersection is computed from several <code>ms_calsol_stats</code> calls by the model. It is deterministic, so it belongs in the loop or in a tool as a reported fraction, with the 0.5 threshold staying in the skill.</p>
+<p class="src">07-calibration-execution.md:630–671</p></li>
+<li><div class="head"><span class="sev low">low</span><span class="state">fixed</span><strong>Selfcal: recommend or decide</strong></div>
+<p>12 says to stop and let the user decide. The reduce skill says selfcal is the model's decision. In the driver nobody is there to recommend to. Pick one.</p>
+<p class="src">12-selfcal.md:5–8, 205 vs reduce/SKILL.md:78–81</p></li>
+<li><div class="head"><span class="sev med">medium</span><span class="state">not a defect</span><strong>The leakage cal gets no Stokes I model</strong></div>
+<p><code>ms_setjy</code> models flux standards only, so 3C84 (J0319+4130) on 3C391 is skipped. A <code>Df</code> solve on a zero-pol source still needs its Stokes I. No step supplies it, for example from the fluxscale transfer. In April, Sonnet fell back to <code>Df</code> on 3C286 with 6.4° of PA.</p>
+<p class="src">10-precal-workflow.md:156–194; 09-polcal-execution.md:237–248; workdir_sonnet/run_log.md:58, 200–202</p>
+<p><em>Closed (expert ruling):</em> a <code>Df</code> solve assumes unit Stokes I and zero Q, U and solves for the leakage, so a zero-pol leakage cal needs no model. 10 Step 4 now says so.</p></li>
+<li><div class="head"><span class="sev high">high</span><span class="state">fixed</span><strong>Recovery trees shorten solint to raise SNR</strong></div>
+<p>Recovery Tree 2 says to retry low SNR with <code>solint='int'</code> because "per-integration solutions have more data per fit". That is backwards: a shorter solint averages less data and lowers SNR. Tree 3 says "retry with longer solint", then gives <code>'10s'</code> or <code>'1min'</code> in place of <code>'inf'</code> (shorter), with the same reversed rationale. A model that trusts the text makes a low-SNR solve worse.</p>
+<p class="src">07b-gaincal-recovery.md:84–91, 149–154</p></li>
+<li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong>A section that doesn't exist</strong></div>
+<p>07, 07b and the 07 gate send the model to <code>CALIBRATION_PREFLAG</code> "in 10-precal-workflow.md". No such section exists. A literal model searches for it, then improvises.</p>
+<p class="src">07-calibration-execution.md:338, 516, 621; 07b-gaincal-recovery.md:37–38</p></li>
+<li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong>"Apply the online flags yourself"</strong></div>
+<p><code>01b</code> and <code>03</code> say that many online flag commands but a low data flag fraction means the flags were not applied, so run <code>flagcmd(action='apply')</code>. At inspection that is the expected state: import uses <code>applyflags=False</code>, and <code>ms_apply_preflag</code> applies the flags later. A literal model would apply them off the tools, without a ledger entry, before preflag.</p>
+<p class="src">01b-workflow-phase2.md:104–106; 03-instrument-sanity.md:161; CLAUDE.md ms_create fixed parameters</p></li>
+<li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong>The command files drift from the skills</strong></div>
+<p><code>commands/precal.md</code> step 9 ranks the refant on the bandpass field only; 10 Step 5 requires every calibrator. <code>commands/polcal.md</code> step 4 sets <code>combine='scan,spw'</code> with no spwmap note, which 09 calls a deliberate choice, not a default. The reduce skill points at these files for "the step detail", so where they disagree the model gets two answers.</p>
+<p class="src">commands/precal.md:65; commands/polcal.md:45–47; reduce/SKILL.md:85–93</p></li>
+<li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong><code>ms_gaincal</code> and <code>ms_polcal</code> take no <code>gainfield</code></strong></div>
+<p><em>Fixed on <code>skills-audit</code>:</em> it's an optional argument, length-checked against <code>gaintable</code>, and written into the script only when given, so existing scripts are unchanged. 5 new unit tests; the full suite passes (1142).</p>
+<p>A solve that uses a multi-field gain table as a prior cannot pick which field's rows it applies. That covers selfcal against <code>gain.fluxscaled</code>, and Kcross/Df/Xf against <code>gain.G</code>. CASA <code>gaincal</code> and <code>polcal</code> both accept it. Adding it is a small tool change, a pass-through like <code>ms_applycal</code>'s.</p>
+<p class="src">src/ms_modify/gaincal.py:96–117; src/ms_modify/polcal.py</p></li>
+<li><div class="head"><span class="sev low">low</span><span class="state">fixed</span><strong>A competing calibration recipe in 05</strong></div>
+<p><code>05</code> gives a "standard reduction" with phase-only gaincal on the phase cal, ap on the flux cal, and <code>polcal(poltype='Kcross')</code>. 07 solves one ap gain on all calibrators, and Kcross is <code>gaincal(gaintype='KCROSS')</code>. It is labelled context, but a small model may follow the shorter list.</p>
+<p class="src">05-calibrator-science.md:207–221</p></li>
+<li><div class="head"><span class="sev low">low</span><span class="state">fixed</span><strong>Step 2.1 split across two files</strong></div>
+<p><code>01</code> ends at "What to note:" for Step 2.1. The bullets are the first lines of <code>01b</code>, which begins without a heading. A model that reads 01 alone gets a step with no content.</p>
+<p class="src">01-workflow.md:156–162; 01b-workflow-phase2.md:1–12</p></li>
+<li><div class="head"><span class="sev low">low</span><span class="state">fixed</span><strong>Small factual slips</strong></div>
+<p>3C286 "~11% at L-band" (<code>05:89</code>); the session's own model used 9.67% at 1.42 GHz. CASA standard spelled <code>perley-butler-2017</code> (<code>05:25</code>), though the tool resolves it. Online flag file path <code>{ORIGINAL_ASDM}/.flagonline.txt</code> (<code>07b:134</code>); import writes <code>&lt;ms&gt;.flagonline.txt</code>. Recovery B "minsnr 3.0 (from 5.0)", where the Step 4 gain solve already uses 3.0 (<code>07b:49</code>).</p>
+<p class="src">05-calibrator-science.md:25, 89; 07b-gaincal-recovery.md:49, 134</p></li>
+<li><div class="head"><span class="sev high">high</span><span class="state">fixed</span><strong>Excluding the angle cal from setjy leaves it unmodelled through precal and calibrate</strong></div>
+<p>09 and 05 say to pass the pol-angle cal to <code>ms_setjy(exclude_fields=...)</code> and let <code>ms_setjy_polcal</code> be its only model writer. On 3C391 that field is also the flux and bandpass cal. <code>ms_setjy_polcal</code> runs only in the polcal stage, after precal and calibrate. Followed literally, 3C286 sits at the 1 Jy default through the initial bandpass, the residual rflag, the gain solve and fluxscale. No file says to run <code>ms_setjy_polcal</code> early. Found by Haiku.</p>
+<p class="src">09-polcal-execution.md:166–171; 05-calibrator-science.md:223–228; 10-precal-workflow.md:156–194, 345–353</p></li>
+<li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong>Requantizer table "VLA post-2011 only"</strong></div>
+<p>Haiku dropped <code>requantizer.rq</code> on the 2010 3C391 data because of this row, though the tool generated it. Those data are from the new correlator (WIDAR). If the requantizer correction applies to all WIDAR data, the row's cutoff misleads a literal model. Needs expert confirmation.</p>
+<p class="src">10-precal-workflow.md:148</p></li>
+<li><div class="head"><span class="sev med">medium</span><strong>Gain-table flagging refused, with no manual path</strong></div>
+<p>With fewer than 10 solution intervals, <code>ms_flag_caltable</code> refuses, and the skill says to flag "by hand" from <code>ms_calsol_stats</code> outliers. No step or tool says how. On 3C391, with one or two scans per calibrator, this is the normal case.</p>
+<p class="src">07-calibration-execution.md:166–175, 508–512</p></li>
+<li><div class="head"><span class="sev low">low</span><span class="state">fixed</span><strong>Imaging template sets no <code>pblimit</code></strong></div>
+<p>Step 9 measures RMS inside <code>pb_level</code> = abs(<code>pblimit</code>) "of the tclean call", but the Step 8 template never sets <code>pblimit</code>.</p>
+<p class="src">11-imaging.md:243–262 vs 281</p></li>
+<li><div class="head"><span class="sev low">low</span><span class="state">fixed</span><strong>Field selection by ID in examples</strong></div>
+<p>11's placeholder example is <code>'2~8'</code>. 07 forbids numeric IDs because <code>split</code> renumbers fields. 12 Step 0 passes one numeric <code>field_id</code> to <code>ms_residual_stats</code> for a 7-field mosaic target.</p>
+<p class="src">11-imaging.md:19; 07-calibration-execution.md:45–52; 12-selfcal.md:49–53</p></li>
+<li><div class="head"><span class="sev low">low</span><span class="state">fixed</span><strong>Where the SNR prediction runs, and what to do with it</strong></div>
+<p>07 runs <code>ms_gaincal_snr_predict</code> before Step 4, the gain solve. <code>commands/calibrate.md</code> runs it before G0, with a different relaxation rule. 07:127 offers two fixes with no order between them.</p>
+<p class="src">07-calibration-execution.md:106–130; commands/calibrate.md:47–49</p></li>
+</ol>
+
+<h2 id="haiku">How Haiku reads these docs</h2>
+<div class="prose">
+<p><strong>Method.</strong> Haiku was given a snapshot of the skills at <code>b590e74</code> (before the A1/A2 edits) and a 3C391 scenario: the fields, refant ranking, flag fractions, PA spreads and run scope. It was asked to walk the reduction on paper: the exact call for each step, the line it followed, and every point where it was unsure. It called no tools.</p>
+<p><strong>Two things weaken the result.</strong> The prompt named the areas to watch: the final applycal calls, the selfcal calls, the D-term source and the gridder. Those are where A1–A3 and A12 sit, so Haiku catching them is not independent evidence. It also read the live repo copies to compare, so it had seen the A1/A2 fixes. It did notice by itself that the snapshot's polcal apply contradicts 07 Step 7. Its value is in what it found <em>outside</em> the named areas: A25–A30.</p>
+</div>
+<div class="scroll"><table>
+<thead><tr><th>Behaviour</th><th>Example</th><th>What it means for the tiers</th></tr></thead>
+<tbody>
+<tr><td>Refuses to invent values</td><td>Every number missing from the scenario written as <code>&lt;X&gt;</code>: max baseline, antenna count, channel strings</td><td>Good for T2: an incomplete brief shows up as gaps, not as invented values</td></tr>
+<tr><td>Cross-checks passages and records which it followed</td><td>refant: 07 makes one call with both fields, 10 makes one per field; it used 10 and said so</td><td>Ask every T2 turn for an "ambiguities" list. It is cheap and it surfaces doc defects</td></tr>
+<tr><td>Literalism drops a needed step</td><td>Dropped the requantizer table on the "post-2011 only" row (A26)</td><td>A wrong rule in a skill reaches the data at T2. Doc quality bounds T2 quality</td></tr>
+<tr><td>Spots ordering conflicts across files</td><td>The setjy exclusion vs precal (A25)</td><td>Small models read rules locally and catch collisions when asked to</td></tr>
+<tr><td>Defers judgment it can't ground</td><td>Df source left conditional on a frac-pol number it didn't have; selfcal decision left unmade with no image numbers</td><td>The right call. These are T3 points</td></tr>
+</tbody></table></div>
+<p class="prose"><strong>Paper and live runs differ.</strong> On paper, told to be careful and to list doubts, Haiku was cautious and literal. In the April live run it explained away an RMS 9.5× the radiometer estimate. The live failure was in <em>reviewing a result</em>, not in following a template. That supports T2 for template steps and T3 for every review of a measured outcome.</p>
+
+<h2 id="evidence">Evidence from the April runs</h2>
+<p class="prose">Two runs on 3C391 at low effort, before many of today's fixes, so this is historical. Treat each line as a pointer, not a measurement of the current tools.</p>
+<div class="scroll"><table>
+<thead><tr><th>What happened</th><th>Run</th><th>Bears on</th><th>Since then</th></tr></thead>
+<tbody>
+<tr><td>Both chose refant ea21</td><td>Haiku, Sonnet</td><td>p6 is a good T2 candidate</td><td>—</td></tr>
+<tr><td>rflag on the phase cal pushed J1822-0938 to 51% flagged; Df+QU then failed</td><td>Sonnet</td><td>p7, A7</td><td>10 now forbids it; the gate still says it</td></tr>
+<tr><td><code>usescratch=False</code> left MODEL empty; the model re-ran setjy</td><td>Sonnet</td><td>p5</td><td>Covered in 10 and 09</td></tr>
+<tr><td>Selfcal: phase RMS 50–150°, peak −40%, DR +10.7% called "moderate"</td><td>Sonnet</td><td>A1, s0</td><td>Open</td></tr>
+<tr><td>D-terms on 3C286 at 6.4° PA; 3C84 unused</td><td>Sonnet</td><td>o1, A16</td><td>Open</td></tr>
+<tr><td>DR 21 and RMS 9.5× radiometer, explained away as "scientifically usable"</td><td>Haiku</td><td>m2 review is T3</td><td>Open</td></tr>
+<tr><td>A tool bug (polcal flux missing) patched mid-run</td><td>Sonnet</td><td>o2</td><td>Fixed in the catalogue</td></tr>
+</tbody></table></div>
+<p class="src">Sources: workdir_sonnet/run_log.md, workdir_haiku/run_log.md</p>
+
+<h2 id="questions">Questions for the expert</h2>
+<ul class="q prose">
+<li><strong>Setjy order with polarisation (A25).</strong> When the flux/BP cal is also the angle cal, should <code>ms_setjy_polcal</code> run in precal, before the initial bandpass? Or should plain setjy model it first and polcal overwrite it later?</li>
+<li><strong>Requantizer (A26).</strong> Does <code>requantizer.rq</code> apply to all WIDAR data, 2010 included?</li>
+<li><strong>3C84 on 3C391.</strong> How should its Stokes I model be set for a <code>Df</code> solve: manual setjy from the fluxscale result (flux plus spix)? Is <code>Df</code> on 3C84 at C-band what you would do?</li>
+<li><strong>Flux-cal gain amplitudes.</strong> 07 expects <code>amp_mean</code> close to 1.0 on the flux cal with <code>solnorm=False</code>, after gain curves and requantizer gains. Is that right for VLA, or is the expected level something else?</li>
+<li><strong>Radiometer formula.</strong> Is A10 right, and which efficiency and which bandwidth should go in? The ngVLA selfcal-requirements memos you offered would supply the noise and solint equations; they're pending.</li>
+<li><strong>Gridder.</strong> <code>awp2</code> or <code>mosaic</code> for a first-pass 3C391 C-band mosaic?</li>
+<li><strong>Selfcal on an extended remnant.</strong> Is phase selfcal on the 3C391 mosaic sensible, and with what solint and model?</li>
+<li><strong>p7 thresholds.</strong> Does the p95/median table hold at C-band, or is it an L-band table?</li>
+<li><strong>Which judgment calls you make by feel.</strong> Anything you decide that no skill file states. That is the most valuable injection material.</li>
+</ul>
+
+<h2 id="next">Next</h2>
+<ol class="prose">
+<li>Open findings: A10 (radiometer, from the ngVLA memos 96 and 134, and 107 with its scaling problem noted), A11 (run scope in place of "ask the user"), A14 (antenna-set intersection as a T1 computation), A27 (a manual path for flagging gain tables with few intervals), A5 (template text only).</li>
+<li><code>ms_tclean</code> takes no <code>scales</code>, so multiscale cannot be configured through the tool.</li>
+<li>A SYSPOWER measurement tool: switched power per antenna, SpW and time as a Tsys proxy, to rank SpWs by RFI before calibration. Needs a design pass first.</li>
+<li>Compare our per-SpW RFI picture against DRIFT (drift.nrao.edu), the VLA's catalogue of known RFI.</li>
+<li>Add <code>tier</code> and <code>escalate_when</code> to <code>stages.json</code>, once Krishna is back.</li>
+<li>Re-run the Haiku test cleanly: no hints, snapshot files only.</li>
+<li>The 3 models × 5 runs benchmark (<code>docs/walkthrough-plan.md</code>), including a routed run.</li>
+</ol>
+
+<footer>Living document. Source: <code>docs/decision-audit.html</code> in radio-analyst. Edit it there, or comment on the published page and the comments come back to the session.</footer>
+</div>
