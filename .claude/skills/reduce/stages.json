@@ -194,7 +194,7 @@
           "after": [
             "ms_calsol_stats",
             "ms_flag_summary",
-            "ms_flag_caltable when >= 10 solutions per antenna per field"
+            "ms_flag_caltable when >= 10 solutions per antenna per field; otherwise ms_flag_data on the named outliers and re-solve"
           ],
           "source": "calibrate.md 7-8; 07 Step 4b pre/post-flight, Step 5, caltable flagging",
           "match": {
@@ -429,6 +429,7 @@
         "ms_apply_initial_rflag",
         "ms_postcal_flag",
         "ms_apply_rflag",
+        "ms_flag_data",
         "ms_applycal"
       ]
     },
@@ -453,7 +454,8 @@
         "ms_apply_preflag",
         "ms_apply_initial_rflag",
         "ms_postcal_flag",
-        "ms_apply_rflag"
+        "ms_apply_rflag",
+        "ms_flag_data"
       ]
     },
     "caltable": {

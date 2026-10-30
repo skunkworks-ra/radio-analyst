@@ -157,7 +157,7 @@ solutions from propagating into every downstream solve.
 | `bandpass.B` | after Step 3, before Step 4 gain solve | tfcrop | 5.0 |
 | `gain.G` | after Step 4, before fluxscale — **only if ≥ 10 solution intervals per antenna per field** (see below) | rflag | 5.0 |
 | `dterms.D` (polcal) | after the D-term solve (skill 09) | rflag | 5.0 |
-| `delay.K` | — | — | **do not flag** — one value per antenna; inspect with `ms_calsol_stats` and flag bad antennas explicitly instead |
+| `delay.K` | — | — | **do not autoflag** — one value per antenna; inspect with `ms_calsol_stats`, flag the bad antenna's data and re-solve (below) |
 
 `ms_flag_caltable` auto-routes the mode from the table's VisCal type, so you
 normally pass only `caltable_path`, `workdir`, and `sigma`. Default `sigma=5.0`
@@ -170,9 +170,57 @@ only 2–3 points per antenna per field, and rflag flags real solutions (24A-376
 `ms_flag_caltable` reports `solution_intervals` (min / median / max per field,
 SpW, antenna) and refuses to auto-route a G/T table whose median is below
 `min_intervals` (default 10). In that case inspect with `ms_calsol_stats` and
-flag specific antennas/scans explicitly; do not force `mode='rflag'` unless the
-counts justify it. Bandpass and D-term tables vary along frequency and are not
-affected.
+flag the bad data by hand (next subsection); do not force `mode='rflag'` unless
+the counts justify it. Bandpass and D-term tables vary along frequency and are
+not affected.
+
+### Flagging by hand: flag the data, not the solution
+
+When `ms_calsol_stats` names a bad solution — an antenna whose amplitude drops
+on one scan, a phase jump, a delay outlier — **flag the visibilities behind it
+with `ms_flag_data` and re-solve.** Do not flag the solution in the caltable.
+
+Why the data and not the table:
+
+- **The cause stays in the data.** A caltable flag hides one symptom in one
+  table. The bad visibilities are still in the MS, and every later solve that
+  includes them (B, G, fluxscale, polcal, selfcal) is biased by them again.
+- **The target loses the data anyway.** `applycal`'s default
+  `applymode='calflag'` "will apply all flags from a calibration table to the
+  MS" (casadocs). A flagged solution therefore flags the matching target data
+  at apply time, with no entry in the MS flag versions to say why.
+- **Re-solving uses what is left.** With the bad data gone, the solver
+  re-derives the other antennas' solutions without it. A hole in the table
+  only removes one value.
+
+Procedure:
+
+1. Name the selection from the measurement: antenna, SpW, scan, field, and
+   timerange if it is part of a scan. Make it no wider than the evidence. A
+   phase jump on one scan is that scan, not the antenna for the whole run.
+2. `ms_flag_data(ms_path=<the MS you solve on>, antenna=…, scan=…,
+   reason='<the ms_calsol_stats numbers>', execute=True)`. In the calibrate
+   flow that is `calibrators.ms`. If the fault also covers target scans (a dead
+   antenna, a bad SpW for the whole run), flag the same selection in the full
+   MS. Read `selection_flagged_after` against `selection_total`. A selection
+   matching 0 visibilities means the selection is wrong, not that the data is
+   clean.
+3. Append the call to the ledger (`ms_reduction_log`), reason included. The
+   reason is the only record of why the data went.
+4. Re-solve the table that showed the fault, and every table downstream of it
+   that was solved with it as a prior.
+5. Re-run `ms_calsol_stats` on the new table. The outlier should be gone and
+   the other antennas should not have moved much. If they did, the flag
+   removed data the solve needed. Restore the flag version and look again.
+
+**`ms_flag_caltable(mode='manual')` is the last resort.** It flags named
+solutions (antenna / spw / field / scan / timerange / observation, any table
+type including K) with a required reason. Use it only when re-solving is not
+practical, or when the data behind the solution looks clean and re-solving does
+not remove the outlier. Say which in the reason. It cannot select a single
+polarisation (flagdata does not support `correlation` in manual mode on a
+caltable), so a fault in one hand means flagging both, or flagging the data
+with `ms_flag_data(correlation=…)`.
 
 **Read the reported flagged fraction:**
 
@@ -508,8 +556,9 @@ The `gain.G` table contains solutions for both flux and phase calibrators. Use
 
 **Before fluxscale (Step 6), flag outlier `gain.G` solutions** — with
 `ms_flag_caltable` (rflag, sigma=5.0) only when it reports ≥ 10 solution
-intervals per antenna per field; otherwise from `ms_calsol_stats` outliers, by
-hand (see "Caltable solution flagging" above). Outlier gain solutions left in
+intervals per antenna per field. Otherwise flag the data behind the
+`ms_calsol_stats` outliers with `ms_flag_data` and re-solve (see "Flagging by
+hand" above). Outlier gain solutions left in
 place will bias the fluxscale transfer.
 
 | Field | Index | Threshold | Action if exceeded |

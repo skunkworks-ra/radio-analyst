@@ -70,7 +70,9 @@ ms_calsol_stats outlier gate fails.
    caltable=workdir/gain.G, execute=False)` → run.
 
 8. `ms_calsol_stats(gain.G)` — outliers block gate. (ms_gaincal has no append:
-   a second call on the same caltable archives the first.)
+   a second call on the same caltable archives the first.) A named bad
+   solution: flag its data with `ms_flag_data` and re-solve, not the caltable
+   (07 "Flagging by hand").
 
 9. `ms_fluxscale(…, caltable=gain.G, fluxtable=workdir/gain.fluxscaled,
    reference=flux_field, transfer=phase_fields, execute=False)` → run.
