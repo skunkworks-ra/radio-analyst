@@ -831,6 +831,12 @@ before/after.
 
 ## parang parameter
 
-Use `parang=True` in all gaincal, bandpass, and applycal calls, always.
-It costs nothing and is required for correct polarization calibration later.
-Omitting it when polcal is added later forces a full recalibration from scratch.
+Every solve and apply in the final chain needs `parang=True`. It costs nothing,
+and is required for correct polarization calibration later: a chain solved
+without it forces a full recalibration from scratch once polcal is added.
+
+`ms_gaincal`, `ms_bandpass`, `ms_polcal` and `ms_applycal` default to
+`parang=True`, so the templates in this file leave it out. Never pass
+`parang=False`. `ms_initial_bandpass` does not set it, which is fine: its
+tables (`init_gain.g`, `BP0.b`) only drive the residual rflag, and the final
+solves replace them.
