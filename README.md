@@ -91,7 +91,7 @@ the read-only tools.
 **Three servers, by what they can touch:**
 
 - **ms-inspect**: read-only inspection and diagnostics (34 tools).
-- **ms-modify**: flagging, calibration, imaging (16 tools, script-first).
+- **ms-modify**: flagging, calibration, imaging (17 tools, script-first).
 - **ms-create**: ASDM inspection and import, the reduction log and the report (4 tools).
 
 ---

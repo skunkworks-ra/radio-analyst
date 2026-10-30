@@ -12,7 +12,7 @@ AI-assisted radio interferometric reduction pipeline targeting VLA/JVLA/EVLA,
 MeerKAT, and uGMRT:
 
 - **ms-inspect** — read-only inspection and diagnostics (34 tools, port 8000)
-- **ms-modify** — calibration, flagging, and MS modification (16 tools, port 8001)
+- **ms-modify** — calibration, flagging, and MS modification (17 tools, port 8001)
 - **ms-create** — ASDM ingestion, reduction logging and the report (4 tools, port 8002)
 
 `ms-inspect` began as Phase 1 only — Layer 1 (Orientation) and Layer 2
@@ -138,6 +138,8 @@ radio-analyst/
 │   │   ├── initial_rflag.py       ← ms_apply_initial_rflag
 │   │   ├── postcal_flag.py        ← ms_postcal_flag
 │   │   ├── flag_caltable.py       ← ms_flag_caltable
+│   │   ├── flag_data.py           ← ms_flag_data
+│   │   ├── manual_selection.py    ← empty-selection/reason guard shared by the manual-flag paths
 │   │   ├── rflag.py               ← ms_apply_rflag
 │   │   ├── gaincal.py             ← ms_gaincal
 │   │   ├── polcal.py              ← ms_polcal
@@ -357,7 +359,8 @@ Functions are also callable directly by skills and scripts.
 | `ms_initial_bandpass` | `ms_modify/initial_bandpass.py` | gaincal → bandpass → applycal; populates CORRECTED |
 | `ms_apply_initial_rflag` | `ms_modify/initial_rflag.py` | rflag + tfcrop on CORRECTED−MODEL residuals in one list-mode pass; **requires** explicit `field` (only the field with valid CORRECTED) |
 | `ms_postcal_flag` | `ms_modify/postcal_flag.py` | Post-cal RFI flagging on phase cal + target CORRECTED in one list-mode pass: per-SpW robust clip (median + `clip_sigma`·1.4826·MAD, default 5σ; `uvrange`-scopable for extended sources) → tfcrop + rflag on kept SpWs → manual flag of drop-tier SpWs. Consumes `ms_spw_amp_severity` triage (skill 13); **requires** explicit `field` |
-| `ms_flag_caltable` | `ms_modify/flag_caltable.py` | Autoflag a caltable's solutions (mode auto-routed from VisCal: B→tfcrop, G/T/D→rflag, K refused) at a gentle sigma; reports flagged fraction before/after |
+| `ms_flag_caltable` | `ms_modify/flag_caltable.py` | Autoflag a caltable's solutions (mode auto-routed from VisCal: B→tfcrop, G/T/D→rflag, K refused) at a gentle sigma, or `mode='manual'` on a named antenna/spw/field/scan/timerange/observation with a required reason (any table type); reports flagged fraction before/after |
+| `ms_flag_data` | `ms_modify/flag_data.py` | Manual flag of a named MS selection (antenna/spw/field/scan/timerange/correlation/uvrange/intent/observation) with a required reason; refuses an empty selection (it would flag the whole MS); auto-numbered flag backup; reports the selection's flagged counts before/after |
 | `ms_apply_rflag` | `ms_modify/rflag.py` | General-purpose rflag pass |
 | `ms_gaincal` | `ms_modify/gaincal.py` | Phase/amplitude/cross-hand delay gain calibration (supports gaintype='KCROSS' with smodel) |
 | `ms_polcal` | `ms_modify/polcal.py` | Polarisation calibration: D-term leakage (Df/Df+QU) or position angle (Xf) |

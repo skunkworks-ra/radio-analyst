@@ -934,7 +934,7 @@ On tool error:
 ## 8b. Write Utilities (ms_modify)
 
 The companion `ms_modify` package **writes** to the MS. It is a full FastMCP
-server in its own right (`ms_modify.server`, port 8001) exposing **16 tools**;
+server in its own right (`ms_modify.server`, port 8001) exposing **17 tools**;
 the same functions are also callable programmatically by skills and scripts
 (e.g. for metadata repair before calibration can proceed).
 
@@ -948,7 +948,8 @@ the same functions are also callable programmatically by skills and scripts
 | `ms_initial_bandpass` | gaincal → bandpass → applycal; populates CORRECTED |
 | `ms_apply_initial_rflag` | rflag + tfcrop on CORRECTED − MODEL residuals; requires explicit `field` |
 | `ms_postcal_flag` | Post-cal RFI flagging (residual clip on modelled fields only, per field/SpW/corr → tfcrop + rflag → manual drop); requires explicit `field`; unmatched field tokens raise |
-| `ms_flag_caltable` | Autoflag a caltable's solutions (mode auto-routed from VisCal) |
+| `ms_flag_caltable` | Autoflag a caltable's solutions (mode auto-routed from VisCal), or flag a named selection with `mode='manual'` (any table type, incl. K) |
+| `ms_flag_data` | Manually flag a named MS selection with a required reason; refuses an empty selection; reports the selection's flagged counts before/after |
 | `ms_apply_rflag` | General-purpose rflag pass |
 | `ms_gaincal` | Phase/amp/cross-hand-delay gain calibration (incl. `gaintype='KCROSS'`) |
 | `ms_polcal` | Polarization calibration: D-term leakage (Df/Df+QU) or position angle (Xf) |

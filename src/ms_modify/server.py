@@ -21,6 +21,7 @@ from ms_modify import (
     applycal,
     bandpass,
     flag_caltable,
+    flag_data,
     fluxscale,
     gaincal,
     initial_bandpass,
@@ -822,6 +823,38 @@ class FlagCaltableInput(BaseModel):
     )
 
 
+class FlagDataInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to the Measurement Set.", min_length=1)
+    workdir: str = Field(
+        ..., description="Existing directory for the generated script.", min_length=1
+    )
+    reason: str = Field(
+        ...,
+        description=(
+            "Required: the measurement that justified the flag (e.g. the "
+            "ms_calsol_stats outlier). Written into the script header."
+        ),
+        min_length=1,
+    )
+    antenna: str = Field(default="", description="flagdata antenna selection.")
+    spw: str = Field(default="", description="flagdata spw selection (channels allowed).")
+    field: str = Field(default="", description="flagdata field selection.")
+    scan: str = Field(default="", description="flagdata scan selection.")
+    timerange: str = Field(default="", description="flagdata timerange selection.")
+    correlation: str = Field(default="", description="flagdata correlation selection.")
+    uvrange: str = Field(default="", description="flagdata uvrange selection.")
+    intent: str = Field(default="", description="flagdata intent selection.")
+    observation: str = Field(default="", description="flagdata observation selection.")
+    execute: bool = Field(
+        default=False,
+        description=(
+            "If False (default), write flag_data.py and return. If True, run "
+            "summary→manual→summary in-process and report the selection's flagged counts."
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tools — Preflag
 # ---------------------------------------------------------------------------
@@ -1216,6 +1249,51 @@ async def ms_flag_caltable(params: FlagCaltableInput) -> ToolResult:
         params.execute,
         reason=params.reason,
         **{k: getattr(params, k) for k in flag_caltable.SELECTION_KEYS},
+    )
+
+
+@mcp.tool(
+    name="ms_flag_data",
+    description=(
+        "Manually flag a named selection of visibilities in an MS "
+        "(antenna/spw/field/scan/timerange/correlation/uvrange/intent/observation) "
+        "with a required reason. Refuses an empty selection, which would flag the "
+        "whole MS. Saves a flag version first; reports the selection's flagged "
+        "counts before/after."
+    ),
+    annotations={
+        "title": "Flag Measurement Set Data",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_flag_data(params: FlagDataInput) -> ToolResult:
+    """
+    Manually flag a named MS selection.
+
+    The caller chooses what to flag from a measurement; the tool applies
+    flagdata(mode='manual', flagbackup=True) and reports what changed.
+
+    Args:
+        params.ms_path:  Path to the Measurement Set.
+        params.workdir:  Existing directory for the generated script.
+        params.reason:   Why the data is flagged.
+        params.antenna … params.observation: flagdata selection (≥ 1 non-empty).
+        params.execute:  Generate script only (False) or run in-process (True).
+
+    Returns:
+        JSON with script_path, selection, reason, and (if execute=True)
+        selection_flagged_before/after and selection_total.
+    """
+    return await _run_tool(
+        flag_data.run,
+        params.ms_path,
+        params.workdir,
+        params.reason,
+        execute=params.execute,
+        **{k: getattr(params, k) for k in flag_data.SELECTION_KEYS},
     )
 
 
