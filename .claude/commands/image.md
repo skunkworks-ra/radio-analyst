@@ -45,7 +45,8 @@ Prerequisite: CORRECTED_DATA populated on the target field(s) — run
    - Fresnel check (§5) → wprojplanes
    - gridder (§6): 'mosaic' for a first-pass mosaic (A-configuration: memory
      check first), 'wproject' single-pointing + W, else 'standard'
-   - threshold (§7): 3 × radiometer RMS from SEFD table; format as mJy
+   - threshold (§7): 3 × the OSS equation-1 noise (eta_c, n_pol, per-pointing t_int
+     for a mosaic, robust factor 1.2); format as mJy
 
 5. `ms_tclean(ms_path, imagename, field, stokes, specmode, deconvolver,
    nterms, gridder, wprojplanes, cell, imsize, weighting='briggs',

@@ -233,11 +233,15 @@ own bands and they do not map onto VLA band letters:
 
 | Telescope | Band | SEFD (Jy) |
 |---|---|---|
-| VLA | P | 2600 |
+| VLA | P | 2790 |
 | VLA | L | 420 |
 | VLA | S | 370 |
 | VLA | C | 310 |
-| VLA | X | 280 |
+| VLA | X | 250 |
+| VLA | Ku | 320 |
+| VLA | K | 500 |
+| VLA | Ka | 600 |
+| VLA | Q | 1300 |
 | MeerKAT | L | 400 |
 | MeerKAT | S | 380 |
 | uGMRT | 2 (125–250 MHz) | 1500 |

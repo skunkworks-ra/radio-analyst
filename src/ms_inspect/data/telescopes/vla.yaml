@@ -16,11 +16,16 @@ bands:
   - {code: K,    min_ghz: 18.000, max_ghz: 26.500, label: "K-band (18–26.5 GHz)"}
   - {code: Ka,   min_ghz: 26.500, max_ghz: 40.000, label: "Ka-band (26.5–40 GHz)"}
   - {code: Q,    min_ghz: 40.000, max_ghz: 50.000, label: "Q-band (40–50 GHz)"}
-# SEFD (Jy) keyed by band code. Verbatim from 11-imaging.md §Step 7.
-# Bands without an entry (4, Ku, K, Ka, Q) yield SEFD UNAVAILABLE by design.
+# SEFD (Jy) keyed by band code. NRAO OSS 2027A, Performance/Sensitivity
+# Table 3.2.1: https://science.nrao.edu/facilities/vla/docs/manuals/oss/performance/sensitivity
+# Band 4 has no entry and yields SEFD UNAVAILABLE by design.
 sefd_jy:
-  P: 2600
+  P: 2790
   L: 420
   S: 370
   C: 310
-  X: 280
+  X: 250
+  Ku: 320
+  K: 500
+  Ka: 600
+  Q: 1300

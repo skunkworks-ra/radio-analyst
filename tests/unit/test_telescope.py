@@ -101,8 +101,8 @@ class TestBandLookup:
         assert p.sefd_for_freq(6.0e9) == 310.0  # C
 
     def test_sefd_unavailable_band_returns_none(self):
-        # Ku has a band but no SEFD entry.
-        assert profile_from_name("VLA").sefd_for_freq(15e9) is None
+        # Band 4 has a band but no SEFD entry (OSS Table 3.2.1 stops at P).
+        assert profile_from_name("VLA").sefd_for_freq(0.07e9) is None
 
     def test_ugmrt_400mhz_is_band3_not_band2(self):
         # Old ladder mislabelled 400 MHz as "Band 2"; interval model says Band 3.

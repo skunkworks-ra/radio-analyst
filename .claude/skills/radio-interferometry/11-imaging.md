@@ -26,7 +26,7 @@ All placeholders are populated from Phase 1–2 tool outputs before calling `ms_
 | `{DISH_DIAMETER_M}` | `ms_antenna_list` | dish diameter (all antennas same for connected arrays) |
 | `{TELESCOPE}` | `ms_observation_info` | `telescope_name` |
 | `{N_ANT}` | `ms_antenna_list` | number of unflagged antennas |
-| `{T_ON_SOURCE_S}` | `ms_scan_list` | total integration time on science target in seconds |
+| `{T_ON_SOURCE_S}` | `ms_scan_list` | on-source time in seconds; for a mosaic, per pointing (Step 7) |
 | `{WORKDIR}` | provided | directory for image output |
 
 ---
@@ -230,23 +230,42 @@ be primary-beam corrected as a mosaic.
 
 ## Step 7 — Estimate cleaning threshold
 
-Radiometer equation RMS:
+Thermal image noise, VLA OSS "Sensitivity", equation 1 (natural weighting):
 ```
-n_baselines  = {N_ANT} * ({N_ANT} - 1) / 2
-sigma_jy     = SEFD / sqrt(2 * {BANDWIDTH_HZ} * {T_ON_SOURCE_S} * n_baselines)
-threshold    = 3 * sigma_jy
+sigma_natural = SEFD / (eta_c * sqrt(n_pol * {N_ANT} * ({N_ANT} - 1) * t_int * {BANDWIDTH_HZ}))
+sigma_jy      = w * sigma_natural
+threshold     = 3 * sigma_jy
 ```
 
-SEFD reference values (Jy). Band codes are **per telescope** — uGMRT numbers its
-own bands and they do not map onto VLA band letters:
+| Term | Value |
+|---|---|
+| `SEFD` | the telescope profile's `sefd_jy` for the band (table below) |
+| `eta_c` | correlator efficiency: 0.93 with 8-bit samplers; 0.78–0.83 with 3-bit (a further 10–15% loss). If the sampler is not known, use 0.93 and say so |
+| `n_pol` | 2 for Stokes I, Q, U or V; 1 for a single hand (RR or LL) |
+| `t_int` | on-source time in seconds. **For a mosaic, the time on one pointing**, not the total over all pointings: each pointing's noise follows its own time (overlaps are lower) |
+| `w` | weighting: 1.0 natural; ≈ 1.2 for robust weighting (OSS), which the template below uses |
+
+Two contributions are not in the equation. **Confusion** from sources within the
+beam adds in quadrature: the OSS gives D-configuration robust-weighted values
+(P 5330, L 74, S 12, C 2 µJy/beam; negligible at X and above), roughly 10×
+lower in C-configuration. **Galactic synchrotron** at P-band raises the SEFD by
+2–3× in the plane and ≥ 5× near the Galactic centre.
+
+SEFD reference values (Jy). VLA values from the OSS "Sensitivity" Table 3.2.1.
+Band codes are **per telescope** — uGMRT numbers its own bands and they do not
+map onto VLA band letters:
 
 | Telescope | Band | SEFD (Jy) |
 |---|---|---|
-| VLA | P | 2600 |
+| VLA | P | 2790 |
 | VLA | L | 420 |
 | VLA | S | 370 |
 | VLA | C | 310 |
-| VLA | X | 280 |
+| VLA | X | 250 |
+| VLA | Ku | 320 |
+| VLA | K | 500 |
+| VLA | Ka | 600 |
+| VLA | Q | 1300 |
 | MeerKAT | L | 400 |
 | MeerKAT | S | 380 |
 | uGMRT | 2 (125–250 MHz) | 1500 |
