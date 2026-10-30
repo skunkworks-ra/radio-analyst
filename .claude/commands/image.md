@@ -26,9 +26,9 @@ Prerequisite: CORRECTED_DATA populated on the target field(s) — run
 
 1. `ms_workflow_status(ms_path, workdir)` — confirm CORRECTED is populated.
 
-2. **Step 0 — confirm field and Stokes with the user** per 11-imaging.md §0.
-   Never assume mosaic vs. single pointing. Default Stokes='I' unless
-   polcal is complete and the user wants IQUV.
+2. **Step 0 — field and Stokes** per 11-imaging.md §0: the run's named
+   targets (else all target fields, a mosaic for pointings of one source);
+   Stokes='IQUV' if polcal ran, else 'I'. State both in the report.
 
 3. Gather placeholders from tool outputs (no hand math):
    - `ms_observation_info(ms_path)` → telescope, center_freq_hz

@@ -16,9 +16,9 @@ All placeholders are populated from Phase 1–2 tool outputs before calling `ms_
 | Placeholder | Source tool | What to extract |
 |---|---|---|
 | `{VIS}` | provided | full MS path (not calibrators.ms) |
-| `{TARGET_FIELD}` | user confirmed (see Step 0) | field **names**, comma-separated, e.g. `'3C391_C1,3C391_C2'` (never numeric IDs; 07 "Field selection") |
-| `{IS_MOSAIC}` | user confirmed (see Step 0) | True if imaging multiple pointings together |
-| `{STOKES}` | user confirmed | default `'I'`; `'IQUV'` etc. accepted |
+| `{TARGET_FIELD}` | Step 0 | field **names**, comma-separated, e.g. `'3C391_C1,3C391_C2'` (never numeric IDs; 07 "Field selection") |
+| `{IS_MOSAIC}` | Step 0 | True if imaging multiple pointings together |
+| `{STOKES}` | Step 0 | `'IQUV'` if polcal ran, else `'I'` |
 | `{POINTING_CENTERS}` | `ms_field_list` | RA/Dec of each target pointing (mosaic only) |
 | `{MAX_BASELINE_M}` | `ms_baseline_lengths` | `max_baseline_m` |
 | `{CENTER_FREQ_HZ}` | `ms_observation_info` | centre frequency in Hz |
@@ -31,25 +31,23 @@ All placeholders are populated from Phase 1–2 tool outputs before calling `ms_
 
 ---
 
-## Step 0 — Confirm field selection and Stokes
+## Step 0 — Field selection and Stokes
 
-Before deriving any parameter, confirm with the user what to image.
-Do not assume — field selection has direct consequences for gridder choice,
-image size, and whether a mosaic is needed.
+Decide what to image before deriving any parameter: field selection sets the
+gridder, the image size, and whether a mosaic is needed. Take both from what the
+run was asked to do. Ask only when someone is there to ask and the request says
+nothing; otherwise use the defaults below and state them in the report.
 
-Ask explicitly if not stated:
+1. **Fields.** The target fields named for the run. If none were named, all
+   target fields from `ms_field_list`: one mosaic when they are pointings of one
+   source, one image per source when they are separate sources.
 
-1. **Which fields?** Show the target fields from `ms_field_list` and ask:
-   - Image all target fields together as a mosaic?
-   - Image a single field only — which one?
-   - Image a specific subset — which fields?
+2. **Stokes.** `'IQUV'` if polcal ran (skill 09), otherwise `'I'`. With the
+   wideband `mtmfs` path (Step 2), IQUV goes through the cube path below
+   ("Polarization frequency cubes"); the Stokes I `mtmfs` image stays the
+   headline.
 
-2. **Stokes?** Default is `'I'`. Ask only if the observation has full-polarisation
-   data (RR/RL/LR/LL or XX/XY/YX/YY) and the user has not stated a preference.
-   Valid values: `'I'`, `'IV'`, `'IQUV'`, `'RR'`, `'LL'`, `'XX'`, `'YY'`.
-   If calibration was Stokes I only (no polcal), do not offer `'IQUV'`.
-
-Record confirmed values as `{TARGET_FIELD}`, `{IS_MOSAIC}`, and `{STOKES}`.
+Record the values as `{TARGET_FIELD}`, `{IS_MOSAIC}`, and `{STOKES}`.
 
 ---
 
