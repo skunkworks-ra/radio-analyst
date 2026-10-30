@@ -125,10 +125,10 @@ html { scroll-behavior: smooth; }
   <div class="eyebrow">radio-analyst · design working document</div>
   <h1>Decision Tier Audit</h1>
   <div class="meta">
-    <span>Updated 2026-10-30 (v7)</span>
+    <span>Updated 2026-10-30 (v8)</span>
     <span>Skills at <code>main@b590e74</code></span>
     <span>Driver at <code>origin/driver-v2@3f6687d</code>, <code>origin/scope-split@b16d126</code></span>
-    <span>Status: 29 of 30 fixed or closed on branch <code>skills-audit</code>; open: A10</span>
+    <span>Status: 30 of 30 fixed or closed on branch <code>skills-audit</code></span>
   </div>
   <p class="prose lede">Every decision in a reduction, from inspection to selfcal, sorted by who should make it: the loop with no model, a small model following a skill rule, or Opus making a judgment. Each step lists the inputs the decision needs, what the skill says, and what has to be injected for the answer to be worth having. The skills audit that this pass turned up is at the end.</p>
 </header>
@@ -331,7 +331,8 @@ html { scroll-behavior: smooth; }
 <li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong>Fluxscale review has no expected value to compare against</strong></div>
 <p>The skill says to compare with "the VLA calibrator manual". No step puts that number in front of the model. <code>ms_phase_cal_lookup</code> returns the callist flux per band.</p>
 <p class="src">07-calibration-execution.md:547–550</p></li>
-<li><div class="head"><span class="sev med">medium</span><strong>Radiometer estimate: polarisations and efficiency</strong></div>
+<li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong>Radiometer estimate: polarisations and efficiency</strong></div>
+<p><em>Fixed, by expert ruling: the VLA OSS "Sensitivity" equation 1.</em> σ = SEFD / (η<sub>c</sub> √(n<sub>pol</sub> N(N−1) t<sub>int</sub> Δν)) × w. η<sub>c</sub> 0.93 (8-bit) or 0.78–0.83 (3-bit); n<sub>pol</sub> 2 for Stokes I/Q/U/V; w ≈ 1.2 for robust weighting, which the template uses; for a mosaic, t<sub>int</sub> is the time on one pointing. The old form was about 1.3× the true noise, so the "&gt; 2×" check fired at about 2.6×. VLA SEFDs now from OSS Table 3.2.1 (P 2790, X 250; Ku–Q added).</p>
 <p><code>SEFD / sqrt(2·Δν·t·n_bl)</code> is the single-polarisation noise. Stokes I from two polarisations is √2 lower, there is no correlator efficiency term, and Δν should be the unflagged bandwidth. This is the reference for the "&gt; 2× radiometer" gate, so it matters. Needs expert confirmation.</p>
 <p class="src">11-imaging.md:202–206</p></li>
 <li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong>Imaging asks a user who isn't there</strong></div>
@@ -438,7 +439,7 @@ html { scroll-behavior: smooth; }
 <li><strong>Requantizer (A26).</strong> Does <code>requantizer.rq</code> apply to all WIDAR data, 2010 included?</li>
 <li><strong>3C84 on 3C391.</strong> How should its Stokes I model be set for a <code>Df</code> solve: manual setjy from the fluxscale result (flux plus spix)? Is <code>Df</code> on 3C84 at C-band what you would do?</li>
 <li><strong>Flux-cal gain amplitudes.</strong> 07 expects <code>amp_mean</code> close to 1.0 on the flux cal with <code>solnorm=False</code>, after gain curves and requantizer gains. Is that right for VLA, or is the expected level something else?</li>
-<li><strong>Radiometer formula.</strong> Is A10 right, and which efficiency and which bandwidth should go in? The ngVLA selfcal-requirements memos you offered would supply the noise and solint equations; they're pending.</li>
+<li><strong>Radiometer formula.</strong> Answered: the OSS sensitivity equation (A10). The ngVLA memos are still pending for the selfcal solint maths.</li>
 <li><strong>Gridder.</strong> <code>awp2</code> or <code>mosaic</code> for a first-pass 3C391 C-band mosaic?</li>
 <li><strong>Selfcal on an extended remnant.</strong> Is phase selfcal on the 3C391 mosaic sensible, and with what solint and model?</li>
 <li><strong>p7 thresholds.</strong> Does the p95/median table hold at C-band, or is it an L-band table?</li>
@@ -447,7 +448,7 @@ html { scroll-behavior: smooth; }
 
 <h2 id="next">Next</h2>
 <ol class="prose">
-<li>Open findings: A10 (radiometer, from the ngVLA memos 96 and 134, and 107 with its scaling problem noted). Fixed since v5: A27 (<code>ms_flag_data</code>; flag the data rather than the solution), A5, A11. A14 closed on evidence.</li>
+<li>No open findings. The ngVLA memos 96 and 134 (and 107, scaling problem noted) remain for the selfcal SNR and solint maths. Fixed since v5: A10 (OSS sensitivity equation), A27 (<code>ms_flag_data</code>; flag the data rather than the solution), A5, A11. A14 closed on evidence.</li>
 <li><code>ms_tclean</code> takes no <code>scales</code>, so multiscale cannot be configured through the tool. Evidence first: a hogbom vs multiscale 3C391 image in the walkthrough, compared with <code>ms_image_stats</code>.</li>
 <li>A SYSPOWER measurement tool: switched power per antenna, SpW and time as a Tsys proxy, to rank SpWs by RFI before calibration. Needs a design pass first.</li>
 <li>Compare our per-SpW RFI picture against DRIFT (drift.nrao.edu), the VLA's catalogue of known RFI.</li>
