@@ -125,10 +125,10 @@ html { scroll-behavior: smooth; }
   <div class="eyebrow">radio-analyst · design working document</div>
   <h1>Decision Tier Audit</h1>
   <div class="meta">
-    <span>Updated 2026-10-28</span>
+    <span>Updated 2026-10-30</span>
     <span>Skills at <code>main@b590e74</code></span>
     <span>Driver at <code>origin/driver-v2@3f6687d</code>, <code>origin/scope-split@b16d126</code></span>
-    <span>Status: 25 of 30 fixed or closed on branch <code>skills-audit</code>; open: A5, A10, A11, A14, A27</span>
+    <span>Status: 26 of 30 fixed or closed on branch <code>skills-audit</code>; open: A5, A10, A11, A14</span>
   </div>
   <p class="prose lede">Every decision in a reduction, from inspection to selfcal, sorted by who should make it: the loop with no model, a small model following a skill rule, or Opus making a judgment. Each step lists the inputs the decision needs, what the skill says, and what has to be injected for the answer to be worth having. The skills audit that this pass turned up is at the end.</p>
 </header>
@@ -179,7 +179,7 @@ html { scroll-behavior: smooth; }
 <tr><td class="id">c2</td><td><code>ms_gaincal</code> G0</td><td><span class="tier T2">T2</span></td><td>predicted SNR &lt; 3 at every solint tried</td><td></td><td>A5</td></tr>
 <tr><td class="id">c3</td><td><code>ms_gaincal</code> K</td><td><span class="tier T2">T2</span></td><td>|delay| &gt; 50 ns, or ±200 ns (feed swap)</td><td></td><td>A5</td></tr>
 <tr><td class="id">c4</td><td><code>ms_bandpass</code> B</td><td><span class="tier T2">T2</span></td><td>caltable flagged ≥ 30%; &gt; 3 antennas lost</td><td></td><td>A5</td></tr>
-<tr><td class="id">c5</td><td><code>ms_gaincal</code> G</td><td><span class="tier T2">T2</span></td><td>any post-flight check routes to 07b</td><td>07b worked cases</td><td>A17, A18</td></tr>
+<tr><td class="id">c5</td><td><code>ms_gaincal</code> G</td><td><span class="tier T2">T2</span></td><td>any post-flight check routes to 07b; a flag wider than the evidence, or on the caltable</td><td>07b worked cases</td><td>A17, A18, A27</td></tr>
 <tr><td class="id">c6</td><td><code>ms_fluxscale</code></td><td class="nowrap"><span class="tier T2">T2</span> call · <span class="tier T3">T3</span> review</td><td>always reviewed</td><td>expected flux (callist)</td><td>A9</td></tr>
 <tr><td class="id">c7</td><td><code>ms_applycal</code> ×3</td><td><span class="tier T2">T2</span></td><td>antenna-set intersection &lt; 0.5</td><td></td><td>A14</td></tr>
 <tr><td class="id">f1</td><td><code>ms_postcal_flag</code></td><td><span class="tier T3">T3</span></td><td>—</td><td>24A-376 worked case</td><td></td></tr>
@@ -255,7 +255,7 @@ html { scroll-behavior: smooth; }
 
 <div class="step"><header><span class="id">c5</span><h3>Gain G and recovery</h3><span class="tier T2">T2</span></header><dl>
 <dt>Skill says</dt><dd><code>07:352–523</code>, recovery trees in <code>07b</code>. A source-type classification (bright, phase, weak, resolved) sets the flag-jump tolerances.</dd>
-<dt>Verdict</dt><dd>Calls and checks are T2. The source classification is a catalogue lookup (T2) except for resolved calibrators. Any route into <code>07b</code> is T3, since recovery is diagnosis.</dd>
+<dt>Verdict</dt><dd>Calls and checks are T2. The source classification is a catalogue lookup (T2) except for resolved calibrators. Any route into <code>07b</code> is T3, since recovery is diagnosis. A named bad solution goes to <code>ms_flag_data</code> on the data behind it, then a re-solve: T2 when the selection is no wider than the <code>ms_calsol_stats</code> evidence; T3 for a wider flag or the caltable last resort (A27).</dd>
 <dt>Inject</dt><dd>One worked case per recovery tree. 07b has the trees but no worked runs.</dd></dl></div>
 
 <div class="step"><header><span class="id">c6</span><h3>Fluxscale</h3><span class="tier T2">T2</span><span class="tier T3">T3</span></header><dl>
@@ -383,7 +383,8 @@ html { scroll-behavior: smooth; }
 <li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong>Requantizer table "VLA post-2011 only"</strong></div>
 <p>Haiku dropped <code>requantizer.rq</code> on the 2010 3C391 data because of this row, though the tool generated it. Those data are from the new correlator (WIDAR). If the requantizer correction applies to all WIDAR data, the row's cutoff misleads a literal model. Needs expert confirmation.</p>
 <p class="src">10-precal-workflow.md:148</p></li>
-<li><div class="head"><span class="sev med">medium</span><strong>Gain-table flagging refused, with no manual path</strong></div>
+<li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong>Gain-table flagging refused, with no manual path</strong></div>
+<p><em>Fixed, by expert ruling: flag the data, not the solution.</em> New tool <code>ms_flag_data</code> flags a named MS selection with a required reason, and 07 "Flagging by hand" now says: flag the visibilities behind a bad solution, append to the ledger, re-solve. Reasons: the cause stays in the data for every later solve, and <code>applycal</code>'s default <code>applymode='calflag'</code> discards the matching target data anyway, with nothing in the MS flag versions to say why. <code>ms_flag_caltable(mode='manual')</code> exists as the last resort, on any table type including K; flagdata does not support single-polarisation manual flags on a caltable. Both tools refuse an empty selection: an integration test shows <code>flagdata(mode='manual')</code> with no selection flags 100% of a real gain table.</p>
 <p>With fewer than 10 solution intervals, <code>ms_flag_caltable</code> refuses, and the skill says to flag "by hand" from <code>ms_calsol_stats</code> outliers. No step or tool says how. On 3C391, with one or two scans per calibrator, this is the normal case.</p>
 <p class="src">07-calibration-execution.md:166–175, 508–512</p></li>
 <li><div class="head"><span class="sev low">low</span><span class="state">fixed</span><strong>Imaging template sets no <code>pblimit</code></strong></div>
@@ -443,7 +444,7 @@ html { scroll-behavior: smooth; }
 
 <h2 id="next">Next</h2>
 <ol class="prose">
-<li>Open findings: A10 (radiometer, from the ngVLA memos 96 and 134, and 107 with its scaling problem noted), A11 (run scope in place of "ask the user"), A14 (antenna-set intersection as a T1 computation), A27 (a manual path for flagging gain tables with few intervals), A5 (template text only).</li>
+<li>Open findings: A10 (radiometer, from the ngVLA memos 96 and 134, and 107 with its scaling problem noted), A11 (run scope in place of "ask the user"), A14 (antenna-set intersection as a T1 computation), A5 (template text only). A27 is fixed: <code>ms_flag_data</code>, and flag the data rather than the solution.</li>
 <li><code>ms_tclean</code> takes no <code>scales</code>, so multiscale cannot be configured through the tool.</li>
 <li>A SYSPOWER measurement tool: switched power per antenna, SpW and time as a Tsys proxy, to rank SpWs by RFI before calibration. Needs a design pass first.</li>
 <li>Compare our per-SpW RFI picture against DRIFT (drift.nrao.edu), the VLA's catalogue of known RFI.</li>
