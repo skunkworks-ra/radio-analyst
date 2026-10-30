@@ -981,3 +981,68 @@ class TestPolIntentsEndToEnd:
         assert angle["available"] is True
         assert angle["source"] == "3C286"
         assert angle["category"] == "A"
+
+
+# ---------------------------------------------------------------------------
+# Manual flagging: ms_flag_data (simulated MS) and ms_flag_caltable mode='manual'
+# ---------------------------------------------------------------------------
+
+
+class TestFlagDataSimulated:
+    """ms_flag_data on a copy of the simulated MS (the session MS stays unflagged)."""
+
+    def test_flags_exactly_the_selection(self, sim_ms, tmp_path):
+        from ms_inspect.util.casa_context import open_table
+        from ms_modify.flag_data import run
+
+        ms = str(tmp_path / "copy.ms")
+        shutil.copytree(sim_ms, ms)
+        with open_table(os.path.join(ms, "ANTENNA")) as tb:
+            ant = str(tb.getcol("NAME")[0])
+
+        result = run(ms, str(tmp_path), reason="integration test", antenna=ant, execute=True)
+        assert result["status"] == "ok"
+        d = result["data"]
+        assert d["selection_flagged_before"]["value"] == 0
+        assert d["selection_total"]["value"] > 0
+        assert d["selection_flagged_after"]["value"] == d["selection_total"]["value"]
+
+        # Nothing outside the selection was touched.
+        from casatasks import flagdata
+
+        whole = flagdata(vis=ms, mode="summary")
+        assert whole["flagged"] == d["selection_flagged_after"]["value"]
+
+
+class TestFlagCaltableManualReal:
+    """ms_flag_caltable(mode='manual') on a copy of RADIO_MCP_TEST_CALTABLE."""
+
+    def _copy(self, tmp_path) -> str:
+        caltable = os.environ.get("RADIO_MCP_TEST_CALTABLE")
+        if not caltable:
+            pytest.skip("RADIO_MCP_TEST_CALTABLE not set")
+        dst = str(tmp_path / os.path.basename(caltable.rstrip("/")))
+        shutil.copytree(caltable, dst)
+        return dst
+
+    def test_manual_antenna_flag(self, tmp_path):
+        from ms_inspect.util.casa_context import open_table
+        from ms_modify.flag_caltable import run
+
+        ct = self._copy(tmp_path)
+        with open_table(os.path.join(ct, "ANTENNA")) as tb:
+            ant = str(tb.getcol("NAME")[0])
+        result = run(ct, str(tmp_path), mode="manual", antenna=ant, reason="test", execute=True)
+        assert result["status"] == "ok"
+        d = result["data"]
+        assert d["flagged_frac_after"]["value"] > d["flagged_frac_before"]["value"]
+        assert d["flagged_frac_after"]["value"] < 1.0
+
+    def test_casa_empty_manual_selection_flags_whole_table(self, tmp_path):
+        # Pins the CASA behaviour the tool's empty-selection refusal guards against.
+        from casatasks import flagdata
+
+        ct = self._copy(tmp_path)
+        flagdata(vis=ct, mode="manual", action="apply", flagbackup=False)
+        s = flagdata(vis=ct, mode="summary")
+        assert s["flagged"] == s["total"]
