@@ -5,6 +5,7 @@ No CASA required. Tests cover:
 - _resolve_mode: VisCal-type auto-routing, K refusal, override validation
 - _build_script: mode-specific threshold kwargs, sigma embedding
 - run: workdir/path/sigma validation, script generation (mocking VisCal read)
+- manual mode: selection validation, K allowed, interval check skipped
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from ms_modify.flag_caltable import (
     _build_script,
     _resolve_mode,
     check_intervals,
+    check_selection,
     summarize_intervals,
 )
 
@@ -60,7 +62,7 @@ class TestResolveMode:
         assert _resolve_mode("K", "rflag") == "rflag"
 
     def test_invalid_override_rejected(self):
-        with pytest.raises(ComputationError, match="rflag.*tfcrop"):
+        with pytest.raises(ComputationError, match="rflag.*tfcrop.*manual"):
             _resolve_mode("G", "bogus")
 
 
@@ -224,3 +226,76 @@ class TestIntervals:
         work.mkdir()
         with pytest.raises(ComputationError, match="solution intervals"):
             mod.run(str(ct), str(work), execute=False)
+
+
+# ---------------------------------------------------------------------------
+# manual mode
+# ---------------------------------------------------------------------------
+
+
+class TestManualMode:
+    def test_manual_allowed_on_delay_table(self):
+        assert _resolve_mode("K", "manual") == "manual"
+
+    def test_empty_selection_refused(self):
+        # flagdata(mode='manual') with no selection flags the whole table
+        with pytest.raises(ComputationError, match="entire caltable"):
+            check_selection("manual", {"antenna": "", "scan": "  "}, "bad")
+
+    def test_reason_required(self):
+        with pytest.raises(ComputationError, match="reason"):
+            check_selection("manual", {"antenna": "ea05"}, "  ")
+
+    def test_returns_non_empty_entries_stripped(self):
+        out = check_selection("manual", {"antenna": " ea05 ", "spw": ""}, "amp jump")
+        assert out == {"antenna": "ea05"}
+
+    def test_unsupported_key_refused(self):
+        # uvrange / intent / correlation are not supported in manual mode on caltables
+        with pytest.raises(ComputationError, match="Unsupported caltable"):
+            check_selection("manual", {"uvrange": "<1km"}, "x")
+
+    def test_selection_with_autoflag_refused(self):
+        with pytest.raises(ComputationError, match="only to mode='manual'"):
+            check_selection("rflag", {"antenna": "ea05"}, "")
+
+    def test_autoflag_without_selection_passes(self):
+        assert check_selection("tfcrop", {"antenna": ""}, "") == {}
+
+    def test_interval_check_skipped(self):
+        assert check_intervals("G", "manual", FEW, 10) is None
+
+    def test_script_carries_selection_and_reason(self):
+        s = _build_script(
+            "gain.G", "manual", "CPARAM", 5.0, True, {"antenna": "ea05", "scan": "3"}, "phase jump"
+        )
+        assert "mode='manual'" in s
+        assert "antenna='ea05', scan='3'" in s
+        assert "Reason: phase jump" in s
+        assert "timedevscale" not in s and "timecutoff" not in s
+        assert s.count('mode="summary"') == 2
+
+    def test_run_manual_on_two_scan_gain_table(self, tmp_path, monkeypatch):
+        import ms_modify.flag_caltable as mod
+
+        monkeypatch.setattr(mod, "_read_viscal_type", lambda _p: "G")
+        monkeypatch.setattr(mod, "_read_intervals", lambda _p: FEW)
+        ct = tmp_path / "gain.G"
+        ct.mkdir()
+        (ct / "table.info").write_text("Type = Calibration\n")
+        work = tmp_path / "work"
+        work.mkdir()
+        result = mod.run(
+            str(ct),
+            str(work),
+            mode="manual",
+            antenna="ea05",
+            field="J1331+3030",
+            reason="ea05 amp 40% low on 3C286",
+        )
+        assert result["status"] == "ok"
+        assert result["data"]["mode"]["value"] == "manual"
+        assert result["data"]["selection"] == {"antenna": "ea05", "field": "J1331+3030"}
+        assert result["data"]["reason"] == "ea05 amp 40% low on 3C286"
+        assert result["data"]["solution_intervals"] == FEW
+        assert "antenna='ea05'" in (work / "flag_caltable.py").read_text()

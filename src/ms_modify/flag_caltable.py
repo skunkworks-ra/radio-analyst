@@ -6,6 +6,15 @@ table, to catch RFI-contaminated outlier solutions that still pass the solve-tim
 SNR cut. Intended to run after a caltable is created and before it is applied
 on-the-fly as a prior in subsequent solves.
 
+mode='manual' instead flags a caller-named selection (antenna, spw, field, scan,
+timerange, observation — the only selections flagdata supports on a caltable)
+with a required reason. The caller chooses what to flag; the tool refuses an
+empty selection, because flagdata(mode='manual') with no selection flags the
+whole table. Manual mode works on any table type, including K, and skips the
+solution-interval check (it judges nothing against neighbours). flagdata does
+not support correlation selection in manual mode on caltables, so single-
+polarisation manual flags are not offered.
+
 Mode is auto-routed from the table's VisCal type (the same keyword
 ms_calsol_stats reads):
 
@@ -14,6 +23,7 @@ ms_calsol_stats reads):
     D, Df, Dgen (leakage)→ rflag
     K, Kcross, KAntPos   → refused  — one value per antenna; autoflag is not
                                       meaningful on a delay/position table
+                                      (mode='manual' is allowed)
 
 Gain tables (G, T) are flagged along time, so rflag needs enough solution
 intervals per antenna to have neighbours to compare against. With solint='inf'
@@ -41,6 +51,7 @@ from ms_inspect.util.casa_context import open_table
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
 from ms_inspect.util.logs import write_script
+from ms_modify.manual_selection import validate_manual_selection
 
 TOOL_NAME = "ms_flag_caltable"
 
@@ -59,6 +70,9 @@ _REFUSED_TYPES = {"K", "Kcross", "KAntPos"}
 
 # Types flagged along the time axis: need enough solution intervals per antenna.
 _TIME_AXIS_TYPES = {"G", "T"}
+
+# flagdata selections supported on a caltable (casadocs flagdata, Note section).
+SELECTION_KEYS = ("antenna", "spw", "field", "scan", "timerange", "observation")
 
 
 def _validate_caltable_path(caltable_path: str) -> Path:
@@ -122,6 +136,8 @@ def check_intervals(
     table has too few solution intervals per antenna for rflag/tfcrop to judge."""
     from ms_inspect.exceptions import ComputationError
 
+    if mode_override == "manual":
+        return None
     first = viscal_type.split()[0] if viscal_type else ""
     med = intervals.get("median")
     if first not in _TIME_AXIS_TYPES or med is None or med >= min_intervals:
@@ -134,8 +150,8 @@ def check_intervals(
     )
     if mode_override is None:
         raise ComputationError(
-            msg + " Inspect with ms_calsol_stats and flag bad antennas explicitly, or "
-            "pass mode= explicitly to override.",
+            msg + " Inspect with ms_calsol_stats and flag named solutions with "
+            "mode='manual', or pass mode='rflag'/'tfcrop' explicitly to override.",
             ms_path="",
         )
     return msg + " Running anyway because mode was passed explicitly."
@@ -146,9 +162,9 @@ def _resolve_mode(viscal_type: str, mode_override: str | None) -> str:
     from ms_inspect.exceptions import ComputationError
 
     if mode_override:
-        if mode_override not in ("rflag", "tfcrop"):
+        if mode_override not in ("rflag", "tfcrop", "manual"):
             raise ComputationError(
-                f"mode must be 'rflag' or 'tfcrop', got {mode_override!r}.",
+                f"mode must be 'rflag', 'tfcrop' or 'manual', got {mode_override!r}.",
                 ms_path="",
             )
         return mode_override
@@ -158,7 +174,7 @@ def _resolve_mode(viscal_type: str, mode_override: str | None) -> str:
         raise ComputationError(
             f"VisCal type '{viscal_type}' is a delay/position table (one value per "
             "antenna). Autoflagging its solutions is not meaningful — skip it. Inspect "
-            "with ms_calsol_stats and flag bad antennas explicitly instead.",
+            "with ms_calsol_stats and flag named antennas with mode='manual' instead.",
             ms_path="",
         )
     if first not in _MODE_BY_TYPE:
@@ -170,18 +186,62 @@ def _resolve_mode(viscal_type: str, mode_override: str | None) -> str:
     return _MODE_BY_TYPE[first]
 
 
+def check_selection(mode: str, selection: dict[str, str], reason: str) -> dict[str, str]:
+    """Validate the manual selection and return its non-empty entries. CASA-free.
+
+    Manual mode needs at least one selection (an empty one flags the whole table)
+    and a reason. Autoflag modes take no selection: they run on the whole table.
+    """
+    from ms_inspect.exceptions import ComputationError
+
+    if mode == "manual":
+        return validate_manual_selection(selection, reason, SELECTION_KEYS, "caltable")
+    given = sorted(k for k, v in selection.items() if v and v.strip())
+    if given:
+        raise ComputationError(
+            f"Selection {given} applies only to mode='manual'; "
+            f"mode={mode!r} runs on the whole table.",
+            ms_path="",
+        )
+    return {}
+
+
+def _flag_kwargs(mode: str, sigma: float, selection: dict[str, str]) -> dict:
+    """flagdata keyword arguments for the apply call, by mode."""
+    if mode == "manual":
+        return dict(selection)
+    if mode == "tfcrop":
+        return {"timecutoff": sigma, "freqcutoff": sigma}
+    return {"timedevscale": sigma, "freqdevscale": sigma}  # rflag
+
+
 def _build_script(
     caltable_str: str,
     mode: str,
     datacolumn: str,
     sigma: float,
     flagbackup: bool,
+    selection: dict[str, str] | None = None,
+    reason: str = "",
 ) -> str:
     """Return a self-contained flag_caltable.py driver script."""
-    if mode == "tfcrop":
-        flag_kwargs = f"timecutoff={sigma}, freqcutoff={sigma}"
-    else:  # rflag
-        flag_kwargs = f"timedevscale={sigma}, freqdevscale={sigma}"
+    kwargs = _flag_kwargs(mode, sigma, selection or {})
+    flag_kwargs = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
+    if mode == "manual":
+        what = (
+            f"Manually flags caltable solutions matching {kwargs!r}.\n"
+            f"Reason: {reason}\n"
+            "Prints the flagged fraction before and after."
+        )
+        datacol_kwarg = ""
+    else:
+        what = (
+            f"Autoflags caltable solutions (mode={mode!r}, datacolumn={datacolumn!r}) at\n"
+            f"sigma={sigma}. Prints the flagged fraction before and after so you can decide\n"
+            "whether the a-priori flagging was sufficient (> 30% flagged → improve preflag\n"
+            "and redo the solve rather than loosening sigma)."
+        )
+        datacol_kwarg = f"\n    datacolumn={datacolumn!r},"
 
     return f"""\
 #!/usr/bin/env python
@@ -189,10 +249,7 @@ def _build_script(
 Auto-generated by ms_flag_caltable (ms_modify).
 Run with: python flag_caltable.py
 
-Autoflags caltable solutions (mode={mode!r}, datacolumn={datacolumn!r}) at
-sigma={sigma}. Prints the flagged fraction before and after so you can decide
-whether the a-priori flagging was sufficient (> 30% flagged → improve preflag
-and redo the solve rather than loosening sigma).
+{what}
 \"\"\"
 from casatasks import flagdata
 
@@ -210,8 +267,7 @@ print(f"Flagged fraction before: {{_frac(before):.4f}}")
 flagdata(
     vis=caltable,
     mode={mode!r},
-    action="apply",
-    datacolumn={datacolumn!r},
+    action="apply",{datacol_kwarg}
     {flag_kwargs},
     flagbackup={flagbackup!r},
 )
@@ -219,7 +275,6 @@ flagdata(
 after = flagdata(vis=caltable, mode="summary", datacolumn={datacolumn!r})
 print(f"Flagged fraction after:  {{_frac(after):.4f}}")
 print(f"Delta: {{_frac(after) - _frac(before):.4f}}")
-print("Done. If > 30% flagged, improve a-priori flagging and redo the solve.")
 """
 
 
@@ -232,6 +287,13 @@ def run(
     flagbackup: bool = True,
     min_intervals: int = 10,
     execute: bool = False,
+    antenna: str = "",
+    spw: str = "",
+    field: str = "",
+    scan: str = "",
+    timerange: str = "",
+    observation: str = "",
+    reason: str = "",
 ) -> dict:
     """
     Generate (and optionally execute) an autoflag pass on a caltable's solutions.
@@ -242,8 +304,9 @@ def run(
         sigma:         Threshold scale (default 5.0; 6.0 is more conservative).
                        Maps to timecutoff/freqcutoff (tfcrop) or
                        timedevscale/freqdevscale (rflag).
-        mode:          'rflag' or 'tfcrop'. Default None → auto-route from the
-                       table's VisCal type (B→tfcrop, G/T/D→rflag, K→refused).
+        mode:          'rflag', 'tfcrop' or 'manual'. Default None → auto-route
+                       from the table's VisCal type (B→tfcrop, G/T/D→rflag,
+                       K→refused). 'manual' flags `selection` on any table type.
         datacolumn:    Solution column to flag on. Default 'CPARAM' (complex
                        solutions: B, G, D). Use 'FPARAM' only for real-valued
                        tables.
@@ -255,6 +318,11 @@ def run(
         execute:       If False (default), write flag_caltable.py and return.
                        If True, run the summary→apply→summary sequence in-process
                        and report flagged_frac_before/after/delta.
+        antenna, spw, field, scan, timerange, observation:
+                       mode='manual' only: flagdata selection (the selections
+                       flagdata supports on a caltable). At least one non-empty.
+        reason:        mode='manual' only, required: why these solutions are
+                       flagged. Written into the script header and returned.
 
     Returns:
         Standard response envelope. Always includes script_path, viscal_type,
@@ -281,6 +349,15 @@ def run(
     viscal_type = _read_viscal_type(caltable_str)
     casa_calls.append(f"tb.getkeywords() → VisCal='{viscal_type} Jones'")
     resolved_mode = _resolve_mode(viscal_type, mode)
+    selection = dict(
+        antenna=antenna,
+        spw=spw,
+        field=field,
+        scan=scan,
+        timerange=timerange,
+        observation=observation,
+    )
+    sel = check_selection(resolved_mode, selection, reason)
     intervals = _read_intervals(caltable_str)
     casa_calls.append("tb.getcol(FIELD_ID, SPECTRAL_WINDOW_ID, ANTENNA1, TIME) → intervals")
     interval_warn = check_intervals(viscal_type, mode, intervals, min_intervals)
@@ -294,6 +371,8 @@ def run(
         datacolumn=datacolumn,
         sigma=sigma,
         flagbackup=flagbackup,
+        selection=sel,
+        reason=reason,
     )
     write_script(script_path, script_content)
     casa_calls.append(f"write_script → {script_path}")
@@ -307,12 +386,20 @@ def run(
         "solution_intervals": intervals,
         "min_intervals": min_intervals,
     }
+    if resolved_mode == "manual":
+        base_data["selection"] = sel
+        base_data["reason"] = reason.strip()
 
     if not execute:
         warnings.append(
             f"Script written to {script_path}. Run it externally, or call again with "
-            "execute=True. If > 30% of solutions are flagged, improve the a-priori "
-            "flagging and redo the solve rather than only loosening sigma."
+            "execute=True."
+            + (
+                ""
+                if resolved_mode == "manual"
+                else " If > 30% of solutions are flagged, improve the a-priori "
+                "flagging and redo the solve rather than only loosening sigma."
+            )
         )
         return response_envelope(
             tool_name=TOOL_NAME,
@@ -337,11 +424,9 @@ def run(
         tot = summary.get("total", 0) or 0
         return (summary.get("flagged", 0) / tot) if tot else 0.0
 
-    flag_kwargs: dict = (
-        {"timecutoff": sigma, "freqcutoff": sigma}
-        if resolved_mode == "tfcrop"
-        else {"timedevscale": sigma, "freqdevscale": sigma}
-    )
+    flag_kwargs = _flag_kwargs(resolved_mode, sigma, sel)
+    if resolved_mode != "manual":
+        flag_kwargs["datacolumn"] = datacolumn
 
     try:
         before = flagdata(vis=caltable_str, mode="summary", datacolumn=datacolumn)
@@ -350,13 +435,11 @@ def run(
             vis=caltable_str,
             mode=resolved_mode,
             action="apply",
-            datacolumn=datacolumn,
             flagbackup=flagbackup,
             **flag_kwargs,
         )
         casa_calls.append(
-            f"casatasks.flagdata(mode={resolved_mode!r}, action='apply', "
-            f"datacolumn={datacolumn!r}, {flag_kwargs})"
+            f"casatasks.flagdata(mode={resolved_mode!r}, action='apply', {flag_kwargs})"
         )
         after = flagdata(vis=caltable_str, mode="summary", datacolumn=datacolumn)
         casa_calls.append("casatasks.flagdata(mode='summary') [after]")
@@ -373,7 +456,7 @@ def run(
     base_data["flagged_frac_after"] = fmt_field(round(frac_after, 4))
     base_data["flagged_frac_delta"] = fmt_field(round(delta, 4))
 
-    if frac_after > 0.30:
+    if resolved_mode != "manual" and frac_after > 0.30:
         warnings.append(
             f"Flagged fraction after autoflag is {frac_after:.1%} (> 30%). The a-priori "
             "flagging was likely insufficient — improve preflag and redo this solve "

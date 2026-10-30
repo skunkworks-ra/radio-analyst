@@ -773,8 +773,11 @@ class FlagCaltableInput(BaseModel):
     mode: str | None = Field(
         default=None,
         description=(
-            "'rflag' or 'tfcrop'. Default None → auto-route from the VisCal type "
-            "(B→tfcrop, G/T/D→rflag, K→refused)."
+            "'rflag', 'tfcrop' or 'manual'. Default None → auto-route from the VisCal "
+            "type (B→tfcrop, G/T/D→rflag, K→refused). 'manual' flags the named "
+            "selection (antenna/spw/field/scan/timerange/observation) on any table "
+            "type, needs at least one selection and a reason, and skips the "
+            "solution-interval check."
         ),
     )
     datacolumn: str = Field(
@@ -800,6 +803,21 @@ class FlagCaltableInput(BaseModel):
         description=(
             "If False (default), write flag_caltable.py and return. If True, run "
             "summary→apply→summary in-process and report flagged_frac_before/after/delta."
+        ),
+    )
+    antenna: str = Field(default="", description="mode='manual': flagdata antenna selection.")
+    spw: str = Field(default="", description="mode='manual': flagdata spw selection.")
+    field: str = Field(default="", description="mode='manual': flagdata field selection.")
+    scan: str = Field(default="", description="mode='manual': flagdata scan selection.")
+    timerange: str = Field(default="", description="mode='manual': flagdata timerange selection.")
+    observation: str = Field(
+        default="", description="mode='manual': flagdata observation selection."
+    )
+    reason: str = Field(
+        default="",
+        description=(
+            "mode='manual', required: why these solutions are flagged (the "
+            "ms_calsol_stats evidence). Written into the script header."
         ),
     )
 
@@ -1148,9 +1166,10 @@ async def ms_postcal_flag(params: PostcalFlagInput) -> ToolResult:
     name="ms_flag_caltable",
     description=(
         "Autoflag a caltable's solutions (rflag/tfcrop, auto-routed from VisCal type) "
-        "to catch RFI-contaminated outliers that passed the solve-time SNR cut. Run "
-        "after a table is created, before it is applied as a prior. Delay (K) tables "
-        "are refused. Reports flagged fraction before/after."
+        "to catch RFI-contaminated outliers that passed the solve-time SNR cut, or "
+        "flag a named selection with mode='manual'. Run after a table is created, "
+        "before it is applied as a prior. Delay (K) tables are refused for autoflag. "
+        "Reports flagged fraction before/after."
     ),
     annotations={
         "title": "Flag Calibration Table Solutions",
@@ -1173,11 +1192,13 @@ async def ms_flag_caltable(params: FlagCaltableInput) -> ToolResult:
         params.caltable_path: Path to the CASA calibration table.
         params.workdir:       Existing directory for the generated script.
         params.sigma:         Threshold scale (default 5.0; 6.0 more conservative).
-        params.mode:          'rflag'/'tfcrop' override, or None to auto-route.
+        params.mode:          'rflag'/'tfcrop'/'manual', or None to auto-route.
         params.datacolumn:    Solution column (default 'CPARAM').
         params.flagbackup:    Save a .flagversions backup first (default True).
         params.min_intervals: Gain tables: min median solution intervals per antenna (default 10).
         params.execute:       Generate script only (False) or run in-process (True).
+        params.antenna … params.observation: mode='manual' selection.
+        params.reason:        mode='manual': why the solutions are flagged.
 
     Returns:
         JSON with script_path, viscal_type, resolved mode, and (if execute=True)
@@ -1193,6 +1214,8 @@ async def ms_flag_caltable(params: FlagCaltableInput) -> ToolResult:
         params.flagbackup,
         params.min_intervals,
         params.execute,
+        reason=params.reason,
+        **{k: getattr(params, k) for k in flag_caltable.SELECTION_KEYS},
     )
 
 
