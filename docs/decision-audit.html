@@ -125,10 +125,10 @@ html { scroll-behavior: smooth; }
   <div class="eyebrow">radio-analyst · design working document</div>
   <h1>Decision Tier Audit</h1>
   <div class="meta">
-    <span>Updated 2026-10-30</span>
+    <span>Updated 2026-10-30 (v7)</span>
     <span>Skills at <code>main@b590e74</code></span>
     <span>Driver at <code>origin/driver-v2@3f6687d</code>, <code>origin/scope-split@b16d126</code></span>
-    <span>Status: 26 of 30 fixed or closed on branch <code>skills-audit</code>; open: A5, A10, A11, A14</span>
+    <span>Status: 29 of 30 fixed or closed on branch <code>skills-audit</code>; open: A10</span>
   </div>
   <p class="prose lede">Every decision in a reduction, from inspection to selfcal, sorted by who should make it: the loop with no model, a small model following a skill rule, or Opus making a judgment. Each step lists the inputs the decision needs, what the skill says, and what has to be injected for the answer to be worth having. The skills audit that this pass turned up is at the end.</p>
 </header>
@@ -181,7 +181,7 @@ html { scroll-behavior: smooth; }
 <tr><td class="id">c4</td><td><code>ms_bandpass</code> B</td><td><span class="tier T2">T2</span></td><td>caltable flagged ≥ 30%; &gt; 3 antennas lost</td><td></td><td>A5</td></tr>
 <tr><td class="id">c5</td><td><code>ms_gaincal</code> G</td><td><span class="tier T2">T2</span></td><td>any post-flight check routes to 07b; a flag wider than the evidence, or on the caltable</td><td>07b worked cases</td><td>A17, A18, A27</td></tr>
 <tr><td class="id">c6</td><td><code>ms_fluxscale</code></td><td class="nowrap"><span class="tier T2">T2</span> call · <span class="tier T3">T3</span> review</td><td>always reviewed</td><td>expected flux (callist)</td><td>A9</td></tr>
-<tr><td class="id">c7</td><td><code>ms_applycal</code> ×3</td><td><span class="tier T2">T2</span></td><td>antenna-set intersection &lt; 0.5</td><td></td><td>A14</td></tr>
+<tr><td class="id">c7</td><td><code>ms_applycal</code> ×3</td><td><span class="tier T2">T2</span></td><td>antenna-set intersection &lt; 0.5</td><td></td><td>A14 (closed)</td></tr>
 <tr><td class="id">f1</td><td><code>ms_postcal_flag</code></td><td><span class="tier T3">T3</span></td><td>—</td><td>24A-376 worked case</td><td></td></tr>
 <tr><td class="id">o1</td><td>pol conditions</td><td><span class="tier T3">T3</span></td><td>—</td><td>J1454 24° case; 3C84 at C-band</td><td>A3, A16</td></tr>
 <tr><td class="id">o2</td><td><code>ms_setjy_polcal</code></td><td><span class="tier T2">T2</span></td><td><code>ms_verify_model</code> shows a Stokes-I clobber</td><td></td><td></td></tr>
@@ -264,7 +264,7 @@ html { scroll-behavior: smooth; }
 
 <div class="step"><header><span class="id">c7</span><h3>Applycal ×3</h3><span class="tier T2">T2</span></header><dl>
 <dt>Skill says</dt><dd><code>07:630–745</code>. Antenna-set intersection before applying; then fixed gainfield/interp per field type.</dd>
-<dt>Verdict</dt><dd>The gainfield/interp mapping is a template (T2). The intersection is set arithmetic over <code>ms_calsol_stats</code> outputs that the model currently does by hand. It should be T1 (A14). Below 0.5 it goes to T3.</dd></dl></div>
+<dt>Verdict</dt><dd>The gainfield/interp mapping is a template (T2). The intersection is set arithmetic over <code>ms_calsol_stats</code> outputs that the model currently does by hand. It could be T1, but on 3C391 the sets are identical and the arithmetic is trivial, so A14 is closed without a change. Below 0.5 it goes to T3.</dd></dl></div>
 
 <h2 id="postcal">Post-cal flagging</h2>
 <div class="step"><header><span class="id">f1</span><h3>Residual clip on the primaries, triage on the target</h3><span class="tier T3">T3</span></header><dl>
@@ -288,7 +288,7 @@ html { scroll-behavior: smooth; }
 <div class="step"><header><span class="id">m1 · m2</span><h3>First image</h3><span class="tier T1">T1</span><span class="tier T3">T3</span></header><dl>
 <dt>Skill says</dt><dd><code>11</code>. Ask the user which fields and which Stokes; a coherence gate on CORRECTED; cell, imsize, W-term and threshold derived by formula; gridder from a table.</dd>
 <dt>Verdict</dt><dd>Cell, imsize, <code>wprojplanes</code> and the radiometer threshold are arithmetic over tool outputs, so T1. They could ship as labelled <code>suggested.*</code> values, which the contract allows. Field selection, weighting, deconvolver and gridder depend on the science goal: T3. The review of <code>ms_image_stats</code> is T3; in April, Haiku explained away an RMS 9.5× the radiometer estimate.</dd>
-<dt>Inject</dt><dd>The run scope stands in for "ask the user" (A11). Expert defaults for an extended-source mosaic (A12).</dd></dl></div>
+<dt>Inject</dt><dd>Fields and Stokes now come from the run: IQUV if polcal ran, else I (A11, fixed). Expert defaults for an extended-source mosaic (A12).</dd></dl></div>
 
 <h2 id="selfcal">Selfcal</h2>
 <div class="step"><header><span class="id">s0–s3</span><h3>Whether, then one phase-only round</h3><span class="tier T3">T3</span><span class="tier T2">T2</span></header><dl>
@@ -315,7 +315,8 @@ html { scroll-behavior: smooth; }
 <li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong>Kcross combine: "recommended" vs "do not assume"</strong></div>
 <p>The API table recommends <code>combine='scan,spw'</code>. Step 2 says per-SpW is the default and not to assume multiband. If the wrong one is picked, SpWs 1..N are silently uncorrected unless spwmap is passed.</p>
 <p class="src">09-polcal-execution.md:96–97 vs 207–220</p></li>
-<li><div class="head"><span class="sev low">low</span><strong><code>parang=True</code> "always", but missing from most templates</strong></div>
+<li><div class="head"><span class="sev low">low</span><span class="state">fixed</span><strong><code>parang=True</code> "always", but missing from most templates</strong></div>
+<p><em>Fixed:</em> 07 now says the final chain needs it, the four solve/apply tools default to it so the templates omit it, and never pass <code>parang=False</code>. <code>ms_initial_bandpass</code> does not set it; its tables only drive the residual rflag and are replaced by the final solves.</p>
 <p>The rule says every gaincal, bandpass and applycal call; Steps 1–3 and 7a–7c omit it. Downgraded: <code>ms_gaincal</code>, <code>ms_bandpass</code> and <code>ms_applycal</code> all default to <code>parang=True</code>, so leaving it out does no harm. This is a documentation inconsistency only.</p>
 <p class="src">07-calibration-execution.md:773–777 vs 228–325, 689–738</p></li>
 <li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong>"Never re-run initial bandpass" vs "re-run Step 6"</strong></div>
@@ -333,7 +334,8 @@ html { scroll-behavior: smooth; }
 <li><div class="head"><span class="sev med">medium</span><strong>Radiometer estimate: polarisations and efficiency</strong></div>
 <p><code>SEFD / sqrt(2·Δν·t·n_bl)</code> is the single-polarisation noise. Stokes I from two polarisations is √2 lower, there is no correlator efficiency term, and Δν should be the unflagged bandwidth. This is the reference for the "&gt; 2× radiometer" gate, so it matters. Needs expert confirmation.</p>
 <p class="src">11-imaging.md:202–206</p></li>
-<li><div class="head"><span class="sev med">medium</span><strong>Imaging asks a user who isn't there</strong></div>
+<li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong>Imaging asks a user who isn't there</strong></div>
+<p><em>Fixed, by expert ruling:</em> Stokes is IQUV if polcal ran, otherwise I. Fields are the run's named targets, else all target fields (one mosaic for pointings of one source). Ask only when someone is there and the request is silent; state the choice in the report. With the wideband <code>mtmfs</code> path, IQUV goes through the cube path.</p>
 <p>Step 0 asks the user which fields and which Stokes. In the driver there is no user; the run scope has to supply both.</p>
 <p class="src">11-imaging.md:36–52</p></li>
 <li><div class="head"><span class="sev med">medium</span><span class="state">fixed</span><strong>Gridder for a VLA mosaic: two files disagree</strong></div>
@@ -342,7 +344,8 @@ html { scroll-behavior: smooth; }
 <li><div class="head"><span class="sev low">low</span><span class="state">fixed</span><strong>Stale output path</strong></div>
 <p><code>/data/jobs/{WORKFLOW_ID}/</code> is from an older layout.</p>
 <p class="src">09-polcal-execution.md:361</p></li>
-<li><div class="head"><span class="sev med">medium</span><strong>The model does set arithmetic by hand</strong></div>
+<li><div class="head"><span class="sev med">medium</span><span class="state">not needed</span><strong>The model does set arithmetic by hand</strong></div>
+<p><em>Closed without a change, on evidence:</em> on all 8 calibration tables from the April 3C391 runs, <code>ms_calsol_stats</code> <code>antennas_lost</code> matches a direct FLAG read (ea13 only), so the intersection is 25/26 and the hand computation is trivial. No run log shows a model getting it wrong. Known edge, unobserved: an antenna absent from a (field, SpW) cell reads NaN and is not counted lost (<code>calsol_stats.py:606</code>). Revisit if a table shows it.</p>
 <p>The antenna-set intersection is computed from several <code>ms_calsol_stats</code> calls by the model. It is deterministic, so it belongs in the loop or in a tool as a reported fraction, with the 0.5 threshold staying in the skill.</p>
 <p class="src">07-calibration-execution.md:630–671</p></li>
 <li><div class="head"><span class="sev low">low</span><span class="state">fixed</span><strong>Selfcal: recommend or decide</strong></div>
@@ -444,8 +447,8 @@ html { scroll-behavior: smooth; }
 
 <h2 id="next">Next</h2>
 <ol class="prose">
-<li>Open findings: A10 (radiometer, from the ngVLA memos 96 and 134, and 107 with its scaling problem noted), A11 (run scope in place of "ask the user"), A14 (antenna-set intersection as a T1 computation), A5 (template text only). A27 is fixed: <code>ms_flag_data</code>, and flag the data rather than the solution.</li>
-<li><code>ms_tclean</code> takes no <code>scales</code>, so multiscale cannot be configured through the tool.</li>
+<li>Open findings: A10 (radiometer, from the ngVLA memos 96 and 134, and 107 with its scaling problem noted). Fixed since v5: A27 (<code>ms_flag_data</code>; flag the data rather than the solution), A5, A11. A14 closed on evidence.</li>
+<li><code>ms_tclean</code> takes no <code>scales</code>, so multiscale cannot be configured through the tool. Evidence first: a hogbom vs multiscale 3C391 image in the walkthrough, compared with <code>ms_image_stats</code>.</li>
 <li>A SYSPOWER measurement tool: switched power per antenna, SpW and time as a Tsys proxy, to rank SpWs by RFI before calibration. Needs a design pass first.</li>
 <li>Compare our per-SpW RFI picture against DRIFT (drift.nrao.edu), the VLA's catalogue of known RFI.</li>
 <li>Add <code>tier</code> and <code>escalate_when</code> to <code>stages.json</code>, once Krishna is back.</li>
