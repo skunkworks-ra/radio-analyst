@@ -153,6 +153,18 @@ t2=$(date +%s)
 mkdir -p .claude
 cp -a /work/plugin/.claude/skills /work/plugin/.claude/commands .claude/
 cp -a /work/plugin/.opencode .opencode
+# `opencode run --command` does not expand @file, so inline each skill a command
+# names (body without frontmatter), as Claude Code injects it on /radio-analyst:<skill>.
+python3 - <<'PYEOF'
+import pathlib, re
+for cmd in pathlib.Path(".opencode/commands").glob("*.md"):
+    t = cmd.read_text()
+    m = re.search(r"^@(\S+/SKILL\.md)$", t, re.M)
+    if m:
+        body = pathlib.Path(m.group(1)).read_text().split("---", 2)[2].lstrip()
+        cmd.unlink()
+        cmd.write_text(t.replace(m.group(0), body))
+PYEOF
 export CLAUDE_PROJECT_DIR=/work/run
 python3 - <<'PYEOF'
 import json
