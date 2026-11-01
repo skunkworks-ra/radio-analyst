@@ -1,0 +1,8 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "ms-inspect": {"type": "local", "command": ["bash", "scripts/plugin/serve.sh"], "timeout": 60000},
+    "ms-modify": {"type": "local", "command": ["bash", "scripts/plugin/serve-modify.sh"], "timeout": 60000},
+    "ms-create": {"type": "local", "command": ["bash", "scripts/plugin/serve-create.sh"], "timeout": 60000}
+  }
+}
