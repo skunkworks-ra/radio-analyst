@@ -1,5 +1,6 @@
 {
   "name": "radio-analyst",
+  "version": "0.1.0",
   "description": "CASA data reduction for radio interferometers (VLA, MeerKAT, uGMRT): 54 MCP tools, interferometrist skills, and inspect/precal/calibrate/polcal/image workflows",
   "author": {
     "name": "Srikrishna Sekhar and Preshanth Jagannathan",
@@ -16,6 +17,7 @@
     "MeerKAT",
     "uGMRT"
   ],
+  "icon": "./.claude-plugin/icon.png",
   "mcpServers": {
     "ms-inspect": {
       "command": "bash",
