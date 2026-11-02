@@ -1,5 +1,12 @@
 # radio-analyst
 
+[![CI](https://github.com/skunkworks-ra/radio-analyst/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/skunkworks-ra/radio-analyst/actions/workflows/ci.yml)
+[![Plugin CI](https://github.com/skunkworks-ra/radio-analyst/actions/workflows/plugin-ci.yml/badge.svg?branch=main)](https://github.com/skunkworks-ra/radio-analyst/actions/workflows/plugin-ci.yml)
+[![Release](https://img.shields.io/github/v/tag/skunkworks-ra/radio-analyst?label=release&sort=semver)](https://github.com/skunkworks-ra/radio-analyst/tags)
+[![Python](https://img.shields.io/badge/python-%E2%89%A53.12-blue)](pyproject.toml)
+[![pixi](https://img.shields.io/badge/env-pixi-yellow)](https://pixi.sh)
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+
 A Claude Code plugin for reducing radio interferometric data with CASA. It
 gives Claude 54 tools across three MCP servers, the reasoning of an
 experienced interferometrist (skills), and step-by-step workflows (slash
@@ -108,7 +115,9 @@ claude plugin install radio-analyst@radio-analyst
 
 **Prerequisites**
 
-- [pixi](https://pixi.sh) on `PATH`: `curl -fsSL https://pixi.sh/install.sh | bash`
+- [pixi](https://pixi.sh) on `PATH`: `curl -fsSL https://pixi.sh/install.sh | bash`.
+  The plugin does not install pixi for you. CI uses pixi v0.81.0; `pixi.lock`
+  is lockfile version 7, so use a pixi that reads it.
 - Linux x86_64 or macOS arm64 (the platforms `pixi.toml` targets). On macOS,
   casatools isn't in `pixi.lock`, so the environment build installs it with pip.
 - Roughly 1 GB of free disk for the Python/CASA environment.
@@ -123,11 +132,20 @@ with `build complete`, run `/mcp` and reconnect them. Later updates only re-sync
 the plugin's sources and reuse the installed packages, unless `pixi.lock`
 changed.
 
+**How pixi is used.** pixi builds the environment; the servers do not need it
+to run. Each server checks for pixi only when the environment is missing or out
+of date (first run, or an update that changed the plugin's sources). Once it is
+built, the servers start from it directly, with or without pixi on `PATH`. If
+pixi is not on `PATH`, nothing is built and the session-start message says so
+with the install line above (it says this even when an environment from earlier
+is already built). Install pixi, restart Claude Code, and the build starts.
+
 **Check it works:** `/mcp` lists `ms-inspect`, `ms-modify` and `ms-create` as
 connected. Then ask *"What's in <path to an MS>?"*.
 
-**Update / remove.** The plugin carries no version number, so Claude Code
-versions it by commit: an update brings you to the latest commit on `main`.
+**Update / remove.** The plugin carries a version number (`plugin.json`), so
+`claude plugin update` moves you only when a release bumps it, not on every
+commit to `main`.
 
 ```bash
 claude plugin update radio-analyst@radio-analyst
@@ -247,6 +265,43 @@ RADIO_MCP_TRANSPORT=http RADIO_MCP_PORT=8000 pixi run serve
 RADIO_MCP_TRANSPORT=http RADIO_MCP_PORT=8001 pixi run serve-modify
 RADIO_MCP_TRANSPORT=http RADIO_MCP_PORT=8002 pixi run serve-create
 ```
+
+### opencode
+
+[opencode](https://opencode.ai) gets the same tools, skills, workflow commands
+and reduce hook from a clone; there is no marketplace install. Build the
+environment as above, then start opencode from the repo directory:
+
+```bash
+cd radio-analyst
+pixi install && pixi run pip install casatools casatasks   # once, before the first start
+opencode
+```
+
+What the clone provides:
+
+- `opencode.json` registers `ms-inspect`, `ms-modify` and `ms-create`, each
+  started by `scripts/plugin/serve*.sh` from the repo's pixi environment.
+- `.opencode/commands/radio-analyst-<name>.md` link to `.claude/commands/`.
+- `.claude/skills/` are picked up by opencode's `skill` tool.
+- `.opencode/plugins/reduce-hook.js` feeds opencode events to the same
+  `scripts/plugin/reduce_hook.py` the Claude Code plugin uses.
+
+How it differs from the Claude Code plugin:
+
+| | Claude Code plugin | opencode from a clone |
+|---|---|---|
+| Install | `claude plugin install` | `git clone` |
+| Environment | built by the hook under `~/.claude/plugins/data/` | the repo's own `.pixi/`; pixi is needed every time a server starts |
+| First start | servers report "still being built" until done | run `pixi install` first: a cold install takes longer than the 60 s server timeout in `opencode.json` |
+| Commands | `/radio-analyst:reduce` | `/radio-analyst-reduce` |
+| Python for generated scripts | given to Claude by the session-start hook | `pixi run python <script>` from the repo |
+| Stop hook | sends Claude back once with the open items | writes them to `.reduce_stop_reason`; nothing sends the model back in an interactive session |
+| Working directory | anywhere | the repo directory, so opencode finds `opencode.json` and `.opencode/` |
+
+Tested with opencode 1.19.0 in `scripts/dev/run-isolated.sh --harness opencode`,
+which lays out the same files in a container. An interactive opencode session
+from a clone has not been tested end to end.
 
 ---
 
