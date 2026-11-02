@@ -91,6 +91,50 @@ def test_launcher_on_unsupported_platform_fails_fast(unsupported_machine):
     assert not Path(unsupported_machine["CLAUDE_PLUGIN_DATA"], "build.flock").exists()
 
 
+@pytest.fixture
+def no_pixi(tmp_path: Path) -> dict[str, str]:
+    """Env with every PATH entry holding a pixi executable removed, fresh data dir."""
+    path = [
+        d for d in os.environ["PATH"].split(os.pathsep) if not os.access(Path(d, "pixi"), os.X_OK)
+    ]
+    return dict(
+        os.environ, PATH=os.pathsep.join(path), CLAUDE_PLUGIN_DATA=str(tmp_path / "plugin-data")
+    )
+
+
+def test_hook_without_pixi_asks_for_it_and_builds_nothing(no_pixi):
+    out = subprocess.run(
+        ["bash", str(SCRIPTS / "ensure-env.sh"), "--hook"],
+        env=no_pixi,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    msg = json.loads(out)
+    assert "pixi is not on PATH" in msg["systemMessage"]
+    assert "https://pixi.sh/install.sh" in msg["systemMessage"]
+    assert "install pixi" in msg["hookSpecificOutput"]["additionalContext"]
+    assert not Path(no_pixi["CLAUDE_PLUGIN_DATA"], "build.flock").exists()
+
+
+@pytest.mark.parametrize("plugin", [True, False], ids=["plugin", "clone"])
+def test_launcher_without_pixi_fails_loudly(no_pixi, plugin):
+    env = no_pixi if plugin else {k: v for k, v in no_pixi.items() if k != "CLAUDE_PLUGIN_DATA"}
+    proc = subprocess.run(
+        ["bash", str(SCRIPTS / "serve.sh")],
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 1
+    assert proc.stdout == ""  # stdout is the JSON-RPC stream
+    assert "pixi is not on PATH" in proc.stderr
+    assert "https://pixi.sh/install.sh" in proc.stderr
+    assert not Path(no_pixi["CLAUDE_PLUGIN_DATA"], "build.flock").exists()
+
+
 def _ra_source_hash(env: dict[str, str]) -> str:
     return subprocess.run(
         ["bash", "-c", f'source "{SCRIPTS / "env-lib.sh"}" && ra_source_hash'],
