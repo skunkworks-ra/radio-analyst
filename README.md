@@ -8,7 +8,7 @@
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 A Claude Code plugin for reducing radio interferometric data with CASA. It
-gives Claude 54 tools across three MCP servers, the reasoning of an
+gives Claude 55 tools across three MCP servers, the reasoning of an
 experienced interferometrist (skills), and step-by-step workflows (slash
 commands) for VLA/JVLA/EVLA, MeerKAT, and uGMRT Measurement Sets, from a raw
 ASDM to a first image.
@@ -50,12 +50,14 @@ report when a check fails. The commands are namespaced by the plugin:
 
 | Command | Takes you from → to |
 |---|---|
+| `/radio-analyst:reduce <ms>` | Raw MS → first image in one run: inspect, pre-calibration, calibration, optional post-cal flagging and polarisation, imaging, then the report. |
 | `/radio-analyst:inspect <ms>` | A new MS → a data-quality report with a go/no-go for calibration (orientation + instrument sanity, 12 tools, nothing written). |
 | `/radio-analyst:precal <ms>` | Imported MS → pre-calibrated calibrators: online flags, deterministic preflag, prior caltables (gain curves, opacity, requantizer, antenna positions), flux models, reference antenna, initial bandpass, residual RFI flagging. |
 | `/radio-analyst:calibrate <ms>` | Pre-calibrated MS → calibrated target: initial phase → delay → bandpass → gain → fluxscale → applycal, with solution statistics checked after every solve. |
 | `/radio-analyst:polcal <ms>` | Calibrated MS → polarisation-calibrated: cross-hand delay → leakage (D-terms) → position angle → applycal with parallactic-angle correction. |
 | `/radio-analyst:image <ms>` | Calibrated MS → first image, with tclean parameters derived from the data (cell, image size, gridder, deconvolver, threshold) and the result checked against the radiometer noise and expected beam. |
 | `/radio-analyst:simulate <description>` | A sentence → a synthetic MS, e.g. *"VLA B-config, L-band, 2 hours on 3C286 with a 5 % gain drift"*. |
+| `/radio-analyst:report` | A finished reduction → a summary in chat and `report.html` in the working directory: steps, decisions, caveats, replay script, plots, image. |
 
 A typical first session on a new VLA dataset:
 
@@ -77,6 +79,13 @@ working directory. Ask for it back at any point, as a step list or as a single
 replay script. Dead ends stay out, so the log is the clean path through your
 data, not the search for it.
 
+At the end, `/radio-analyst:report` turns the log into `report.html`: the steps
+with a keep box each (to choose which steps go into the replay script), the
+decisions and caveats, plots and the image. During a `/radio-analyst:reduce`
+run, a hook logs every tool call and, when Claude stops, lists the checks the
+reduction skipped and sends Claude back once to do them or explain why not. It
+never blocks a call.
+
 ---
 
 ## How it works
@@ -90,7 +99,7 @@ For example, 24° of parallactic-angle coverage doesn't block a leakage solve.
 It becomes "proceed, and limit fractional-polarisation claims to a few percent".
 
 **Nothing is written without a script you can read.** Every tool that modifies
-data or imports an ASDM (17 in total) defaults to `execute=False`. It returns a
+data or imports an ASDM (18 in total) defaults to `execute=False`. It returns a
 preview or writes a plain CASA Python script into your working directory and
 returns its path. The workflow then runs that script and checks the result with
 the read-only tools.
@@ -169,7 +178,8 @@ Third-party marketplaces don't auto-update by default. To turn that on, open
 ### Permissions
 
 - **Inside the workflow commands**, the MCP tools each command lists are
-  pre-approved, and so is `Bash`, which runs the generated scripts. Those
+  pre-approved, and so is `Bash`, which runs the generated scripts (all except
+  `/radio-analyst:inspect`, which runs none). Those
   commands include the ms-modify tools that write to your MS and working
   directory. They run without a prompt per step, but each step goes through a
   generated script, and the workflow stops when a check fails.
@@ -190,6 +200,8 @@ Loaded automatically when relevant. No need to invoke them yourself.
 | `radio-interferometry` | Interferometrist reasoning across the reduction: band tables, intent vocabulary, elevation/PA/flag thresholds, calibrator science, failure modes and recovery, and the execution playbooks the commands follow. |
 | `ms-simulator` | Turns a conversational description into a `casatools.simulator` script and a validated MS. |
 | `casa-docs` | Answers CASA task and parameter questions from the fetched casadocs page or casa6 source, never from memory. |
+| `reduce` | The end-to-end run behind `/radio-analyst:reduce`: stages, checks before and after each step, and the contract (`stages.json`) the hook reconciles against. |
+| `report` | Builds the summary and `report.html` at the end of a reduction. |
 
 ### Tools
 
@@ -205,10 +217,11 @@ The per-tool inventory is in [`design_docs/DESIGN.md`](design_docs/DESIGN.md)
   - Imaging (1): image RMS, peak, dynamic range, beam.
   - Workflow state (1).
   - CASA docs lookup (1).
-- **ms-modify (16)**: intents, preflag, prior caltables, setjy / pol setjy,
+- **ms-modify (17)**: intents, preflag, prior caltables, setjy / pol setjy,
   initial bandpass, gaincal (incl. KCROSS), bandpass, polcal, fluxscale,
-  applycal, residual and post-cal RFI flagging, caltable autoflag, tclean.
-- **ms-create (3)**: ASDM summary, ASDM → MS import, reduction log.
+  applycal, residual and post-cal RFI flagging, caltable autoflag, manual flag
+  of a named MS selection, tclean.
+- **ms-create (4)**: ASDM summary, ASDM → MS import, reduction log, report.
 
 ### Environment variables
 
@@ -218,6 +231,7 @@ The per-tool inventory is in [`design_docs/DESIGN.md`](design_docs/DESIGN.md)
 | `RADIO_MCP_HOST` | `127.0.0.1` | HTTP bind address. **The HTTP transport has no authentication. Don't bind beyond localhost on shared or untrusted networks** |
 | `RADIO_MCP_PORT` | `8000` / `8001` / `8002` | HTTP port (inspect / modify / create) |
 | `RADIO_MCP_WORKERS` | `4` | Parallel workers for FLAG column reads (cap 8) |
+| `RADIO_MCP_DIR` | current directory | Working directory for the servers' logs (`logs/`, including CASA logs) |
 | `RADIO_MCP_ENV_WAIT` | `20` | Plugin only: seconds a server waits on an in-progress environment build before exiting with a pointer to `build.log` |
 
 ---
