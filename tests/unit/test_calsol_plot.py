@@ -168,3 +168,13 @@ def test_library_unwritable_output_dir_returns_error_envelope(tmp_path):
     r = calsol_plot_library.run([str(tmp_path / "x.g")], str(blocker / "plots"))
     assert r["status"] == "error"
     assert r["error_type"] == "OUTPUT_DIR_UNWRITABLE"
+
+
+def test_single_unwritable_output_dir_returns_error_envelope(tmp_path):
+    caltable = tmp_path / "gain.G"
+    caltable.mkdir()
+    blocker = tmp_path / "file"
+    blocker.write_text("")
+    r = calsol_plot.run(str(caltable), str(blocker / "plots"))
+    assert r["status"] == "error"
+    assert r["error_type"] == "OUTPUT_DIR_UNWRITABLE"

@@ -753,15 +753,20 @@ def run(caltable_path: str, output_dir: str) -> dict:
     from bokeh.embed import file_html
     from bokeh.resources import CDN
 
+    from ms_inspect.util.formatting import error_envelope
+
     p = Path(caltable_path).expanduser().resolve()
     out = Path(output_dir).expanduser().resolve()
     if not p.exists() or not p.is_dir():
-        from ms_inspect.util.formatting import error_envelope
-
         return error_envelope(
             TOOL_NAME, caltable_path, "CALTABLE_NOT_FOUND", f"Calibration table not found: {p}"
         )
-    out.mkdir(parents=True, exist_ok=True)
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return error_envelope(
+            TOOL_NAME, caltable_path, "OUTPUT_DIR_UNWRITABLE", f"Cannot create {out}: {exc}"
+        )
 
     built = build_layout(caltable_path)
     layout, vc, kind, prov, sol = (
