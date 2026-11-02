@@ -130,15 +130,17 @@ def test_no_top_level_bin_dir():
     )
 
 
-def test_plugin_version_not_pinned():
-    # A "version" in plugin.json (or the marketplace entry) pins installed users
-    # to that string: `claude plugin update` ignores new commits until someone
-    # edits it. Unpinned, Claude Code versions the plugin by commit SHA. Remove
-    # this test only together with a release process that bumps the version.
+def test_plugin_version_matches_package():
+    # plugin.json is pinned: `claude plugin update` ignores new commits until the
+    # version is bumped. A release bumps plugin.json, pyproject.toml and the three
+    # __version__ strings together.
     manifest = json.loads((REPO_ROOT / ".claude-plugin" / "plugin.json").read_text())
-    marketplace = json.loads((REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text())
-    assert "version" not in manifest
-    assert all("version" not in entry for entry in marketplace["plugins"])
+    pyproject = (REPO_ROOT / "pyproject.toml").read_text()
+    want = re.search(r'^version = "([^"]+)"', pyproject, re.M).group(1)
+    assert manifest["version"] == want
+    for pkg in ("ms_inspect", "ms_modify", "ms_create"):
+        init = (REPO_ROOT / "src" / pkg / "__init__.py").read_text()
+        assert f'__version__ = "{want}"' in init, pkg
 
 
 def test_ci_tool_manifest_covers_every_registered_tool():
