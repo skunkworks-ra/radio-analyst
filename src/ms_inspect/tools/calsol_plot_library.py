@@ -37,7 +37,14 @@ def run(
     from bokeh.resources import CDN
 
     out = Path(output_dir).expanduser().resolve()
-    out.mkdir(parents=True, exist_ok=True)
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        from ms_inspect.util.formatting import error_envelope
+
+        return error_envelope(
+            TOOL_NAME, output_dir, "OUTPUT_DIR_UNWRITABLE", f"Cannot create {out}: {exc}"
+        )
 
     panels: list = []
     entries: list[dict] = []

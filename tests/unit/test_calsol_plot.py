@@ -158,3 +158,13 @@ class TestResponseEnvelope:
         result = _run(tmp_path, _sol("G", n_chan=1))
         assert result["data"]["ms_name"]["value"] == "fake.ms"
         assert result["data"]["call_params"]["value"] == {}
+
+
+def test_library_unwritable_output_dir_returns_error_envelope(tmp_path):
+    from ms_inspect.tools import calsol_plot_library
+
+    blocker = tmp_path / "file"
+    blocker.write_text("")
+    r = calsol_plot_library.run([str(tmp_path / "x.g")], str(blocker / "plots"))
+    assert r["status"] == "error"
+    assert r["error_type"] == "OUTPUT_DIR_UNWRITABLE"
