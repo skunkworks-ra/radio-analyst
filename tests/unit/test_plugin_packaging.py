@@ -168,3 +168,15 @@ def test_documented_tool_counts_match_registrations():
         assert re.search(rf"\*\*{server}\*\* — .*\({n} tools", claude_md), (server, n)
         assert re.search(rf"\*\*{server}\*\*: .*\({n} tools", readme), (server, n)
     assert f"**Total `ms_inspect`: {counts['ms-inspect']} tools.**" in design
+
+
+def test_opencode_commands_match_claude_commands():
+    # .opencode/commands/radio-analyst-<name>.md are copies, not links (the plugin
+    # directory's validator refuses symlinks). Edit .claude/commands/<name>.md and
+    # copy it over; this fails until both match.
+    src = REPO_ROOT / ".claude" / "commands"
+    dst = REPO_ROOT / ".opencode" / "commands"
+    for cmd in sorted(src.glob("*.md")):
+        copy = dst / f"radio-analyst-{cmd.name}"
+        assert copy.is_file() and not copy.is_symlink(), copy
+        assert copy.read_text() == cmd.read_text(), f"{copy} differs from {cmd}"
