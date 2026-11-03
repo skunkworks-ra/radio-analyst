@@ -112,36 +112,6 @@ the read-only tools.
 
 ---
 
-## With and without the plugin (A/B, in progress)
-
-The same model asked to reduce the 3C391 CASA-guide dataset to a first image,
-once with the plugin and once without. Same container, same data, same
-Python/CASA environment; GLM-5 through opencode. One run per arm so far, so
-these are single samples, not a spread. Three runs per arm are under way;
-details and per-run records in [`docs/ab-test-3c391.md`](docs/ab-test-3c391.md).
-
-| | A1: with plugin | B1: without |
-|---|---|---|
-| Prompt | `/radio-analyst-reduce ./input.ms` | "Reduce ./input.ms (VLA, 3C391) to a first calibrated image." |
-| Finished | yes, exit 0 | yes, exit 0 |
-| Session time | 113 min | 52 min |
-| Model steps | 134 | 94 |
-| Tool calls | 198 (121 MCP, 44 bash) | 104 (72 bash) |
-| Input tokens | 23.5 M | 6.6 M |
-| Output + reasoning tokens | 94.5 k | 72.8 k |
-| Failed calls | 2 MCP errors, 3 bash exits non-zero | 2 web fetches (404), 6 bash exits non-zero, 3 of its 15 scripts raised |
-| Calibration | prior caltables, initial phase, delay, bandpass, gain, fluxscale, applycal | setjy, phase, bandpass, gain, fluxscale, applycal; no delay solve, no prior caltables |
-| Selfcal | one phase round, the model's choice | none |
-| Record | ledger (20 steps), replay script, `report.html` | scripts only |
-| Final image peak | 0.127 Jy/beam (0.138 before selfcal) | 0.154 Jy/beam |
-| Final residual rms (pb ≥ 0.1) | 0.074 mJy/beam (0.059 before selfcal) | 0.888 mJy/beam |
-| Beam | 16.9 x 14.1 arcsec | 16.9 x 14.2 arcsec |
-
-Image numbers are from `ms_image_stats` with the same settings on both final
-images. Cost in dollars is not reported by this provider; tokens stand in for it.
-
----
-
 ## Install
 
 ```bash
