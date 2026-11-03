@@ -1,6 +1,6 @@
 # A/B test: GLM-5 reducing 3C391, with and without radio-analyst
 
-Status: draft, 2026-11-02. Arm A run 1 of 3 done; arm B and runs 2 and 3 pending.
+Status: draft, 2026-11-03. A1 and B1 done; A2, B2, A3, B3 pending.
 
 ## Question
 
@@ -71,7 +71,35 @@ Observed, not yet explained:
 - Peak 0.13 to 0.14 Jy/beam here; the Claude Haiku run A5 (Claude Code, commit
   34c1e81) reported 1.30 Jy/beam on the same data. Not checked.
 
-### B1, A2, B2, A3, B3
+### B1 `20261102T230345Z_opencode-noplugin_nrp-glm-5_default_7d70bc5`
+
+| Quantity | Value |
+|---|---|
+| Exit | 0 |
+| Environment build | 81 s |
+| Session | 3137 s (52 min) |
+| Model steps | 94 |
+| Tool calls | 104: 72 bash, 15 write, 8 edit, 4 todowrite, 2 read, 2 webfetch, 1 grep |
+| Tool errors | 2 webfetch (404 on two casaguides 3C391 tutorial URLs); 6 bash calls exited non-zero |
+| Scripts | 15 written; 3 raised: `cal1.py` (`setjy` given `listfile`, not a parameter), `inspect3.py`, `inspect4.py` (own numpy bugs) |
+| Calibration | setjy (`Perley-Butler 2010`, model's choice), gaincal G0, bandpass, gaincal G1 (ap), fluxscale, applycal x3, split; no delay (K) solve, no prior caltables |
+| Imaging | tclean x4, mosaic gridder, 3 arcsec cell, 768 px, briggs 0.5, auto-multithresh mask, threshold 0.5 mJy |
+| Record | no ledger, no replay script, no report |
+| Tokens | input 6,614,442; output 22,007; reasoning 50,827; cache read 0; cache write 0 |
+| Cost | not measured (reported 0.0) |
+| Stray logs | 59 `casa-*.log` in the working directory |
+
+Final image `3c391_first.image.pbcor`, `ms_image_stats` run after the session
+with A1's settings (pb_level 0.1; code identical to 7d70bc5), output in
+`<run>/image_stats_check/`:
+
+| Image | Peak (Jy/beam) | Residual rms (mJy/beam) | Residual DR | Beam (arcsec) |
+|---|---|---|---|---|
+| `3c391_first` | 0.1545 | 0.888 | 173.9 | 16.88 x 14.19 |
+
+For comparison, A1 also had 3 bash calls exit non-zero.
+
+### A2, B2, A3, B3
 
 Pending.
 
