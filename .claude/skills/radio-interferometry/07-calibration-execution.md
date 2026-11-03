@@ -599,14 +599,25 @@ you remember:
 
 ```
 ms_phase_cal_lookup(ra_deg=<phase cal RA>, dec_deg=<phase cal Dec>,
-                    band_code=<band>, array_config=<config>)
+                    band_code=<band>, array_config=<config>,
+                    freq_ghz=<observing centre frequency>)
 ```
 
-It returns the VLA calibrator list's flux at the band. Phase calibrators are
-variable quasars and the list's epoch is old, so a difference of tens of percent
-is common and is not by itself a failure. Treat > 20% as a prompt to check the
-prior caltables and the flux calibrator model; an order-of-magnitude difference
-is the `usescratch` signature below. Quote both numbers in the report.
+The expected value is `flux_estimate.flux_jy`: the catalogue row at the
+observed band (COMPLETE) or, when the list has no row there (`band: null`,
+reason in `band_note`), a power law through the two catalogued bands that
+bracket the observing frequency (INFERRED, with the bands and spectral index
+used). A row from another band is not an expected value, and neither is the
+flux of a neighbour (`position_match: false`). `ms_field_list` reports the
+same estimate as `vla_cal_flux_estimate`. If `flux_estimate` is UNAVAILABLE
+(frequency outside the catalogued bands), there is no expected value; quote the
+nearest catalogued rows and go on.
+
+Phase calibrators are variable quasars and the list's epoch is old, so a
+difference of tens of percent is common and is not by itself a failure. Treat a
+difference over 20% as a prompt to check the prior caltables and the flux
+calibrator model, then proceed; an order-of-magnitude difference is the `usescratch` signature
+below. Quote the derived flux, the estimate and its inputs in the report.
 
 **An order-of-magnitude-low flux (e.g. ~10× low) is the signature of a mixed
 `usescratch` MODEL_DATA collision, not a calibration problem.** It happens when
@@ -674,7 +685,7 @@ Advance to applycal only when all of the following hold:
 | BP flagged fraction | < 0.20 |
 | Gain flagged fraction | < 0.15 |
 | Antennas lost | ≤ 3 |
-| fluxscale derived flux density | within 20% of expected |
+| fluxscale derived flux density | not an order of magnitude off `flux_estimate` (> 20% off: check priorcals and flux cal model, then proceed) |
 | `gain.fluxscaled` exists on disk | confirmed |
 
 If BP or gain flagged fraction exceeds threshold: loop back to RFI excision (10 Steps 2 and 8; 13 Step 1 on the primaries).

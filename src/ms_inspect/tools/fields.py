@@ -40,6 +40,7 @@ from ms_inspect.util.conversions import (
 from ms_inspect.util.formatting import field, response_envelope
 from ms_inspect.util.frequencies import field_frequencies
 from ms_inspect.util.phase_cal_catalog import cone_search as vla_cone_search
+from ms_inspect.util.phase_cal_catalog import expected_flux, get_source
 from ms_inspect.util.telescope import TelescopeProfile, resolve_telescope
 
 # Telescope-profile band codes that the VLA calibrator list spells differently.
@@ -307,15 +308,16 @@ def run(ms_path: str) -> dict:
                 note="No readable spectral window for this field",
             )
 
+        if not telescope_read and vla_cal_match_field["value"] is not None:
+            telescope_read = True
+            casa_calls.append("tb.open(OBSERVATION).getcol('TELESCOPE_NAME')")
+            try:
+                telescope = resolve_telescope(str(p))
+            except Exception:
+                telescope = None
+
         # --- Resolved status when the bundled catalogue has no entry ---
         if cal_resolved is None:
-            if not telescope_read and vla_cal_match_field["value"] is not None:
-                telescope_read = True
-                casa_calls.append("tb.open(OBSERVATION).getcol('TELESCOPE_NAME')")
-                try:
-                    telescope = resolve_telescope(str(p))
-                except Exception:
-                    telescope = None
             track = (
                 (ra_rad, dec_rad, field_times[fid])
                 if ra_rad is not None and dec_rad is not None and field_times.get(fid)
@@ -387,6 +389,7 @@ def run(ms_path: str) -> dict:
             "flux_standard_range_checked": std.range_checked,
             "resolved_source": cal_resolved,
             "vla_cal_match": vla_cal_match_field,
+            "vla_cal_flux_estimate": _vla_flux_estimate(vla_cal_match_field, fq, telescope),
         }
         fields_out.append(record)
 
@@ -797,12 +800,7 @@ def _resolved_from_callist(
             None,
         )
 
-    code = None
-    for ghz in (freq["centre_ghz"], freq["min_ghz"], freq["max_ghz"]):
-        code = telescope.band_code(ghz * 1e9)
-        if code:
-            break
-    code = _CALLIST_BAND_CODE.get(code, code)
+    code = _callist_band(telescope, freq)
     b = match["bands"].get(code) if code else None
     if b is None:
         return (
@@ -903,6 +901,47 @@ def _partial_x_warning(
         prefix + f"graded X in configuration {'/'.join(bad)}, and this MS is in "
         f"{name} ({array_config['flag']}): do not use this field as a calibrator."
     )
+
+
+def _callist_band(telescope: TelescopeProfile | None, freq: dict) -> str | None:
+    """Callist band code for this field's frequency (centre, then edges)."""
+    if telescope is None:
+        return None
+    code = None
+    for ghz in (freq["centre_ghz"], freq["min_ghz"], freq["max_ghz"]):
+        code = telescope.band_code(ghz * 1e9)
+        if code:
+            break
+    return _CALLIST_BAND_CODE.get(code, code)
+
+
+def _vla_flux_estimate(
+    vla_match: dict, freq: dict | None, telescope: TelescopeProfile | None
+) -> dict:
+    """Callist flux for this field (phase_cal_catalog.expected_flux): the observed
+    band's row if it has one, else a power law between the bracketing bands at the
+    centre frequency. VLA only, like _resolved_from_callist."""
+    match = vla_match.get("value")
+    if match is None:
+        return field(None, flag="UNAVAILABLE", note="No VLA calibrator list match.")
+    if telescope is None or telescope.canonical != "VLA":
+        return field(
+            None,
+            flag="UNAVAILABLE",
+            note="The VLA calibrator list applies to the VLA only (telescope not VLA or unread).",
+        )
+    if freq is None or freq.get("centre_ghz") is None:
+        return field(None, flag="UNAVAILABLE", note="No observing frequency.")
+    entry = get_source(match["name"])
+    if entry is None:
+        return field(None, flag="UNAVAILABLE", note=f"{match['name']} not found in the callist.")
+    value, flag, note = expected_flux(
+        entry,
+        freq["centre_ghz"],
+        band_code=_callist_band(telescope, freq),
+        identity_exact=vla_match.get("flag") == "COMPLETE",
+    )
+    return field(value, flag=flag, note=note)
 
 
 def _vla_positional_match(
