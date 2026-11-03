@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 # ---------------------------------------------------------------------------
 [project]
 name = "ms-inspect"
-version = "0.1.0"
+version = "0.1.1"
 description = "Radio interferometric Measurement Set inspector — MCP server (Phase 1)"
 readme = "README.md"
 requires-python = ">=3.12"
