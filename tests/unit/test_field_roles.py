@@ -27,10 +27,19 @@ class FakeMsmd:
     """Minimal stand-in for casatools.msmetadata, for ms_field_list only."""
 
     def __init__(
-        self, specs, spws_for_field=None, chan_freqs=None, wvr_spws=None, antenna_ecef=None
+        self,
+        specs,
+        spws_for_field=None,
+        chan_freqs=None,
+        wvr_spws=None,
+        antenna_ecef=None,
+        scan_fields=None,
     ):
         # specs: list of (name, intents, ra_deg, dec_deg) indexed by field id
         self._specs = specs
+        # scan_fields: field id of each scan, in scan order. Default is one scan
+        # per field.
+        self._scan_fields = scan_fields or list(range(len(specs)))
         # Frequency support is opt-in. When it is absent the accessors raise, as
         # they would on an msmd build lacking them, and the tool must degrade to
         # UNAVAILABLE rather than fail.
@@ -96,10 +105,10 @@ class FakeMsmd:
         return list(fids)
 
     def scannumbers(self):
-        return list(range(1, len(self._specs) + 1))
+        return list(range(1, len(self._scan_fields) + 1))
 
     def fieldsforscan(self, snum):
-        return [snum - 1]
+        return [self._scan_fields[snum - 1]]
 
     def timesforscans(self, snums):
         # MJD seconds in 2017, so sidereal time sees a real epoch.
@@ -282,6 +291,57 @@ class TestCatalogueFallbackIsPerField:
         rec = _rec(field_list_run("/fake.ms"), "SomeTarget")
         assert _val(rec, "field_role") is None
         assert _flag(rec, "field_role") == "UNAVAILABLE"
+
+
+# The VLA 3C391 C-band tutorial MS: no intents at all, a 7-pointing mosaic, a
+# phase calibrator in the VLA calibrator list but not the catalogue, and 3C84
+# (also in the VLA list) observed once at the end.
+_3C391_NO_INTENTS = [
+    ("J1331+3030", [], 202.784533, 30.509155),
+    ("J1822-0938", [], 275.619601, -9.649121),
+    ("3C391 C1", [], 282.351017, -0.927939),
+    ("3C391 C2", [], 282.371454, -0.963333),
+    ("3C391 C3", [], 282.330579, -0.963333),
+    ("3C391 C4", [], 282.310142, -0.927939),
+    ("3C391 C5", [], 282.330579, -0.892544),
+    ("3C391 C6", [], 282.371454, -0.892544),
+    ("3C391 C7", [], 282.391892, -0.927939),
+    ("J0319+4130", [], 49.950667, 41.511695),
+]
+# Flux cal, then (phase cal, 7 pointings) x 3, closing phase cal, flux cal, 3C84.
+# The phase cal has more scans than any one pointing.
+_3C391_SCANS = [0] + [1, 2, 3, 4, 5, 6, 7, 8] * 3 + [1, 0, 9]
+
+
+class TestVlaCalibratorListRole:
+    def _run(self, monkeypatch):
+        _patch(monkeypatch, _3C391_NO_INTENTS, scan_fields=_3C391_SCANS)
+        return field_list_run("/fake.ms")
+
+    def test_listed_multi_scan_field_is_phase(self, monkeypatch):
+        rec = _rec(self._run(monkeypatch), "J1822-0938")
+        assert _val(rec, "field_role") == ["phase"]
+        assert _flag(rec, "field_role") == "INFERRED"
+        assert _flag(rec, "intents") == "INFERRED"
+        assert "1822-096" in rec["field_role"]["note"]
+
+    def test_listed_single_scan_field_stays_unassigned(self, monkeypatch):
+        rec = _rec(self._run(monkeypatch), "J0319+4130")
+        assert _val(rec, "field_role") is None
+
+    def test_mosaic_pointings_stay_unassigned(self, monkeypatch):
+        result = self._run(monkeypatch)
+        for i in range(1, 8):
+            assert _val(_rec(result, f"3C391 C{i}"), "field_role") is None
+
+    def test_catalogue_calibrator_keeps_catalogue_role(self, monkeypatch):
+        rec = _rec(self._run(monkeypatch), "J1331+3030")
+        assert set(_val(rec, "field_role")) == {"flux", "bandpass"}
+
+    def test_pointings_get_the_phase_cal_as_nearest(self, monkeypatch):
+        rec = _rec(self._run(monkeypatch), "3C391 C1")
+        assert rec["nearest_phase_cal"] == "J1822-0938"
+        assert 10.5 < rec["separation_deg"] < 11.5
 
 
 class TestDisagreement:

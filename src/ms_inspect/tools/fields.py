@@ -11,6 +11,7 @@ Falls back to calibrator catalogue matching when intents are absent.
 from __future__ import annotations
 
 import math
+from collections import Counter
 
 import numpy as np
 
@@ -389,6 +390,34 @@ def run(ms_path: str) -> dict:
             "vla_cal_match": vla_cal_match_field,
         }
         fields_out.append(record)
+
+    # ------------------------------------------------------------------
+    # VLA calibrator-list role inference for fields with no intents
+    # ------------------------------------------------------------------
+    # Flux, bandpass and polarisation calibrators are in the calibrator
+    # catalogue, so a field with no intents and no catalogue entry that matches
+    # the VLA calibrator list and is observed in two or more scans is a phase
+    # calibrator. A single-scan match is too ambiguous to name.
+    scans_per_field = Counter(fid for _, fid, _ in scan_sequence)
+    for rec in fields_out:
+        intent_f = rec.get("intents", {})
+        vla_f = rec.get("vla_cal_match", {})
+        n_scans = scans_per_field[rec["field_id"]]
+        if (
+            isinstance(intent_f, dict)
+            and intent_f.get("flag") == "UNAVAILABLE"
+            and isinstance(vla_f, dict)
+            and vla_f.get("value")
+            and n_scans >= 2
+        ):
+            note = (
+                "No intents and not in the calibrator catalogue. Matches VLA calibrator "
+                f"list entry {vla_f['value'].get('name')} and is observed in {n_scans} scans."
+            )
+            rec["intents"] = field(
+                infer_intents_from_role(["phase"]), flag="INFERRED", note=note
+            )
+            rec["field_role"] = field(["phase"], flag="INFERRED", note=note)
 
     # ------------------------------------------------------------------
     # Scan-pattern role inference for UNAVAILABLE fields (heuristic mode only)
