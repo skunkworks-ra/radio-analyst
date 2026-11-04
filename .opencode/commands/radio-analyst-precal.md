@@ -1,18 +1,9 @@
 ---
-description: Pre-calibration workflow for a CASA Measurement Set (online flags → preflag → priorcals → setjy → refant → initial bandpass → residual rflag). Follows skill 10-precal-workflow.md.
-allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_observation_info,
-               mcp__plugin_radio-analyst_ms-inspect__ms_field_list,
-               mcp__plugin_radio-analyst_ms-inspect__ms_scan_list,
-               mcp__plugin_radio-analyst_ms-inspect__ms_scan_intent_summary,
-               mcp__plugin_radio-analyst_ms-inspect__ms_spectral_window_list,
-               mcp__plugin_radio-analyst_ms-inspect__ms_correlator_config,
-               mcp__plugin_radio-analyst_ms-inspect__ms_antenna_list,
-               mcp__plugin_radio-analyst_ms-create__ms_sdm_summary,
+description: Pre-calibration workflow for a CASA Measurement Set (preflag → priorcals → setjy → refant → initial bandpass → residual rflag). Follows skill 10-precal-workflow.md.
+allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
                mcp__plugin_radio-analyst_ms-inspect__ms_verify_import,
                mcp__plugin_radio-analyst_ms-modify__ms_set_intents,
-               mcp__plugin_radio-analyst_ms-inspect__ms_online_flag_stats,
                mcp__plugin_radio-analyst_ms-modify__ms_apply_preflag,
-               mcp__plugin_radio-analyst_ms-inspect__ms_flag_summary,
                mcp__plugin_radio-analyst_ms-modify__ms_generate_priorcals,
                mcp__plugin_radio-analyst_ms-inspect__ms_verify_priorcals,
                mcp__plugin_radio-analyst_ms-modify__ms_setjy,
@@ -21,18 +12,16 @@ allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_observation_info,
                mcp__plugin_radio-analyst_ms-inspect__ms_verify_model,
                mcp__plugin_radio-analyst_ms-inspect__ms_refant,
                mcp__plugin_radio-analyst_ms-modify__ms_initial_bandpass,
-               mcp__plugin_radio-analyst_ms-inspect__ms_verify_caltables,
-               mcp__plugin_radio-analyst_ms-inspect__ms_residual_stats,
                mcp__plugin_radio-analyst_ms-modify__ms_apply_initial_rflag,
-               mcp__plugin_radio-analyst_ms-inspect__ms_rfi_channel_stats,
-               mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
-               mcp__plugin_radio-analyst_ms-create__ms_reduction_log,
                Bash,
-               Read,
-               Write
+               Read
 ---
 
 Run the pre-calibration workflow on this MS: $ARGUMENTS
+
+Arguments: the MS path, `workdir=<dir>`, and `online_flags=<path to .flagonline.txt>`
+or `online_flags=none`. `none` means the MS has no online flag file (no ASDM) and
+that is expected. If `workdir` or `online_flags` is missing, STOP and ask for it.
 
 Load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
 installed as a plugin), then read its `10-precal-workflow.md`
@@ -44,49 +33,38 @@ decision gate.
 
 1. `ms_workflow_status(ms_path, workdir)` — where are we starting from?
    If `next_recommended_step` is past pre-calibration, STOP and tell the user.
+   If `ms_valid` is False, STOP.
 
-2. `ms_verify_import(ms_path, online_flag_file)` — structural gate. If
-   `ready_for_preflag` is False, STOP.
+2. With `online_flags=<path>`: `ms_verify_import(ms_path, online_flag_file)` —
+   if `ready_for_preflag` is False, STOP. With `online_flags=none`: skip this step.
 
 3. If intents are missing from Phase-1 orientation: `ms_set_intents(ms_path)`.
 
-4. `ms_online_flag_stats(online_flag_file)` — assess online flags.
-   Apply 10-precal-workflow.md §Step 1 decision table.
-
-5. `ms_apply_preflag(ms_path, workdir, cal_fields, online_flag_file, execute=False)`
+4. `ms_apply_preflag(ms_path, workdir, cal_fields, online_flag_file, execute=False)`
    → run the generated script as a background job, wait for completion.
+   With `online_flags=none`, pass `online_flag_file=""`; the other flags still run.
 
-6. `ms_flag_summary(calibrators.ms)` — baseline flag fraction.
-   Apply §Step 2 decision table.
+5. `ms_generate_priorcals(calibrators.ms, workdir, execute=False)` → run.
+   Then `ms_verify_priorcals(workdir)` — its `priorcals_list` goes to step 8.
 
-7. `ms_generate_priorcals(calibrators.ms, workdir, execute=False)` → run.
-   Then `ms_verify_priorcals(workdir)` — all required tables present?
-
-8. `ms_setjy(calibrators.ms, workdir, execute=False)` → run.
+6. `ms_setjy(calibrators.ms, workdir, usescratch=True, execute=False)` → run.
    Check warnings field for resolved calibrators (3C84 uvrange gate).
    If polarisation is in the run scope, follow 10-precal-workflow.md Step 4
-   instead: `usescratch=True`, the angle cal excluded, then `ms_setjy_polcal`
-   on it and `ms_verify_model(polcal_fields=...)`, all before step 10.
+   instead: the angle cal excluded, then `ms_setjy_polcal`
+   on it and `ms_verify_model(polcal_fields=...)`, all before step 8.
 
-9. `ms_refant(calibrators.ms, field=<each calibrator>)`, once per calibrator
+7. `ms_refant(calibrators.ms, field=<each calibrator>)`, once per calibrator
    field. Choose the highest-ranked antenna healthy on all of them
    (10-precal-workflow.md Step 5).
 
-10. `ms_initial_bandpass(calibrators.ms, bp_field, refant, workdir,
-    priorcals=<from step 7>, uvrange=<if 3C84>, execute=False)` → run.
-    Then `ms_verify_caltables` — both tables exist with rows?
+8. `ms_initial_bandpass(calibrators.ms, bp_field, refant, workdir,
+   priorcals=<priorcals_list from step 5>, uvrange=<if 3C84>, execute=False)` → run.
 
-11. `ms_residual_stats(calibrators.ms, bp_field_id)` — inspect tail ratio
-    and the per-channel `chan_*` arrays. Apply §Step 7 decision table.
+9. `ms_verify_model(calibrators.ms, field=bp_field)` — if the model is the
+   1 Jy default, skip the rflag below. Otherwise
+   `ms_apply_initial_rflag(calibrators.ms, workdir, field=bp_field, execute=False)` → run.
 
-12. `ms_verify_model(calibrators.ms, field=bp_field)` — skip step 12 if the
-    model is the 1 Jy default. Otherwise
-    `ms_apply_initial_rflag(calibrators.ms, workdir, field=bp_field, execute=False)` → run.
-
-13. `ms_flag_summary(calibrators.ms)` — post-rflag. Compare to step 6 delta.
-    Apply §Step 8 decision table.
-
-14. Final decision gate (§Decision gate): go/no-go for full calibration solve.
+10. Final decision gate (§Decision gate): go/no-go for full calibration solve.
 
 **Output:** a structured report of each stage's outcome, flagged warnings,
 and the forward hand-off values (`refant`, `priorcals`, `bp_field`, `workdir`)

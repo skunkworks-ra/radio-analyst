@@ -21,33 +21,24 @@ ms_import_asdm(execute=False, ...)       → generate import_asdm.py
   → run import_asdm.py as background job; wait for completion however long it takes
 ms_verify_import(ms_path, flag_file)     → confirm MS valid + .flagonline.txt present
 
-ms_online_flag_stats(flag_file)          → assess online flags before applying
 ms_apply_preflag(execute=False, ...)     → generate preflag.py + preflag_cmds.txt
   → run preflag.py as background job; wait for completion however long it takes
-ms_flag_summary(calibrators.ms)          → establish baseline flag fraction
-                                           (do NOT run in parallel with ms_antenna_flag_fraction)
 
 ms_generate_priorcals(execute=False)     → generate priorcals.py
   → run priorcals.py as background job; wait for completion however long it takes
 ms_verify_priorcals(workdir)             → confirm all required tables exist
 
-ms_setjy(execute=False, ...)             → generate setjy.py
+ms_setjy(usescratch=True, execute=False, ...) → generate setjy.py
   → run setjy.py as background job; wait for completion however long it takes
 
 ms_refant(calibrators.ms, field=bp_field)    → refant ranked on BP cal
 ms_refant(calibrators.ms, field=phase_field) → refant ranked on phase cal (pick antenna healthy on both)
 ms_initial_bandpass(execute=False, ...)   → generate initial_bandpass.py
   → run initial_bandpass.py as background job; wait for completion however long it takes
-ms_verify_caltables(...)                  → confirm init_gain.g + BP0.b valid
-ms_plot_caltable_library(               → plot both caltables; review before proceeding
-    caltable_paths=[init_gain.g, BP0.b],
-    output_dir=workdir,
-)
 
-ms_residual_stats(field_id=bp_field_id)  → inspect amplitude distribution
+ms_verify_model(field=bp_field)          → confirm a real model, not the 1 Jy default
 ms_apply_initial_rflag(execute=False)    → generate initial_rflag.py
   → run initial_rflag.py as background job; wait for completion however long it takes
-ms_flag_summary(calibrators.ms)          → before/after flag delta
 ```
 
 ---
@@ -97,19 +88,17 @@ After running `import_asdm.py`, call `ms_verify_import` to confirm:
 Pass `online_flag_file` from the `ms_import_asdm` response directly to
 `ms_apply_preflag` as its `online_flag_file` parameter.
 
+An MS that did not come from an ASDM (a tutorial or archive MS) has no
+`.flagonline.txt`. Continue without online flags only when the user states
+`online_flags=none`: pass `online_flag_file=""` to `ms_apply_preflag`. A
+missing flag file without that statement is a failed import: STOP.
+
 ---
 
-## Step 1 — Online flag assessment
+## Step 1 — Online flags
 
-Run `ms_online_flag_stats` on the `.flagonline.txt` file before applying flags.
-
-| Output | What to check | Action |
-|--------|--------------|--------|
-| `n_commands` | Total online flag commands | > 500 is high — note in summary |
-| `n_antennas_flagged` | Number of antennas with online flags | > 5 is elevated — inspect reason breakdown |
-| `reason_breakdown` | Per-reason flag counts | `ANTENNA_NOT_ON_SOURCE` dominant = normal; `OUT_OF_RANGE` or `SUBREFLECTOR_ERROR` = antenna problem |
-
-Online flags are applied as-is — do not edit them. They are deterministic hardware records.
+`ms_apply_preflag` applies the online flags as-is — do not edit them. They are
+deterministic hardware records.
 
 ---
 
@@ -121,18 +110,6 @@ calibrators to `calibrators.ms`. It quacks the first 5 s of every scan
 
 **Always generate the script first (`execute=False`).** Review `preflag_cmds.txt`
 before running — it is the complete audit record of what will be flagged.
-
-After running, call `ms_flag_summary(calibrators.ms)` to establish the baseline:
-
-| Flag fraction after preflag | Assessment |
-|----------------------------|-----------|
-| < 10% | Clean dataset — proceed normally |
-| 10–25% | Moderate — note per-antenna distribution; check for outlier antennas |
-| 25–40% | Elevated — inspect which reason dominates (shadow? online flags? tfcrop?) |
-| > 40% | High — identify the driver before proceeding; may indicate hardware problem |
-
-If a single antenna accounts for > 80% of the flagging, consider excluding it
-from `refant` candidates and noting it in the summary.
 
 ---
 
@@ -160,6 +137,9 @@ Do not proceed — escalate. Below K-band a missing `opacities.opac` is expected
 resolving the standard PER FIELD from that field's observing frequency. Do not
 pass `standard` — see "Flux standards" in `07-calibration-execution.md` for why
 it is an override that skips the frequency check.
+
+Pass `usescratch=True`. `ms_verify_model` reads the physical MODEL_DATA column
+before the residual rflag, and a virtual model writes no column.
 
 **Check the warnings field in the response:**
 
@@ -237,7 +217,6 @@ a healthy `flag_score` in every list over the top pick of any single list.
 | Condition | Action |
 |-----------|--------|
 | Candidate `flag_score` near 0 on *any* calibrator field | Disqualify — dead on that field; drop to the next antenna healthy on all fields |
-| Top-ranked antenna flagged > 30% (from `ms_flag_summary`) | Use rank-2 antenna |
 | Top-ranked antenna has `flag_score` ≫ `geo_score` (periphery of array) | Note this — peripheral refants can cause phase-wrapping on long baselines at high freq |
 | Only one heuristic used (completeness flag `INFERRED`) | Accept result but note lower confidence |
 | Fewer than 3 antennas scored (`n_antennas` < 3) | Escalate — array is too sparse for reliable refant selection |
@@ -287,68 +266,15 @@ is to re-split `calibrators.ms`. Pass `applycal_field=bp_field` here; reserve
 `applycal_field=''` (all fields) for stages where all fields genuinely have
 solutions.
 
-If the before/after `ms_flag_summary` delta on the bandpass calibrator is still
-unexpectedly high, re-run with `applymode='calflag'` (softer — does not flag on
-partial per-polarization solutions).
-
 **Never re-run `ms_initial_bandpass` before the final gain/pol solves.** It is a
 one-shot bootstrap to populate CORRECTED for residual rflag on the BP cal — not
 something to iterate. If you need a clean FLAG state for the final solves,
 re-split `calibrators.ms` rather than re-running this tool.
 
-After the script completes, verify with `ms_verify_caltables`:
-
-| Check | Pass | Fail |
-|-------|------|------|
-| `init_gain.g` exists | Has rows | Missing or 0 rows → re-run with different `bp_scan` selection |
-| `BP0.b` exists | Has rows | Missing or 0 rows → check `bp_field` selection and `refant` |
-| `corrected_written` | True | False → applycal silently failed; check MS permissions |
-
-After verification passes, call `ms_plot_caltable_library` on both tables:
-
-```python
-ms_plot_caltable_library(
-    caltable_paths=[f"{workdir}/init_gain.g", f"{workdir}/BP0.b"],
-    output_dir=workdir,
-)
-```
-
-Inspect the HTML dashboard before proceeding. Key things to look for:
-
-| Plot | What to check | Action if bad |
-|------|--------------|---------------|
-| `init_gain.g` amplitude vs time | Should be smooth, all antennas tracking together | Outlier antenna → exclude from refant list |
-| `init_gain.g` phase vs time | Should be near-zero (pre-bandpass short solution) | Large phase jumps → check scan selection; try shorter solint |
-| `BP0.b` amplitude vs channel | Should be smooth per antenna; RFI shows as spikes | Persistent spike channels → note for `ms_rfi_channel_stats` after rflag |
-| `BP0.b` phase vs channel | Linear slope across band is acceptable; sharp discontinuities are not | Discontinuity → possible missed delay; verify `init_gain.g` passed |
-| Flagged fraction in plots | Any antenna with > 30% flagged solutions | If ≥ 1 antenna fully absent from plots → re-check refant choice |
-
-If `ms_plot_caltable_library` returns error entries (any table in the `errors` field), do not proceed — re-run the initial bandpass step.
-
-If either caltable is missing, do not proceed to rflag. Diagnose:
+If the script reports either caltable missing, do not proceed to rflag. Diagnose:
 1. Was `bp_field` correct? Cross-check against `ms_field_list` intents.
 2. Was the refant heavily flagged on the bandpass calibrator scans? Try rank-2.
 3. Were prior caltables passed in `priorcals`? If `opacities.opac` was missing earlier, this will fail silently.
-
----
-
-## Step 7 — Residual amplitude inspection
-
-Before applying rflag, call `ms_residual_stats(field_id=<bp_field_id>)` to
-inspect the CORRECTED − MODEL amplitude distribution (parallel hands only).
-The per-SpW ratio below is a first look; decide per channel from the `chan_*`
-arrays (`chan_median_amp`, `chan_robust_sigma`), never drop a SpW from its
-median alone — a SpW with a bad median can still hold clean channels.
-
-| p95_amp / median_amp ratio (per SPW) | Interpretation |
-|--------------------------------------|---------------|
-| < 3 | Clean — bandpass solve succeeded; RFI tail is minimal |
-| 3–8 | Moderate tail — rflag at default thresholds (5.0, 5.0) is appropriate |
-| > 8 | Heavy tail — strong RFI present; consider running `ms_rfi_channel_stats` first to identify the worst SPWs before rflag |
-| Ratio varies widely across SPWs | Band-specific RFI pattern — note which SPWs are worst |
-
-A high ratio in a specific SPW (e.g. SPW 0 at L-band) often indicates persistent
-narrowband RFI (GPS, GSM). Cross-check with `ms_rfi_channel_stats` annotations.
 
 ---
 
@@ -381,18 +307,6 @@ Phase 2 output) is < 30°, use `timedevscale=7, freqdevscale=7` instead of the
 defaults (5, 5). Elevated system temperature at low elevations inflates scatter
 and causes false positives at tighter thresholds.
 
-Call `ms_flag_summary` before and after. Assess the flag delta:
-
-| Flag fraction increase (delta) | Assessment |
-|-------------------------------|-----------|
-| < 5% | Light RFI — dataset is clean; proceed to full calibration |
-| 5–15% | Moderate RFI — normal for L-band and below; proceed |
-| 15–30% | Heavy RFI — note which fields/SPWs drove the flagging; proceed with caution |
-| > 30% | Severe — do not proceed blindly; identify the driver (single bad scan? persistent SPW?) |
-
-If the delta is > 30%, check whether a single scan or SPW accounts for most of it.
-A single bad scan can be excluded and the rflag repeated without it.
-
 ---
 
 ## Decision gate — proceed to full calibration solve?
@@ -401,20 +315,11 @@ After Step 8, make a go/no-go decision:
 
 | Condition | Decision |
 |-----------|----------|
-| Overall flag fraction < 30% AND no caltable failures | Proceed to calibration solve |
-| Overall flag fraction 30–50% | Proceed with explicit note in summary |
-| Overall flag fraction > 50% | Escalate — dataset may not calibrate well |
-| Per-calibrator flag fraction ≥ 50% on the gain calibrator | Do not proceed. Step 8 never runs on this field, so the flags came from preflag or the online flags: find the driver with `ms_flag_summary` (per antenna, SpW, scan) before changing anything |
 | `gain_curves.gc` missing | Hard stop — do not proceed |
 | `opacities.opac` missing at K-band and above | Hard stop — do not proceed |
-| Initial bandpass caltables invalid | Hard stop — diagnose before proceeding |
-| Specific antenna > 80% flagged | Note and exclude from refant; proceed |
-
-**Refant check:** After Step 8, re-check the chosen refant's flag fraction in
-`calibrators.ms`. If it exceeds 50%, pass the next antenna in the
-`refant_list` from `ms_refant` to the calibration solve. Do not re-run Step 6:
-the initial bandpass is a one-shot bootstrap for the residual rflag, and its
-refant does not carry into skill 07.
+| Initial bandpass caltables missing | Hard stop — diagnose before proceeding |
+| Bandpass calibrator model is the 1 Jy default | Hard stop — re-run setjy before proceeding |
+| None of the above | Proceed to calibration solve |
 
 Pass the following forward to the calibration solve:
 - `refant`: top-ranked surviving antenna from `ms_refant`
