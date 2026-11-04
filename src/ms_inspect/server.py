@@ -1777,6 +1777,14 @@ class PhaseCalLookupInput(BaseModel):
         "W",
         description="Minimum quality code: P (best), S, W, C, X (unusable). Default W.",
     )
+    freq_ghz: float | None = Field(
+        None,
+        gt=0,
+        description=(
+            "Observing frequency in GHz. Sets flux_estimate's band when band_code is "
+            "omitted, and is the frequency of the power law when the list has no row there."
+        ),
+    )
 
 
 @mcp.tool(
@@ -1785,7 +1793,10 @@ class PhaseCalLookupInput(BaseModel):
         "Cross-match a sky position against the NRAO VLA phase calibrator catalog. "
         "Returns the nearest qualifying source within max_sep_deg, with its position "
         "accuracy, flux density, UV limits, and quality codes (P/S/W/C/X) per array "
-        "configuration at the requested band. "
+        "configuration at the requested band. A source within 5 arcsec is the source at "
+        "the position and is returned even with no row or a low grade at the band "
+        "(position_match=true). flux_estimate: the callist row at the observed band "
+        "(COMPLETE), else a power law through the bracketing bands at freq_ghz (INFERRED). "
         "Use to assess whether an observed field is a known usable phase calibrator."
     ),
     annotations={
@@ -1800,8 +1811,9 @@ async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
     """
     Cross-match a J2000 sky position against the bundled VLA phase calibrator catalog.
 
-    Returns the nearest source within max_sep_deg that meets the band/config quality
-    filter (if specified).  The quality codes follow the NRAO convention:
+    Returns the source within 5 arcsec of the position if there is one (whatever its
+    band row or grade), else the nearest source within max_sep_deg that meets the
+    band/config quality filter (if specified).  The quality codes follow the NRAO convention:
       P = <3% closure errors (best), S = 3-10%, W = 10%+ (phase-only),
       C = confused, X = do not use.
 
@@ -1812,11 +1824,13 @@ async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
         params.array_config: Array config (A/B/C/D).  None = skip quality filter.
         params.max_sep_deg:  Search radius in degrees (default 0.5).
         params.min_quality:  Minimum quality code (default W).
+        params.freq_ghz:     Observing frequency in GHz (optional).
 
     Returns:
         JSON envelope.  data contains: iau_name, alt_name, ra_deg, dec_deg,
-        separation_deg, pos_accuracy, band (if requested) with quality_A/B/C/D,
-        flux_jy, uvmin_kl, uvmax_kl.  status=NOT_FOUND if no match.
+        separation_deg, position_match, pos_accuracy, band (if requested) with
+        quality_A/B/C/D, flux_jy, uvmin_kl, uvmax_kl; band_note when the band has
+        no row; flux_estimate {value, flag, note}.  status=NOT_FOUND if no match.
     """
     match = _pcc.lookup_nearest(
         ra_deg=params.ra_deg,
@@ -1855,6 +1869,27 @@ async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
             "uvmin_kl": b.uvmin_kl,
             "uvmax_kl": b.uvmax_kl,
         }
+    sep_arcsec = match.separation_deg * 3600.0
+    position_match = sep_arcsec <= 5.0
+    band_note = None
+    if params.band_code and match.band is None:
+        where = (
+            "matches the position"
+            if position_match
+            else f"is the nearest source, {match.separation_deg:.3f} deg away,"
+        )
+        band_note = (
+            f"{e.iau_name} {where} but the list has no row at band "
+            f"{params.band_code.upper()}; catalogued bands: {', '.join(sorted(e.bands)) or 'none'}."
+        )
+    est, est_flag, est_note = _pcc.expected_flux(
+        e,
+        params.freq_ghz,
+        band_code=params.band_code,
+        position_match=position_match,
+        identity_exact=sep_arcsec < 1.0,
+    )
+    flux_estimate = {"value": est, "flag": est_flag, "note": est_note}
 
     result = {
         "status": "OK",
@@ -1864,8 +1899,11 @@ async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
             "ra_deg": e.ra_deg,
             "dec_deg": e.dec_deg,
             "separation_deg": round(match.separation_deg, 6),
+            "position_match": position_match,
             "pos_accuracy": e.pos_accuracy,
             "band": band_data,
+            "band_note": band_note,
+            "flux_estimate": flux_estimate,
         },
         "warnings": [],
     }
