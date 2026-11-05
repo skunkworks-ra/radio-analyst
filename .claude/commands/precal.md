@@ -39,6 +39,8 @@ decision gate.
    if `ready_for_preflag` is False, STOP. With `online_flags=none`: skip this step.
 
 3. If intents are missing from Phase-1 orientation: `ms_set_intents(ms_path)`.
+   If you ran it, `cal_fields` for step 4 is every field its `field_intent_map`
+   gives a `CALIBRATE_*` intent; that replaces the handoff's `cal_fields`.
 
 4. `ms_apply_preflag(ms_path, workdir, cal_fields, online_flag_file, execute=False)`
    → run the generated script in the foreground (Bash without run_in_background,
