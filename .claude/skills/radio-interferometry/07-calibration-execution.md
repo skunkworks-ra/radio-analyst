@@ -631,15 +631,22 @@ Advance to applycal only when all of the following hold:
 | BP flagged fraction | < 0.20 |
 | Gain flagged fraction | < 0.15 |
 | Antennas lost | ≤ 3 |
+| Antennas lost in every solve step | flagged on `{VIS}` and `{FULL_MS}` (below) |
 | fluxscale derived flux density | not an order of magnitude off `flux_estimate` (> 20% off: check priorcals and flux cal model, then proceed) |
 | `gain.fluxscaled` exists on disk | confirmed |
 
 If BP or gain flagged fraction exceeds threshold: loop back to RFI excision (10 Steps 2 and 8; 13 Step 1 on the primaries).
 More RFI excision in the DATA column is needed before the solutions will be usable.
 
-If `n_antennas_lost > 3`: do not loop blindly. Check whether the lost antennas
-are consistently absent across all solve steps — if so, they are hardware-dead
-for this observation. Flag them globally and re-solve.
+If an antenna is lost in every solve step (G0, K, B, G), it is hardware-dead
+for this observation. Before Step 7, flag it on `{VIS}` and on `{FULL_MS}`, all
+fields and times: `ms_flag_data(ms_path=<each>, workdir={WORKDIR},
+antenna=<name>, reason="<name> in antennas_lost of G0, K, B and G", execute=True)`,
+and record both calls in the ledger. Do not re-solve.
+
+If `n_antennas_lost > 3`: stop and report. If the lost antennas are absent
+from every solve step, say so in the report; if not, find the cause (refant,
+setup) before going on.
 
 ---
 
@@ -682,8 +689,8 @@ Gate on `fraction` (denominator is the full array, from `ms_antenna_list`):
   - a-priori flagging — `ms_flag_summary` per field/antenna, to find an antenna or SPW
     flagged out across the board;
   - the calibration solution logs and per-table `ms_calsol_stats`, to find an antenna
-    that died across multiple solves (e.g. a bad refant, a feed swap, a hardware-dead
-    antenna). Resolve the root cause and re-solve before applycal — switching
+    that died across multiple solves (e.g. a bad refant, a feed swap; a hardware-dead
+    antenna is flagged as in the Decision gate, no re-solve). Resolve the root cause and re-solve before applycal — switching
     `applymode` will not recover antennas that have no solution at all.
 
 ---
