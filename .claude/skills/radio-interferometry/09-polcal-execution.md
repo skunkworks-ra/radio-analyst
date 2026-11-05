@@ -103,7 +103,7 @@ The following table maps each polcal step to the exact MCP tool and key paramete
 ## Step 1 — Set the polarisation calibrator model
 
 **This step runs in precal (10 Step 4), before the initial bandpass**, whenever
-polarisation is in the run scope: the model is set once, right, up front. On
+polarisation is in scope (10 Step 4 says when): the model is set once, right, up front. On
 reaching polcal, confirm it with `ms_verify_model(polcal_fields=<angle cal>)`
 and do not re-run it. The rest of this step describes what that call does.
 

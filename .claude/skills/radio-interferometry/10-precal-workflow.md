@@ -168,8 +168,11 @@ codes no range for it. That is expected, not a defect — but it means the model
 is unverified at your band, so treat a surprising flux scale as plausible
 rather than impossible.
 
-**If polarization calibration is in the run scope, set every model here, once,
-before the initial bandpass:**
+**Polarisation is in scope when `ms_pol_cal_conditions` reports both
+`pol_angle_calibrator.available` and `leakage_calibrator.available`, the angle
+cal's `pol_angle_deg` is not UNAVAILABLE at the band, and `ms_correlator_config`
+reports `full_stokes`. Decide this before any `ms_setjy` call; then set every model here, once, before the
+initial bandpass:**
 
 1. `ms_pol_cal_conditions` → the angle calibrator (`pol_angle_calibrator`).
 2. `ms_setjy(usescratch=True, exclude_fields=<angle cal>)`. `usescratch` cannot

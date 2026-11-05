@@ -90,7 +90,7 @@
         {
           "id": "p5b",
           "action": "ms_setjy_polcal",
-          "when": "polarisation in the run scope",
+          "when": "polarisation in scope (10 Step 4)",
           "before": [
             "ms_pol_cal_conditions"
           ],

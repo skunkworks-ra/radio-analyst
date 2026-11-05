@@ -9,6 +9,7 @@ allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
                mcp__plugin_radio-analyst_ms-inspect__ms_verify_priorcals,
                mcp__plugin_radio-analyst_ms-modify__ms_setjy,
                mcp__plugin_radio-analyst_ms-inspect__ms_pol_cal_conditions,
+               mcp__plugin_radio-analyst_ms-inspect__ms_correlator_config,
                mcp__plugin_radio-analyst_ms-modify__ms_setjy_polcal,
                mcp__plugin_radio-analyst_ms-inspect__ms_verify_model,
                mcp__plugin_radio-analyst_ms-inspect__ms_refant,
@@ -58,11 +59,14 @@ Every MCP tool takes one argument, `params`: `{"ms_path": ..., ...}`.
 5. `ms_generate_priorcals(calibrators.ms, workdir, execute=False)` → run.
    Then `ms_verify_priorcals(calibrators.ms, workdir)` — its `priorcals_list` goes to step 8.
 
-6. `ms_setjy(calibrators.ms, workdir, usescratch=True, execute=False)` → run.
-   Check its warnings field.
-   If polarisation is in the run scope, follow 10-precal-workflow.md Step 4
-   instead: the angle cal excluded, then `ms_setjy_polcal`
-   on it and `ms_verify_model(polcal_fields=...)`, all before step 8.
+6. `ms_pol_cal_conditions(calibrators.ms)` and `ms_correlator_config(calibrators.ms)`
+   first. Polarisation is in scope when `pol_angle_calibrator.available` and
+   `leakage_calibrator.available` are true, `pol_angle_calibrator.pol_angle_deg`
+   is not UNAVAILABLE, and `full_stokes` is true: follow 10-precal-workflow.md Step 4's
+   polarisation path (the angle cal excluded from `ms_setjy`, then
+   `ms_setjy_polcal` on it and `ms_verify_model(polcal_fields=...)`), all
+   before step 8. Otherwise `ms_setjy(calibrators.ms, workdir, usescratch=True,
+   execute=False)` → run. Check its warnings field.
 
 7. `ms_refant(calibrators.ms, field=bp_field)`, one call. The initial bandpass
    solves on bp_field alone; /calibrate re-scores the refant on every calibrator.
