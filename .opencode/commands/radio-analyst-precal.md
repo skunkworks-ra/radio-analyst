@@ -28,6 +28,7 @@ installed as a plugin), then read its `10-precal-workflow.md`
 supporting file (a sibling of that skill's `SKILL.md`) before starting.
 Execute the stages below in order; STOP and report if any stage fails its
 decision gate. Run each generated script as written; do not Read it first.
+Every MCP tool takes one argument, `params`: `{"ms_path": ..., ...}`.
 
 **Workflow:**
 
@@ -43,13 +44,14 @@ decision gate. Run each generated script as written; do not Read it first.
    If you ran it, `cal_fields` for step 4 is every field its `field_intent_map`
    gives a `CALIBRATE_*` intent; that replaces the handoff's `cal_fields`.
 
-4. `ms_apply_preflag(ms_path, workdir, cal_fields, online_flag_file, execute=False)`
+4. `ms_apply_preflag(ms_path, workdir, cal_fields, online_flag_file, execute=False)`,
+   `cal_fields` one comma-separated string
    → run the generated script in the foreground (Bash without run_in_background,
      timeout=600000) and wait for it. If the call times out, STOP and report.
    With `online_flags=none`, pass `online_flag_file=""`; the other flags still run.
 
 5. `ms_generate_priorcals(calibrators.ms, workdir, execute=False)` → run.
-   Then `ms_verify_priorcals(workdir)` — its `priorcals_list` goes to step 8.
+   Then `ms_verify_priorcals(calibrators.ms, workdir)` — its `priorcals_list` goes to step 8.
 
 6. `ms_setjy(calibrators.ms, workdir, usescratch=True, execute=False)` → run.
    Check warnings field for resolved calibrators (3C84 uvrange gate).
@@ -60,7 +62,7 @@ decision gate. Run each generated script as written; do not Read it first.
 7. `ms_refant(calibrators.ms, field=bp_field)`, one call. The initial bandpass
    solves on bp_field alone; /calibrate re-scores the refant on every calibrator.
 
-8. `ms_initial_bandpass(calibrators.ms, bp_field, refant, workdir,
+8. `ms_initial_bandpass(calibrators.ms, bp_field, ref_ant, workdir,
    priorcals=<priorcals_list from step 5>, uvrange=<if 3C84>, execute=False)` → run.
 
 9. `ms_verify_model(calibrators.ms, field=bp_field)` — if the model is the
