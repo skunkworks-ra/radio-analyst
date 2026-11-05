@@ -14,6 +14,8 @@ allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
                mcp__plugin_radio-analyst_ms-inspect__ms_refant,
                mcp__plugin_radio-analyst_ms-modify__ms_initial_bandpass,
                mcp__plugin_radio-analyst_ms-modify__ms_apply_initial_rflag,
+               mcp__plugin_radio-analyst_ms-inspect__ms_observation_info,
+               mcp__plugin_radio-analyst_ms-create__ms_reduction_log,
                Bash,
                Read
 ---
@@ -25,11 +27,12 @@ or `online_flags=none`. `none` means the MS has no online flag file (no ASDM) an
 that is expected. If `workdir` or `online_flags` is missing, STOP and ask for it.
 
 Load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
-installed as a plugin), then read only its `10-precal-workflow.md`
-supporting file (a sibling of that skill's `SKILL.md`) before starting.
+installed as a plugin), then read only its `10-precal-workflow.md` and
+`ledger.md` supporting files (siblings of that skill's `SKILL.md`) before starting.
 Skip the files the skill lists under "Start here"; precal does not use them.
 Execute the stages below in order; STOP and report if any stage fails its
 decision gate. Run each generated script as written; do not Read it first.
+Record each validated write step with `ms_reduction_log`, as `ledger.md` says.
 Every MCP tool takes one argument, `params`: `{"ms_path": ..., ...}`.
 
 **Workflow:**

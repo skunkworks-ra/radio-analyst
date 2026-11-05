@@ -596,3 +596,81 @@ class TestAmpOutlierScan:
         assert ref[0]["spw_median"][0] is None and ref[0]["spw_n"][0] == 2
         assert ref[0]["spw_median"][1] is None
         assert not any(r["field"] == "flux" and r["spw"] in (0, 1) for r in rows)
+
+
+class TestAmpFracFloor:
+    """An amplitude outlier needs both the sigma test and a fractional deviation."""
+
+    ANTS = [f"ea{i:02d}" for i in range(1, 27)]
+
+    def _tight(self):
+        # 26 antennas agreeing to ~0.2%, the spread seen on a real phase cal.
+        rng = np.random.default_rng(1)
+        return (1.517 * (1 + rng.normal(0, 0.002, len(self.ANTS)))).reshape(-1, 1, 1)
+
+    def test_many_sigma_small_offset_is_not_an_outlier(self):
+        from ms_inspect.tools.calsol_stats import amp_outlier_scan
+
+        amp = self._tight()
+        amp[11, 0, 0] = 1.476  # 2.7% low: many sigma on a 0.2% spread
+        rows, _ = amp_outlier_scan(amp, self.ANTS, [0], ["phase"], 5.0)
+        assert rows == []
+
+    def test_large_offset_is_an_outlier(self):
+        from ms_inspect.tools.calsol_stats import amp_outlier_scan
+
+        amp = self._tight()
+        amp[11, 0, 0] = 1.517 * 0.6  # 40% low
+        rows, _ = amp_outlier_scan(amp, self.ANTS, [0], ["phase"], 5.0)
+        assert [r["antenna"] for r in rows] == ["ea12"]
+        assert rows[0]["frac_dev"] > 0.30
+
+    def test_threshold_reported(self):
+        from ms_inspect.tools.calsol_stats import AMP_FRAC_MIN, _compute_outliers
+
+        out = _compute_outliers(None, self._tight(), self.ANTS, [0], ["phase"], 3.0, 5.0)
+        assert out["thresholds"]["amp_frac_min"] == AMP_FRAC_MIN
+
+
+def _patch_all_for_k(tbl_path):
+    """Mocks for calsol_stats.run() on a K table whose SNR column is all 0 (as CASA writes)."""
+    ant1, fparam, flag, _ = _k_table_data()
+    snr = np.zeros_like(fparam)
+    ant_tb = _make_tb(getcol_side={"NAME": np.array(_ANT_NAMES)})
+    field_tb = _make_tb(getcol_side={"NAME": np.array(["3C286"])})
+    kw_tb = _make_tb(keywords={"VisCal": "K Jones"})
+    axis_tb = _make_tb(
+        getcol_side={"SPECTRAL_WINDOW_ID": np.array([0, 0, 0]), "FIELD_ID": np.array([0, 0, 0])}
+    )
+    sub = _make_subtable(nrows=_N_ANT, ant1=ant1, fparam=fparam, flag=flag, snr=snr)
+    slice_tb = _make_tb(nrows=_N_ANT, query_result=sub)
+    calls = []
+
+    def _open_table(path, **kwargs):
+        p = str(path)
+        calls.append(p)
+        if p.endswith("ANTENNA"):
+            return ant_tb
+        if p.endswith("FIELD"):
+            return field_tb
+        if p == str(tbl_path):
+            n = sum(1 for c in calls if c == str(tbl_path))
+            return kw_tb if n == 1 else axis_tb if n == 2 else slice_tb
+        return slice_tb
+
+    return _open_table
+
+
+class TestRunKSnr:
+    def test_zero_snr_delay_table_reports_no_low_snr(self, tmp_path):
+        tbl = tmp_path / "delay.k"
+        tbl.mkdir()
+        ot = _patch_all_for_k(tbl)
+        with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=ot):
+            result = calsol_stats.run(str(tbl), verbosity="full")
+        assert result["status"] == "ok"
+        out = result["data"]["outliers"]
+        assert out["low_snr"] == [] and out["low_snr_n_antennas"] == 0
+        assert result["data"]["snr_mean"]["flag"] == "UNAVAILABLE"
+        npz = np.load(str(tbl) + ".calsol_stats.npz")
+        assert "snr_mean" not in npz.files

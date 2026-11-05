@@ -1,6 +1,6 @@
 {
   "_draft": "Every step and check is taken from the named source; nothing added. Edit freely.",
-  "rule": "For each step: every `before` check, then `action`, then every `after` check, all before the next step's action. A check is already satisfied by an earlier ok call of the same tool on the same target if nothing in its `invalidated_by` ran on that target since (see `cache`). Then ms_reduction_log append (00-playbook 'Record every step').",
+  "rule": "For each step: every `before` check, then `action`, then every `after` check, all before the next step's action. A check is already satisfied by an earlier ok call of the same tool on the same target if nothing in its `invalidated_by` ran on that target since (see `cache`). Then ms_reduction_log append (radio-interferometry ledger.md).",
   "stages": [
     {
       "stage": "inspect",

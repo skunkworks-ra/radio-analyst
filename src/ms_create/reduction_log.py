@@ -66,10 +66,8 @@ def _read_records(path: Path) -> list[dict]:
 _RUN_REGISTRY: dict[str, str] = {
     "ms_sdm_summary": "ms_create.sdm_summary",
     "ms_import_asdm": "ms_create.import_asdm",
-    # NOTE: ms_set_intents is intentionally NOT registered — its entrypoint is
-    # set_intents(), not run(), so it cannot be replayed via the run() convention
-    # and is emitted as a MANUAL step. It is also a rare one-off (only for MSs
-    # that lack scan intents).
+    # Replay on an MS that already carries intents is refused by the tool itself.
+    "ms_set_intents": "ms_modify.intents",
     "ms_apply_preflag": "ms_modify.preflag",
     "ms_generate_priorcals": "ms_modify.priorcals",
     "ms_initial_bandpass": "ms_modify.initial_bandpass",
@@ -88,9 +86,9 @@ _RUN_REGISTRY: dict[str, str] = {
 }
 
 
-# What append accepts: the replayable write tools, set_intents (replayed from its
-# script), and 'manual' for off-tool work (a hand-edited or hand-written script).
-_APPENDABLE = frozenset(_RUN_REGISTRY) | {"ms_set_intents", "manual"}
+# What append accepts: the replayable write tools, and 'manual' for off-tool work
+# (a hand-edited or hand-written script).
+_APPENDABLE = frozenset(_RUN_REGISTRY) | {"manual"}
 
 
 def _sha256(path: Path) -> str:
@@ -115,7 +113,7 @@ def _validate_append(tool: str, params: dict, script_path: str, workdir: str) ->
             ms_path=workdir,
         )
     if not script_path:
-        # set_intents and manual have no run() to replay, so they always need the script
+        # manual has no run() to replay, so it always needs the script
         if tool not in _RUN_REGISTRY or not execute:
             raise ComputationError(
                 f"script_path is required for {tool!r}"

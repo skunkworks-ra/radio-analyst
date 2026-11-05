@@ -63,6 +63,7 @@ Read each file with the Read tool only when you reach that stage:
 - `09-polcal-execution.md`
 - `09b-polcal-reference.md` (polarisation reference tables, on demand from 09)
 - `10-precal-workflow.md`
+- `ledger.md` (recording validated steps with `ms_reduction_log`)
 - `11-imaging.md`
 - `12-selfcal.md`
 - `13-postcal-rfi-flagging.md`

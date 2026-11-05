@@ -148,13 +148,20 @@ class TestAppendRefusesWhatRenderCannotReplay:
         with pytest.raises(ComputationError, match="script_path is required"):
             run("append", str(tmp_path), tool=tool, params={"execute": False})
 
-    @pytest.mark.parametrize("tool", ["ms_set_intents", "manual"])
-    def test_script_required_even_when_executed_if_no_run_mapping(self, tmp_path, tool):
-        # run 20261019T060646Z: set_intents appended with execute=true, no script -> MANUAL
+    def test_manual_needs_script_even_when_executed(self, tmp_path):
         from ms_inspect.exceptions import ComputationError
 
         with pytest.raises(ComputationError, match="script_path is required"):
-            run("append", str(tmp_path), tool=tool, params={"execute": True})
+            run("append", str(tmp_path), tool="manual", params={"execute": True})
+
+    def test_set_intents_executed_replays_without_script(self, tmp_path):
+        wd = str(tmp_path)
+        params = {"ms_path": "/data/x.ms", "workdir": wd, "execute": True}
+        run("append", wd, tool="ms_set_intents", params=params)
+        run("render", wd)
+        text = (tmp_path / "reduction_replay.py").read_text()
+        assert "importlib.import_module('ms_modify.intents').run(" in text
+        assert "MANUAL STEP" not in text
 
     def test_missing_script_refused(self, tmp_path):
         from ms_inspect.exceptions import ComputationError

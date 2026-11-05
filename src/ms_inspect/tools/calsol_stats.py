@@ -274,6 +274,11 @@ _OUTLIER_DETAIL_CAP = 15
 # Minimum finite values for a robust (median, MAD) reference.
 _MIN_GROUP_N = 3
 
+# An amplitude outlier must also sit this far from its group median, as a
+# fraction of the median. Antennas often agree to well under 1%, and a MAD-sigma
+# that small turns a harmless few-percent offset into a many-sigma outlier.
+AMP_FRAC_MIN = 0.30
+
 
 def _rollup(entries: list[dict]) -> dict:
     """Per-antenna count rollup, ordered by count descending."""
@@ -299,6 +304,7 @@ def amp_outlier_scan(
     spw_ids,
     field_names,
     amp_sigma: float,
+    amp_frac_min: float = AMP_FRAC_MIN,
 ) -> tuple[list[dict], list[dict]]:
     """Amplitude outliers on amp[ant, spw, field], judged per (field, SpW).
 
@@ -306,7 +312,8 @@ def amp_outlier_scan(
     cal's spectral index tilts that level across a wide band, so one pooled
     median flags whole fields. Each antenna is judged against the median and
     1.4826*MAD of its own (field, SpW) group; n_sigma_field gives the same
-    against the whole field.
+    against the whole field. An outlier must exceed amp_sigma in that sigma AND
+    deviate from the group median by more than amp_frac_min of the median.
 
     Returns (rows, reference). rows: outliers worst first, each with the
     group and field reference values. reference: one entry per field with
@@ -347,7 +354,8 @@ def amp_outlier_scan(
                 if not np.isfinite(val):
                     continue
                 n_sigma = abs(val - g_med) / g_sig
-                if n_sigma <= amp_sigma:
+                frac_dev = abs(val - g_med) / abs(g_med) if g_med else math.inf
+                if n_sigma <= amp_sigma or frac_dev <= amp_frac_min:
                     continue
                 rows.append(
                     {
@@ -356,6 +364,7 @@ def amp_outlier_scan(
                         "field": fname,
                         "amp": round(float(val), 4),
                         "n_sigma": round(float(n_sigma), 2),
+                        "frac_dev": round(float(frac_dev), 4),
                         "ref_median": round(g_med, 4),
                         "ref_sigma": round(g_sig, 4),
                         "n_sigma_field": (round(abs(val - f_med) / f_sig, 2) if fref else None),
@@ -435,6 +444,7 @@ def _compute_outliers(
         "thresholds": {
             "snr_min": snr_min,
             "amp_sigma": amp_sigma_thresh,
+            "amp_frac_min": AMP_FRAC_MIN,
         },
     }
 
@@ -683,6 +693,14 @@ def run(
             data["delay_rms_ns"] = fmt_field(None, flag="UNAVAILABLE")
 
     # --- outliers block (always present) ---
+    # CASA leaves the SNR column of a delay table at 0, so its SNR is no
+    # evidence of anything: no low_snr gate and no SNR in the sidecar.
+    if _is_delay_type(table_type):
+        snr_mean_arr = None
+        data["snr_mean"] = fmt_field(
+            None, flag="UNAVAILABLE", note="Delay (K) tables carry no solution SNR."
+        )
+
     data["outliers"] = _compute_outliers(
         snr_mean_arr,
         amp_mean_arr if _complex else None,

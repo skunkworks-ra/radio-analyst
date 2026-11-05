@@ -71,7 +71,7 @@ command step or skill section it comes from.
    the next action. The checks are how you know the action worked; the skill
    file for the stage says how to read them.
 2. Then append the call that worked to the ledger with `ms_reduction_log`,
-   as 00-playbook.md "Record every step" says: one entry per write call, the
+   as radio-interferometry `ledger.md` says: one entry per write call, the
    tool's own name, literal params, and the `script_path` that ran.
 3. Do not re-run a check whose earlier result is still valid. `cache` in
    `stages.json` says which actions invalidate which checks. Each MS is its own

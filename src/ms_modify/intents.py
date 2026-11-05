@@ -601,3 +601,7 @@ def set_intents(
         warnings=warnings,
         casa_calls=casa_calls,
     )
+
+
+# The reduction ledger replays a step as <module>.run(**recorded params).
+run = set_intents
