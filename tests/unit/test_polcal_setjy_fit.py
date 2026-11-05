@@ -419,6 +419,30 @@ class TestFitPolTermsFromCatalogue:
         assert polangle[0] == pytest.approx(math.radians(33.0), abs=0.02)
         assert "clamping fit degree" in caplog.text
 
+    def test_bracket_range_adds_nearest_node_each_side(self):
+        """A band narrower than the node spacing has no node inside it.
+
+        3C286 over 4.536-4.662 GHz (the 3C391 C-band MS) has none; with
+        bracket_range the fit takes the nearest node below and above
+        (3.57 and 4.89 GHz) and solves at degree 1.
+        """
+        with pytest.raises(ValueError, match="got 0"):
+            fit_pol_terms_from_catalogue(
+                "3C286", reffreq_ghz=4.599, pol_freq_range_ghz=(4.536, 4.662)
+            )
+        nodes: dict = {}
+        polindex, polangle = fit_pol_terms_from_catalogue(
+            "3C286",
+            reffreq_ghz=4.599,
+            pol_freq_range_ghz=(4.536, 4.662),
+            bracket_range=True,
+            nodes_out=nodes,
+        )
+        assert nodes == {"polindex": [3.57, 4.89], "polangle": [3.57, 4.89]}
+        assert len(polindex) == 2
+        assert len(polangle) == 2
+        assert polangle[0] == pytest.approx(math.radians(33.0), abs=0.02)
+
     def test_floor_of_two_nodes_enforced(self):
         """Fewer than 2 in-band nodes carries no slope info → must still raise."""
         with pytest.raises(ValueError, match="≥2 in-band nodes"):

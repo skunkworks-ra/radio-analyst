@@ -308,8 +308,16 @@ def fit_pol_terms_from_catalogue(
     polindex_deg: int = 3,
     polangle_deg: int = 4,
     obs_epoch_year: float | None = None,
+    bracket_range: bool = False,
+    nodes_out: dict | None = None,
 ) -> tuple[list[float], list[float]]:
     """Fit only the polarization terms (polindex, polangle) from the catalogue.
+
+    With bracket_range=True the fit uses the nodes inside pol_freq_range_ghz
+    plus the nearest node below and the nearest node above it, per quantity, so
+    a band narrower than the node spacing still has nodes to fit.
+    If nodes_out is a dict, it receives the node frequencies (GHz) each fit
+    used, under 'polindex' and 'polangle'.
 
     The Stokes I flux/spix are NOT fit here — they come from a Perley-Butler
     setjy probe at run time (the pol-property tables, e.g. the 2019 NRAO epoch,
@@ -353,10 +361,18 @@ def fit_pol_terms_from_catalogue(
     )
 
     def _band_mask(values: np.ndarray) -> np.ndarray:
-        mask = ~np.isnan(values)
-        if pol_freq_range_ghz is not None:
-            lo, hi = pol_freq_range_ghz
-            mask &= (freq >= lo) & (freq <= hi)
+        valid = ~np.isnan(values)
+        if pol_freq_range_ghz is None:
+            return valid
+        lo, hi = pol_freq_range_ghz
+        mask = valid & (freq >= lo) & (freq <= hi)
+        if bracket_range:
+            below = np.flatnonzero(valid & (freq < lo))
+            above = np.flatnonzero(valid & (freq > hi))
+            if below.size:
+                mask[below[-1]] = True
+            if above.size:
+                mask[above[0]] = True
         return mask
 
     # Try the requested degree first; when the in-band node count cannot support
@@ -376,6 +392,8 @@ def fit_pol_terms_from_catalogue(
             eff_polindex_deg,
         )
     mask_p = _band_mask(pf)
+    if nodes_out is not None:
+        nodes_out["polindex"] = [float(v) for v in freq[mask_p]]
     polindex = fit_polindex(freq[mask_p], pf[mask_p], reffreq_ghz, deg=eff_polindex_deg)
 
     n_a = int(_band_mask(pa).sum())
@@ -390,6 +408,8 @@ def fit_pol_terms_from_catalogue(
             eff_polangle_deg,
         )
     mask_a = _band_mask(pa)
+    if nodes_out is not None:
+        nodes_out["polangle"] = [float(v) for v in freq[mask_a]]
     polangle = fit_polangle(freq[mask_a], pa[mask_a], reffreq_ghz, deg=eff_polangle_deg)
 
     return polindex, polangle

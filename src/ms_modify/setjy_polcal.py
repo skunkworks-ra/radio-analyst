@@ -333,11 +333,14 @@ def run(
 
     flux_freq_range = (band_lo, band_hi) if band_lo is not None else None
 
-    # Explicit caller override for the pol fits; otherwise default to the band.
+    # Explicit caller override for the pol fits; otherwise the band plus the
+    # nearest catalogue node on each side of it.
     if pol_freq_range_lo_ghz is not None and pol_freq_range_hi_ghz is not None:
         pol_freq_range: tuple[float, float] | None = (pol_freq_range_lo_ghz, pol_freq_range_hi_ghz)
+        bracket_range = False
     else:
         pol_freq_range = flux_freq_range
+        bracket_range = True
 
     if band_lo is not None and not (band_lo <= reffreq_ghz <= band_hi):
         warnings.append(
@@ -358,6 +361,7 @@ def run(
     _entry = lookup_pol(lookup_name)
     if _entry is not None:
         epoch = resolve_epoch(_entry, epoch, obs_year)
+    fit_nodes: dict = {}
     try:
         polindex, polangle = fit_pol_terms_from_catalogue(
             lookup_name,
@@ -367,6 +371,8 @@ def run(
             polindex_deg=polindex_deg,
             polangle_deg=polangle_deg,
             obs_epoch_year=obs_year,
+            bracket_range=bracket_range,
+            nodes_out=fit_nodes,
         )
     except KeyError as exc:
         raise ComputationError(f"Calibrator lookup failed: {exc}", ms_path=ms_path) from exc
@@ -390,7 +396,8 @@ def run(
             f"Fit degree clamped to in-band node count: "
             f"polindex {polindex_deg}→{eff_polindex_deg}, "
             f"polangle {polangle_deg}→{eff_polangle_deg} "
-            f"(requested degree exceeded available nodes in band {pol_freq_range})."
+            f"(requested degree exceeded the available fit nodes; fit range {pol_freq_range}"
+            f"{', plus the nearest node each side' if bracket_range else ''})."
         )
 
     base_data: dict = {
@@ -405,6 +412,9 @@ def run(
         "polangle": fmt_field(polangle),
         "polangle_c0_rad": round(polangle[0], 6),
         "polangle_deg_used": eff_polangle_deg,
+        "pol_freq_range_ghz": list(pol_freq_range) if pol_freq_range else None,
+        "pol_fit_bracketed": bracket_range,
+        "pol_fit_nodes_ghz": fit_nodes,
         "stokes_i_source": "Perley-Butler 2017 (probed at run time)",
     }
 

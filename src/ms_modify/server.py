@@ -554,12 +554,15 @@ class SetjyPolcalInput(BaseModel):
     )
     pol_freq_range_lo_ghz: float | None = Field(
         default=None,
-        description="Lower bound (GHz) to restrict polindex and polangle fits.",
+        description=(
+            "Lower bound (GHz) to restrict polindex and polangle fits. Default: the "
+            "observed band plus the nearest catalogue node on each side of it."
+        ),
         gt=0.0,
     )
     pol_freq_range_hi_ghz: float | None = Field(
         default=None,
-        description="Upper bound (GHz) to restrict polindex and polangle fits.",
+        description="Upper bound (GHz) to restrict polindex and polangle fits (see lo).",
         gt=0.0,
     )
     polindex_deg: int = Field(
