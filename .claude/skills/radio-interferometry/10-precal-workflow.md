@@ -302,7 +302,7 @@ N × the thermal floor from clean SpWs.
 `ms_apply_initial_rflag` runs rflag + tfcrop on the residual column in a single
 flagdata list-mode pass. `flagbackup=True` saves a versioned backup automatically.
 
-If the phase calibrator minimum elevation during its scans (from `ms_elevation_vs_time`
+If the bandpass calibrator minimum elevation during its scans (from `ms_elevation_vs_time`
 Phase 2 output) is < 30°, use `timedevscale=7, freqdevscale=7` instead of the
 defaults (5, 5). Elevated system temperature at low elevations inflates scatter
 and causes false positives at tighter thresholds.

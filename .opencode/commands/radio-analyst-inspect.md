@@ -1,6 +1,6 @@
 ---
 description: Inspect a CASA Measurement Set and hand precal the four inputs it needs -
-             intents present, calibrator fields, bandpass field, and phase-calibrator
+             intents present, calibrator fields, bandpass field, and bandpass-calibrator
              minimum elevation.
 allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_field_list,
                mcp__plugin_radio-analyst_ms-inspect__ms_elevation_vs_time
@@ -25,5 +25,5 @@ field_roles:
   ...
 cal_fields: <comma-separated calibrator field names>
 bp_field: <bandpass calibrator field name>
-phase_cal_min_elevation_deg: <lowest elevation over the phase calibrator's scans>
+bp_cal_min_elevation_deg: <lowest elevation over the bandpass calibrator's scans>
 ```
