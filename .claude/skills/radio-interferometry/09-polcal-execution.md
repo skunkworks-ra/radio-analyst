@@ -92,7 +92,7 @@ The following table maps each polcal step to the exact MCP tool and key paramete
 
 | Step | Tool | Key parameters | Note |
 |------|------|----------------|------|
-| Angle model setup | `ms_setjy_polcal` | `field`, `reffreq_ghz`, `polindex_deg=3`, `polangle_deg=4` | Run once per angle cal; populates MODEL for Df/Xf solves |
+| Angle model setup | `ms_setjy_polcal` | `field`, `polindex_deg=3`, `polangle_deg=4` (`reffreq_ghz` defaults to the band centre) | Run once per angle cal; populates MODEL for Df/Xf solves |
 | Cross-hand delay | `ms_gaincal` | `gaintype='KCROSS'`, `smodel=[1,0,1,0]`, `combine='scan'` | Must run before D-terms; per-SPW by default, `'scan,spw'` is a deliberate multiband choice (Step 2) |
 | D-term leakage | `ms_polcal` | `poltype='Df'` or `'Df+QU'`, `solint='inf'`, `combine='scan'` | `Df` for known-pol/zero-pol sources (no PA needed); `Df+QU` only for unknown-pol sources (PA coverage as a continuum, above) |
 | Position angle | `ms_polcal` | `poltype='Xf'`, `solint='inf'`, `combine='scan'` | Run whenever a Cat A pol standard is present (`pol_angle_calibrator.category == 'A'`); independent of PA coverage; requires D-terms in gaintable |

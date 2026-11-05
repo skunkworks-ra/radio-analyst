@@ -290,8 +290,8 @@ bandpass calibrator has no setjy model, skip this step.
 `ms_initial_bandpass` solves gains on the bandpass calibrator alone, so it is the
 only field with a valid CORRECTED column right now. On every other field,
 CORRECTED−MODEL is dominated by uncorrected gain/phase error — not RFI — so a
-residual pass there flags almost the entire field (observed: 9.2% → ~90% overall,
-phase cals ~97%), recoverable only by re-splitting the calibrators.
+residual pass there flags almost the entire field, recoverable only by
+re-splitting the calibrators.
 
 Residual flagging never runs on the phase calibrator or the target: neither has
 a true model. Later residual flagging on the primaries (flux and polarization

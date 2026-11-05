@@ -265,7 +265,7 @@ def run(
     ms_path: str,
     field: str,
     workdir: str,
-    reffreq_ghz: float,
+    reffreq_ghz: float | None = None,
     calibrator_name: str | None = None,
     epoch: str | None = None,
     pol_freq_range_lo_ghz: float | None = None,
@@ -287,6 +287,8 @@ def run(
         field:                CASA field selection string (e.g. '3C48').
         workdir:              Existing directory to write setjy_polcal.py into.
         reffreq_ghz:          Reference frequency (GHz) for the polynomial expansion.
+                              Default None: the band centre, midway between the
+                              lowest and highest channel of all spectral windows.
         calibrator_name:      Catalogue name to look up (defaults to field if None).
         epoch:                Catalogue epoch key. Default None auto-selects the
                               epoch nearest the observation date (latest if no
@@ -332,6 +334,18 @@ def run(
         )
 
     flux_freq_range = (band_lo, band_hi) if band_lo is not None else None
+
+    if reffreq_ghz is None:
+        if band_lo is None:
+            raise ComputationError(
+                "reffreq_ghz not given and the band centre could not be read from "
+                "SPECTRAL_WINDOW; pass reffreq_ghz.",
+                ms_path=ms_path,
+            )
+        reffreq_ghz = round((band_lo + band_hi) / 2.0, 6)
+        reffreq_source = "band centre from SPECTRAL_WINDOW (all SpWs)"
+    else:
+        reffreq_source = "caller"
 
     # Explicit caller override for the pol fits; otherwise the band plus the
     # nearest catalogue node on each side of it.
@@ -405,6 +419,8 @@ def run(
         "calibrator": fmt_field(lookup_name),
         "epoch": epoch,
         "reffreq_ghz": reffreq_ghz,
+        "reffreq_source": reffreq_source,
+        "band_range_ghz": [band_lo, band_hi] if band_lo is not None else None,
         "min_chunk_mhz": min_chunk_mhz,
         "polindex": fmt_field(polindex),
         "polindex_c0": round(polindex[0], 6),

@@ -33,6 +33,8 @@ use them. Execute the stages below in order; STOP and report if any
 ms_calsol_stats outlier gate fails. Record each validated write step with
 `ms_reduction_log`, as `ledger.md` says.
 Every MCP tool takes one argument, `params`: `{"ms_path": ..., ...}`.
+The tools in allowed-tools above are granted for this stage, `ms_flag_summary` included,
+even if an earlier stage denied one of them: call them.
 
 **Workflow:**
 
@@ -78,7 +80,7 @@ Every MCP tool takes one argument, `params`: `{"ms_path": ..., ...}`.
 8. `ms_fluxscale(…, caltable=gain.G, fluxtable=workdir/gain.fluxscaled,
    reference=flux_field, transfer=phase_fields, execute=False)` → run.
 
-9. Applycal — three invocations (flux cal, phase cals, target) per
+9. Applycal — flux cal, then each phase cal in its own call, then target, per
    07-calibration-execution.md §Step 7. Use `ms_applycal` with
    appropriate `gainfield` and `interp` per call. Around each invocation run
    the flag-jump check (07 "Flag jump at applycal"):

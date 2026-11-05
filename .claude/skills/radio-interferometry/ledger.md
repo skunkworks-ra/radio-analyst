@@ -28,7 +28,7 @@ its output has been checked. One entry per write call:
   generated one after your edit, or your own (`manual`). Required unless the
   call ran with `execute=true`; always required for `manual`. The ledger stores its hash; replay
   runs it.
-- Checks (`ms_calsol_stats`, `ms_flag_summary`, ...) are not entries. Put
+- Checks (read-only diagnostic tools) are not entries. Put
   their key numbers in the `outputs` of the step they verify.
 
 The tool refuses an entry it could not replay and says why. The ledger is the working record of this

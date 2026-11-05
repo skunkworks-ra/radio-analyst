@@ -754,14 +754,17 @@ ms_applycal(
 )
 ```
 
-### 7b — Phase calibrator
+### 7b — Phase calibrators
+
+Every phase calibrator in `{PHASE_FIELD}`, one call each, each with its own
+gains (`<cal>` below is one name from that list):
 
 ```
 ms_applycal(
     ms_path    = {VIS},
-    field      = {PHASE_FIELD},
+    field      = <cal>,
     gaintable  = {PRIORCALS} + [delay.K, bandpass.B, gain.fluxscaled],
-    gainfield  = [''] * len(PRIORCALS) + ['', '', {PHASE_FIELD}],
+    gainfield  = [''] * len(PRIORCALS) + ['', '', <cal>],
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'nearest'],
     calwt      = False,
     applymode  = 'calflag',
@@ -778,7 +781,7 @@ ms_applycal(
     ms_path    = {FULL_MS},
     field      = {TARGET_FIELD},
     gaintable  = {PRIORCALS} + [delay.K, bandpass.B, gain.fluxscaled],
-    gainfield  = [''] * len(PRIORCALS) + ['', '', {PHASE_FIELD}],
+    gainfield  = [''] * len(PRIORCALS) + ['', '', <the target's phase cal>],  # see Assigning {PHASE_FIELD}
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'linear'],
     calwt      = False,
     applymode  = 'calflag',
@@ -797,7 +800,7 @@ of the gain at the target's observation time. Do not use 'nearest' for the targe
 
 ## Post-applycal assessment
 
-After all three applycal calls complete, inspect the CORRECTED_DATA column:
+After all applycal calls (7a, each 7b, 7c) complete, inspect the CORRECTED_DATA column:
 
 | Check | Expected | Problem if not met |
 |---|---|---|

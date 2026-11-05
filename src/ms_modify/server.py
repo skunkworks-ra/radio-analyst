@@ -530,10 +530,11 @@ class SetjyPolcalInput(BaseModel):
         description="Existing directory for the generated setjy_polcal.py script.",
         min_length=1,
     )
-    reffreq_ghz: float = Field(
-        ...,
+    reffreq_ghz: float | None = Field(
+        default=None,
         description=(
-            "Reference frequency in GHz for the polynomial expansion (e.g. 3.0 for S-band centre)."
+            "Reference frequency in GHz for the polynomial expansion. Default: the band "
+            "centre, midway between the lowest and highest channel of all SpWs."
         ),
         gt=0.0,
     )

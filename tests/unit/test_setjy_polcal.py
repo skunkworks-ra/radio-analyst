@@ -117,3 +117,9 @@ class TestBandRangeWiring:
         assert len(matches) == 1
         assert "1.000" in matches[0]
         assert "2.016" in matches[0]
+
+    def test_reffreq_defaults_to_the_band_centre(self, real_ms_raw, tmp_path):
+        result, _ = _run(real_ms_raw, tmp_path, reffreq_ghz=None)
+        lo, hi = result["data"]["band_range_ghz"]
+        assert result["data"]["reffreq_ghz"] == pytest.approx((lo + hi) / 2.0)
+        assert result["data"]["reffreq_source"].startswith("band centre")
