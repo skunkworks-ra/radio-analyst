@@ -133,7 +133,7 @@ solutions from propagating into every downstream solve.
 | `bandpass.B` | after Step 3, before Step 4 gain solve | tfcrop | 5.0 |
 | `gain.G` | after Step 4, before fluxscale — **only if ≥ 10 solution intervals per antenna per field** (see below) | rflag | 5.0 |
 | `dterms.D` (polcal) | after the D-term solve (skill 09) | rflag | 5.0 |
-| `delay.K` | — | — | **do not autoflag** — one value per antenna; inspect with `ms_calsol_stats`, flag the bad antenna's data and re-solve (below; not for an antenna flagged under Dead antenna) |
+| `delay.K` | — | — | **do not autoflag** — one value per antenna; inspect with `ms_calsol_stats`, flag the bad antenna's data and re-solve (below; not for an antenna flagged under Dead antenna; an antenna with no solution at all is noted, not re-solved) |
 
 `ms_flag_caltable` auto-routes the mode from the table's VisCal type, so you
 normally pass only `caltable_path`, `workdir`, and `sigma`. Default `sigma=5.0`
@@ -150,16 +150,20 @@ flag the bad data by hand (next subsection); do not force `mode='rflag'` unless
 the counts justify it. Bandpass and D-term tables vary along frequency and are
 not affected.
 
-### Dead antenna: flag it everywhere after G0 and K
+### Dead antenna: lost in G0 and K, flag it everywhere
 
-After the G0 and K solves, read `antennas_lost` from each one's
-`ms_calsol_stats`. An antenna named there has no solution in that table, on
-any field. If `n_antennas_lost > 3`, stop and report; do not flag. Otherwise,
-before the next solve, flag it on `{VIS}` and on `{FULL_MS}`, all fields and
-times: `ms_flag_data(ms_path=<each>, workdir={WORKDIR}, antenna=<name>,
-reason="<name> in antennas_lost of <table>", execute=True)`, and record both
-calls in the ledger. Do not re-solve. Flag each antenna once; K naming an
-antenna already flagged after G0 needs nothing.
+After the K solve, compare `antennas_lost` from the G0 and K
+`ms_calsol_stats`. An antenna in both lists has no solution in either table,
+on any field: it is dead for this observation. If more than 3 antennas are in
+both, stop and report; do not flag. Otherwise, before the bandpass solve, flag
+each one on `{VIS}` and on `{FULL_MS}`, all fields and times:
+`ms_flag_data(ms_path=<each>, workdir={WORKDIR}, antenna=<name>,
+reason="<name> in antennas_lost of G0 and K", execute=True)`, and record both
+calls in the ledger. Do not re-solve.
+
+An antenna lost in only some tables (G0 or K alone, or first at B or G) is not
+flagged here: applycal (`applymode='calflag'`) flags its data where it has no
+solution. Name it and the tables that lost it in the report.
 
 ### Flagging by hand: flag the data, not the solution
 
@@ -288,7 +292,7 @@ ms_calsol_stats(caltable_path = {WORKDIR}/initial_phase.G0, verbosity = 'full')
 |---|---|---|---|
 | `phase_rms_deg[ant, spw=0, field=0]` | all antennas | < 60° | > 60° on most antennas → suspect source model or data column; do not proceed |
 | `overall_flagged_frac` | scalar | < 0.15 | > 0.15 → check refant and CENTER_CHANNELS selection |
-| `antennas_lost` | list | empty or 1 | any → flag it everywhere (Dead antenna, above); > 1 → also note in the report |
+| `antennas_lost` | list | empty or 1 | any → note it; compare with K (Dead antenna, above); > 1 → also note in the report |
 | `outliers.low_snr` | list | empty | non-empty → inspect named antennas; low SNR on G0 is a warning, not a hard stop |
 
 A single integration with a phase jump on one antenna is acceptable — do not re-solve.
@@ -331,7 +335,7 @@ ms_calsol_stats(caltable_path = {WORKDIR}/delay.K, verbosity = 'full')
 | `delay_rms_ns[spw, field=0]` | all SPWs | < 10 ns | > 10 ns → delay solve may have failed on that SPW |
 | `overall_flagged_frac` | scalar | < 0.10 | > 0.10 → check WIDE_CHANNELS selection |
 | `outliers.low_snr` | — | — | not reported for delay tables: CASA writes no solution SNR for K |
-| `antennas_lost` | list | empty | any not yet flagged → flag it everywhere now (Dead antenna, above), no re-solve |
+| `antennas_lost` | list | empty | also in G0's list → flag it everywhere now (Dead antenna, above), no re-solve; only here → note it |
 
 VLA typically shows delays within ±5 ns after a recent configuration change.
 Delays of ±200+ ns on any antenna may indicate a polarization feed swap — escalate.
@@ -644,7 +648,7 @@ Advance to applycal only when all of the following hold:
 | BP flagged fraction | < 0.20 |
 | Gain flagged fraction | < 0.15 |
 | Antennas lost | ≤ 3 |
-| Every antenna in `antennas_lost` of G0 or K | flagged on `{VIS}` and `{FULL_MS}` (Dead antenna) |
+| Every antenna in `antennas_lost` of both G0 and K | flagged on `{VIS}` and `{FULL_MS}` (Dead antenna) |
 | fluxscale derived flux density | not an order of magnitude off `flux_estimate` (> 20% off: check priorcals and flux cal model, then proceed) |
 | `gain.fluxscaled` exists on disk | confirmed |
 
