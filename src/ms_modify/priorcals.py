@@ -155,8 +155,8 @@ if _table_nrows(ms_path + "/SYSPOWER") > 0:
             print("  rq: empty — skipped")
 else:
     skipped.append("requantizer.rq")
-    skip_reasons["requantizer.rq"] = "no SYSPOWER subtable (pre-WIDAR data)"
-    print("  rq: skipped (no SYSPOWER subtable — pre-WIDAR data)")
+    skip_reasons["requantizer.rq"] = "no SYSPOWER rows in MS"
+    print("  rq: skipped (no SYSPOWER rows in MS)")
 
 # 4 — Antenna positions
 print("Generating antenna position corrections...")
@@ -177,7 +177,7 @@ if "antpos.ap" not in skip_reasons:
         print("  antpos: empty — skipped (no corrections needed)")
 
 # Record only the tables that were produced and are non-empty. A skipped
-# prior is legitimate here — pre-WIDAR data has no SYSPOWER subtable, and an
+# prior is legitimate here — an MS with no SYSPOWER rows gets no rq table, and an
 # antpos table with no corrections is correctly empty — so absence must not
 # raise the way it does in the single-caltable tools. The skip reasons above
 # stay in this script's stdout; only the successes become durable record.
@@ -331,7 +331,7 @@ def run(
             skip_reasons["requantizer.rq"] = "gencal returned 0-row table"
     else:
         skipped.append("requantizer.rq")
-        skip_reasons["requantizer.rq"] = "no SYSPOWER subtable (pre-WIDAR data)"
+        skip_reasons["requantizer.rq"] = "no SYSPOWER rows in MS"
 
     # antpos
     if _run_gencal(antpos_table, "antpos", "antpos.ap"):

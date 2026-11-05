@@ -122,7 +122,7 @@ verify with `ms_verify_priorcals`:
 |-------|----------|-----------|
 | `gain_curves.gc` | Yes — hard stop | Data cannot be calibrated without elevation gain curves |
 | `opacities.opac` | K-band and above | Empty table: hard stop at K-band and above; note and continue below K-band |
-| `requantizer.rq` | VLA WIDAR data; it matters for 3-bit samplers | Pass it whenever gencal writes it. On 8-bit data the solutions are the same value over and over, which is harmless. Skip only for pre-WIDAR data, not by observation date |
+| `requantizer.rq` | VLA WIDAR data; it matters for 3-bit samplers | Pass it whenever gencal writes it. On 8-bit data the solutions are the same value over and over, which is harmless. It is skipped when the MS has no SYSPOWER rows (e.g. a split copy). Do not infer the data's era from the skip, and do not skip by observation date. Nothing to do when the tool reports it skipped; record the reason as reported |
 | `antpos.ap` | No | Skip silently if gencal returns empty; note if returned with rows |
 
 A missing `gain_curves.gc` (any band), or a missing `opacities.opac` at K-band

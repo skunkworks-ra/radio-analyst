@@ -931,7 +931,7 @@ async def ms_generate_priorcals(params: GeneratePriorcalsInput) -> ToolResult:
       1. gain_curves.gc   — VLA elevation gain curves
       2. opacities.opac   — per-SPW zenith opacity
       3. requantizer.rq   — VLA WIDAR requantizer (attempted iff the SYSPOWER
-                            subtable has rows; absent SYSPOWER = pre-WIDAR data)
+                            subtable has rows; no rows = no rq table)
       4. antpos.ap        — antenna position corrections (skipped if empty)
 
     The returned 'priorcals' list is the canonical input to ms_initial_bandpass.

@@ -290,7 +290,7 @@ def test_initial_bandpass_records_the_gain_table_before_the_bandpass_solve(
 def test_priorcals_records_only_what_it_actually_produced(ms_and_workdir):
     """A skipped prior is legitimate, so priorcals must not use the raising form.
 
-    Pre-WIDAR data has no SYSPOWER subtable and an antpos table with no
+    An MS with no SYSPOWER rows gets no rq table and an antpos table with no
     corrections is correctly empty. The script therefore records the tables it
     appended to `priorcals`, and never asserts a fixed set.
     """
