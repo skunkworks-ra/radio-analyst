@@ -21,6 +21,9 @@ Find your current state in the left column. Run the right-column tool
 
 ## Record every step that worked
 
+Only when `ms_reduction_log` is among your tools (calibrate and the reduce
+flow); otherwise skip this section.
+
 After each step you have **validated** — the script ran, the caltable or MS
 came out as expected, the diagnostic looked right — append it to the
 reduction ledger:
