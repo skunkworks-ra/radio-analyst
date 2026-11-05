@@ -414,9 +414,7 @@ def run(ms_path: str) -> dict:
                 "No intents and not in the calibrator catalogue. Matches VLA calibrator "
                 f"list entry {vla_f['value'].get('name')} and is observed in {n_scans} scans."
             )
-            rec["intents"] = field(
-                infer_intents_from_role(["phase"]), flag="INFERRED", note=note
-            )
+            rec["intents"] = field(infer_intents_from_role(["phase"]), flag="INFERRED", note=note)
             rec["field_role"] = field(["phase"], flag="INFERRED", note=note)
 
     # ------------------------------------------------------------------
