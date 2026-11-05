@@ -23,7 +23,8 @@ Fill every `{PLACEHOLDER}` from Phase 1–2 tool outputs before calling any solv
 
 | Placeholder | Source tool | What to extract |
 |---|---|---|
-| `{VIS}` | `ms_observation_info` | absolute path to the calibrators MS |
+| `{VIS}` | provided in prompt | absolute path to the calibrators MS (`{WORKDIR}/calibrators.ms`) |
+| `{FULL_MS}` | provided in prompt | absolute path to the full MS, which holds the target fields |
 | `{FLUX_FIELD}` | `ms_field_list` | field name of the primary flux/bandpass calibrator |
 | `{BP_FIELD}` | `ms_field_list` | same as FLUX_FIELD unless a dedicated BP cal is present |
 | `{PHASE_FIELD}` | `ms_field_list` | field name(s) of phase calibrators, comma-separated |
@@ -32,11 +33,8 @@ Fill every `{PLACEHOLDER}` from Phase 1–2 tool outputs before calling any solv
 | `{ALL_SPW}` | `ms_spectral_window_list` | spw selection string, e.g. `'0~15'` |
 | `{CENTER_CHANNELS}` | `ms_spectral_window_list` | from `ms_spectral_window_list.suggested.center_channels_string` |
 | `{WIDE_CHANNELS}` | `ms_spectral_window_list` | from `ms_spectral_window_list.suggested.wide_channels_string` |
-| `{CORRSTRING}` | `ms_correlator_config` | from `ms_correlator_config.corrstring_casa` |
 | `{REFANT}` | `ms_refant` | reference antenna name, e.g. `'ea09'` |
-| `{FLUX_STANDARD}` | `ms_field_list` + band | see §Flux standards |
 | `{MINBLPERANT}` | `ms_antenna_list` | from `ms_antenna_list.recommended_minblperant` |
-| `{INT_TIME_S}` | `ms_scan_list` | integration time in seconds |
 | `{PRIORCALS}` | `ms_verify_priorcals` | from `ms_verify_priorcals.priorcals_list` |
 | `{WORKDIR}` | provided in prompt | directory to write all caltables into |
 
@@ -54,6 +52,10 @@ IDs, convert to names before proceeding.
 ---
 
 ## Flux standards
+
+The flux model is set in precal (`ms_setjy`, `10-precal-workflow.md`); the
+calibrate stage does not call `ms_setjy`. This section is the reason behind the
+precal rule.
 
 **Do not pass `standard` to `ms_setjy`.** Leave it empty, which is the default.
 The tool then resolves a standard PER FIELD from that field's own observing
@@ -102,32 +104,6 @@ substitute standard. Supply `manual_flux={'<field>': {'fluxdensity': [I,Q,U,V],
 
 For VLA P-band, the ionosphere varies on timescales of seconds — see 08-pband-specifics.md
 for P-band-specific solint overrides.
-
-### solint SNR check — run before Step 4
-
-Before committing to `solint='inf'` for the gain solve, verify the predicted SNR
-is adequate. Use the flux density from `ms_setjy` output (`{FLUX_JY}`).
-
-```
-ms_gaincal_snr_predict(
-    ms_path        = {VIS},
-    field          = {FLUX_FIELD},
-    solint_seconds = -1,          # -1 = use full scan length (equivalent to solint='inf')
-    snr_threshold  = 3.0,
-    flux_jy        = {FLUX_JY},   # Stokes I flux density from ms_setjy
-)
-```
-
-Read `predicted_snr_per_spw[antenna, spw]` from the output:
-
-| Result | Action |
-|--------|--------|
-| All SPWs > 5.0 | Proceed with `solint='inf'` as planned |
-| Any SPW 3.0–5.0 | Proceed; note the low-SNR SPWs in the run log |
-| Any SPW < 3.0 | Try `solint_seconds` equal to your scan length / 2 in the tool; if still < 3.0, use `combine='scan'` in the gaincal call |
-
-If `flux_jy` is UNAVAILABLE (setjy was not run or the source is not in the catalogue),
-the tool returns UNAVAILABLE for all SNR fields. Skip the check and proceed; note it.
 
 ---
 
@@ -342,7 +318,7 @@ ms_calsol_stats(caltable_path = {WORKDIR}/delay.K, verbosity = 'full')
 | `delay_ns[ant, spw, field=0, corr]` | all antennas | abs value < 30 ns | > 50 ns on one antenna → hardware or cabling problem; note in summary |
 | `delay_rms_ns[spw, field=0]` | all SPWs | < 10 ns | > 10 ns → delay solve may have failed on that SPW |
 | `overall_flagged_frac` | scalar | < 0.10 | > 0.10 → check WIDE_CHANNELS selection |
-| `outliers.low_snr` | list | empty | non-empty → inspect named antennas; a delay SNR outlier often signals a hardware problem worth noting |
+| `outliers.low_snr` | — | — | not reported for delay tables: CASA writes no solution SNR for K |
 
 VLA typically shows delays within ±5 ns after a recent configuration change.
 Delays of ±200+ ns on any antenna may indicate a polarization feed swap — escalate.
@@ -448,18 +424,14 @@ share the same nearest cal, use that cal for both.
 
 Before the gaincal call, classify each field in `{FLUX_FIELD},{PHASE_FIELD}` into
 one of four types. Use `ms_field_list` output and domain knowledge to decide.
-This classification determines acceptable flag thresholds and recovery strategies.
+This classification determines the recovery strategies.
 
-| Source type | Characteristics | Pre-solve flag threshold | Acceptable flag-jump threshold |
-|---|---|---|---|
-| Bright flux cal (3C286, 3C147) | Strong, point-like; model well-known | ≤ 5% | ≤ 8% |
-| Phase calibrator | Moderate strength; coherent structure expected | ≤ 10% | ≤ 12% |
-| Weak calibrator | Faint but point-like; SNR limit | ≤ 15% | ≤ 15% |
-| Resolved calibrator (Cas A, Cyg A, Tau A) | Extended structure; large UV range | ≤ 3% (high RFI sensitivity) | ≤ 6% |
-
-**Decision:** If a field's pre-solve flag fraction (from `ms_flag_summary` before
-gaincal call) exceeds the threshold for its type, see **Recovery 3: Excessive
-flag jump** below before attempting gaincal.
+| Source type | Characteristics |
+|---|---|
+| Bright flux cal (3C286, 3C147) | Strong, point-like; model well-known |
+| Phase calibrator | Moderate strength; coherent structure expected |
+| Weak calibrator | Faint but point-like; SNR limit |
+| Resolved calibrator (Cas A, Cyg A, Tau A) | Extended structure; large UV range |
 
 ### Pre-flight checklist
 
@@ -472,26 +444,11 @@ Before running the gaincal call in Step 4, verify:
    Confirm `{REFANT}` is in the returned ranked list (top 3 preferred).
    If not present, select the top-ranked antenna from the output.
 
-2. **Prior caltables:**
-   ```
-   ms_verify_caltables(
-       ms_path={VIS},
-       init_gain_table={WORKDIR}/initial_phase.G0,
-       bp_table={WORKDIR}/bandpass.B
-   )
-   ```
-   Confirm both tables exist and are valid (`caltables_valid=True`).
-
-3. **Pre-solve flag state:**
-   ```
-   ms_flag_summary(ms_path={VIS}, field={FLUX_FIELD},{PHASE_FIELD})
-   ```
-   Record `per_field.flag_fraction` for each calibrator. Use as baseline to
-   detect flag jump post-solve (see **Post-flight validation** below).
-
 ### Post-flight validation (after gaincal completes)
 
-After the gaincal script finishes, run these four checks:
+After the gaincal script finishes, run these three checks. Gaincal writes only a
+caltable and never changes the MS flags; the flag check is at applycal (Step 7,
+"Flag jump at applycal").
 
 **Check 1: Caltable existence and coverage**
 ```
@@ -511,27 +468,16 @@ outliers.low_snr                 # List of {antenna, spw, field, snr} entries be
 - If `snr_mean < 3.0` → **Recovery 2: Low SNR**
 - If `outliers.low_snr` is non-empty and covers > 20% of antennas → **Recovery 2: Low SNR** (refant retry)
 
-**Check 3: Flag state comparison (delta check)**
-```
-ms_flag_summary(ms_path={VIS}, field={FLUX_FIELD},{PHASE_FIELD})
-# Compare per_field.flag_fraction before and after gaincal
-flag_delta = flag_after - flag_before
-```
-- For each field, calculate `flag_delta`
-- Bright cal: acceptable if `flag_delta` ≤ 8%
-- Phase cal: acceptable if `flag_delta` ≤ 12%
-- Weak source: acceptable if `flag_delta` ≤ 15%
-- Resolved: acceptable if `flag_delta` ≤ 6%
-- If any field exceeds threshold → **Recovery 3: Excessive flag jump**
-
-**Check 4: Solution distribution (outlier check)**
+**Check 3: Solution distribution (outlier check)**
 ```
 # From ms_calsol_stats, inspect:
-outliers.amp_outliers            # {antenna, spw, field, amp, n_sigma, ref_median, ref_sigma, n_sigma_field}
+outliers.amp_outliers            # {antenna, spw, field, amp, n_sigma, frac_dev, ref_median, ref_sigma, n_sigma_field}
 outliers.amp_reference           # per field: spw_median, spw_sigma, spw_offset_n_sigma_field
 ```
 `n_sigma` is against the antenna's own (field, SpW) group, so a phase
-calibrator's pre-fluxscale level is not an outlier. A whole SpW moving shows in
+calibrator's pre-fluxscale level is not an outlier. An antenna is listed only if
+it is past `thresholds.amp_sigma` AND `frac_dev` (its deviation as a fraction of
+the group median) exceeds `thresholds.amp_frac_min` (0.30). A whole SpW moving shows in
 `amp_reference.spw_offset_n_sigma_field`, not in `amp_outliers`: a large offset
 in one SpW with no antenna outliers points to wideband RFI in that SpW.
 - Expected: `outliers.amp_outliers` is empty; antenna-to-antenna amplitude variation ~20–30% is normal
@@ -614,9 +560,9 @@ is the `usescratch` signature below. Quote both numbers in the report.
 column while the flux/bandpass cals were set with `ms_setjy(usescratch=False)`
 (virtual) — leaving their `MODEL_DATA` at the default 1 Jy. fluxscale then
 bootstraps off a 1 Jy reference instead of the true model flux. If you see this,
-do not retune the solve: re-run `ms_setjy` with `usescratch=True` for the flux
-cal so the whole MS uses one consistent physical model, then redo the gain solve
-and fluxscale. The rule: all setjy calls on one MS must share the same
+do not retune the solve. STOP and report: the fix is a precal step (re-run
+`ms_setjy` with `usescratch=True` for the flux cal, skill 10) so the whole MS
+uses one consistent physical model; then redo the gain solve and fluxscale here. The rule: all setjy calls on one MS must share the same
 `usescratch` (see skill 09 Step 1).
 
 After fluxscale, gain amplitudes for both calibrators should be similar in
@@ -745,6 +691,24 @@ gain solutions are interpolated correctly for each.
   read 14 to 16 Jy against a 19 to 22 Jy model). `'calonly'` is only for interim
   applies inside a flagging loop.
 
+### Flag jump at applycal
+
+Applycal is where calibration flags data: `calflag` flags every visibility whose
+solution is flagged. A large jump means the solutions are missing for much of a
+field — an antenna or scans lost in a solve — and the data behind it is gone.
+
+Around each of 7a, 7b and 7c, run `ms_flag_summary` on the fields that call
+writes, before and after it: on `{VIS}` for the calibrators, on `{FULL_MS}` for
+the target. Read `per_field.flag_fraction`.
+
+| Jump (after − before), any field | Action |
+|---|---|
+| < 15 percentage points | Proceed. Quote both numbers in the report. |
+| ≥ 15 percentage points | Retry. Find which solutions are flagged (`ms_calsol_stats`, then `ms_calsol_stats_detail` on the antennas it names). Flag the bad data with `ms_flag_data` (see "Flagging by hand"), re-solve the table that showed it and every table downstream of it, and apply again. |
+
+One fully lost antenna of 26 adds about 4 points, so it does not trip this
+check; `ms_calsol_stats` `antennas_lost` names it.
+
 ### 7a — Flux calibrator
 
 ```
@@ -783,7 +747,7 @@ ms_applycal(
 
 ```
 ms_applycal(
-    ms_path    = {VIS},
+    ms_path    = {FULL_MS},
     field      = {TARGET_FIELD},
     gaintable  = {PRIORCALS} + [delay.K, bandpass.B, gain.fluxscaled],
     gainfield  = [''] * len(PRIORCALS) + ['', '', {PHASE_FIELD}],

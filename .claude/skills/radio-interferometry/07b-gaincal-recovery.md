@@ -26,9 +26,10 @@ OR exists but is empty (`n_total_solutions = 0`).
 
 2. **Check prior caltables (delay.K, bandpass.B):**
    ```
-   ms_verify_caltables(...)
+   ms_calsol_stats(caltable_path={WORKDIR}/delay.K)
+   ms_calsol_stats(caltable_path={WORKDIR}/bandpass.B)
    ```
-   If either missing or empty → restart from Step 2 (delay solve).
+   If either is missing or has no unflagged solutions → restart from Step 2 (delay solve).
 
 3. **Check pre-solve flag fraction by field:**
    ```
@@ -115,16 +116,20 @@ antennas have SNR < 2.0.
 
 ---
 
-## Recovery Tree 3: Excessive Flag Jump (flag_delta > threshold)
+## Recovery Tree 3: Excessive Flag Jump at applycal (≥ 15 points)
 
-**Symptoms:** gaincal completed and caltable exists, but `flag_after - flag_before`
-exceeds the source-type threshold (e.g., > 8% for bright cal, > 12% for phase cal).
+**Symptoms:** an applycal call (07 Step 7, "Flag jump at applycal") raised a
+field's `per_field.flag_fraction` by 15 percentage points or more. Gaincal itself
+never changes MS flags; applycal flags the data whose solutions are flagged.
 
 **Diagnostic path:**
 
-1. **Classify the flag jump:**
-   - Small jump (3–5% above threshold): Expected minor RFI detection; acceptable with note
-   - Large jump (> 5% above threshold): Indicates real data-quality problem
+1. **Find the flagged solutions:**
+   ```
+   ms_calsol_stats(caltable_path={WORKDIR}/gain.G)
+   ```
+   Read `antennas_lost` and the per-antenna flagged fraction; drill in with
+   `ms_calsol_stats_detail` on the antennas it names.
 
 2. **Check if the source is resolved:**
    - Use `ms_field_list` output and source catalogues (e.g., VLA calibrator manual)
@@ -135,15 +140,7 @@ exceeds the source-type threshold (e.g., > 8% for bright cal, > 12% for phase ca
      ```
    - **If point-like:** continue to next option
 
-3. **Check for RFI in online flags:**
-   ```
-   ms_online_flag_stats(flag_file=<ms_name>.flagonline.txt)   # written by ms_import_asdm
-   # Examine: reason_breakdown (look for RFI-like categories)
-   ```
-   - If heavy RFI flagging in online flags → data quality is already poor
-   - Consider looping to precal for additional RFI excision
-
-4. **Check per-antenna flag contribution:**
+3. **Check per-antenna flag contribution:**
    ```
    ms_flag_summary(ms_path={VIS}, field={FLUX_FIELD})   # per_antenna is always returned
    # Identify antennas where flag_delta is largest
@@ -152,14 +149,14 @@ exceeds the source-type threshold (e.g., > 8% for bright cal, > 12% for phase ca
      - Retry with `refant` set to an antenna NOT in the high-flag list
    - **If spread across all antennas:** systematic RFI; loop to precal
 
-5. **Retry with more data per solution (if source is unresolved):**
+4. **Retry with more data per solution (if source is unresolved):**
    Solutions flagged for low SNR take their data with them under `calflag`, so
    raising SNR can lower the flag jump. Use the three-variant comparison in
    Recovery Tree 2 option 3 (longer solint, `combine='scan'`, both) and keep the
    least noisy solution. If the flag delta is unchanged across all three, the
    cause is not SNR; escalate.
 
-6. **Escalation:** If flag_delta remains > threshold after refant and solint tweaks:
+5. **Escalation:** If the jump stays ≥ 15 points after refant and solint tweaks:
    - Possible causes: strong RFI environment, broken receiver chain, sky interference
    - **Action:** Document the high flagging in the summary; consider whether the solutions are scientifically useful despite the flag delta
 
@@ -201,7 +198,7 @@ exceeds the source-type threshold (e.g., > 8% for bright cal, > 12% for phase ca
 5. **Check prior caltables (delay.K, bandpass.B):**
    - Missing or bad prior solutions will cause downstream gaincal to fail
    - ```
-     ms_verify_caltables(ms_path={VIS}, init_gain_table=..., bp_table={WORKDIR}/bandpass.B)
+     ms_calsol_stats(caltable_path={WORKDIR}/bandpass.B)
      ```
    - If bandpass is corrupt → restart from Step 3
 

@@ -140,7 +140,6 @@
             "ms_workflow_status",
             "ms_field_list",
             "ms_spectral_window_list",
-            "ms_correlator_config",
             "ms_antenna_list",
             "ms_verify_priorcals",
             "ms_refant"
@@ -150,13 +149,10 @@
         {
           "id": "c2",
           "action": "ms_gaincal(G0)",
-          "before": [
-            "ms_gaincal_snr_predict"
-          ],
           "after": [
             "ms_calsol_stats"
           ],
-          "source": "calibrate.md 3-4; 07 Step 1. 07 says snr_predict 'before Step 4', calibrate.md says before G0",
+          "source": "calibrate.md 3; 07 Step 1",
           "match": {
             "gaintype": "^G$",
             "calmode": "^p$",
@@ -169,7 +165,7 @@
           "after": [
             "ms_calsol_stats"
           ],
-          "source": "calibrate.md 5; 07 Step 2; K is not flagged (07 caltable flagging)",
+          "source": "calibrate.md 4; 07 Step 2; K is not flagged (07 caltable flagging)",
           "match": {
             "gaintype": "^K$"
           }
@@ -181,22 +177,19 @@
             "ms_calsol_stats",
             "ms_flag_caltable"
           ],
-          "source": "calibrate.md 6; 07 Step 3 + caltable flagging"
+          "source": "calibrate.md 5; 07 Step 3 + caltable flagging"
         },
         {
           "id": "c5",
           "action": "ms_gaincal(G)",
           "before": [
-            "ms_refant(flux,phase)",
-            "ms_verify_caltables",
-            "ms_flag_summary"
+            "ms_refant(flux,phase)"
           ],
           "after": [
             "ms_calsol_stats",
-            "ms_flag_summary",
             "ms_flag_caltable when >= 10 solutions per antenna per field; otherwise ms_flag_data on the named outliers and re-solve"
           ],
-          "source": "calibrate.md 7-8; 07 Step 4b pre/post-flight, Step 5, caltable flagging",
+          "source": "calibrate.md 6-7; 07 Step 4b pre/post-flight, Step 5, caltable flagging",
           "match": {
             "gaintype": "^G$",
             "calmode": "^ap$"
@@ -208,19 +201,20 @@
           "after": [
             "ms_plot_caltable_library"
           ],
-          "source": "calibrate.md 9; 07 Step 6, 6b"
+          "source": "calibrate.md 8; 07 Step 6, 6b"
         },
         {
           "id": "c7",
           "action": "ms_applycal x3 (flux, phase, target)",
           "before": [
             "ms_antenna_list",
-            "ms_calsol_stats per table"
+            "ms_calsol_stats per table",
+            "ms_flag_summary per applycal"
           ],
           "after": [
-            "ms_flag_summary(target)"
+            "ms_flag_summary per applycal (jump >= 15 points -> retry)"
           ],
-          "source": "07 antenna-set check, Step 7; calibrate.md 10-11",
+          "source": "07 antenna-set check, Step 7 \"Flag jump at applycal\"; calibrate.md 9",
           "match": {
             "gaintable": "^(?!.*pcal)"
           }
