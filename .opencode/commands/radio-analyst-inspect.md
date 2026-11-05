@@ -20,9 +20,6 @@ Then output this handoff block and nothing else:
 ```
 INSPECT HANDOFF
 intents_present: <yes | no>  (yes if any field has intents)
-field_roles:
-  <field name>: <field_role value from ms_field_list, or "none" if null>
-  ...
 cal_fields: <comma-separated calibrator field names>
 bp_field: <bandpass calibrator field name>
 bp_cal_min_elevation_deg: <lowest elevation over the bandpass calibrator's scans>
