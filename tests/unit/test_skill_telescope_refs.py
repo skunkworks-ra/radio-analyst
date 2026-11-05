@@ -31,7 +31,6 @@ TELESCOPE_DATA_DIR = REPO_ROOT / "src" / "ms_inspect" / "data" / "telescopes"
 # reader at the profiles rather than answering from its own text.
 PROFILE_POINTER_FILES = [
     SKILLS_DIR / "02-orientation.md",
-    SKILLS_DIR / "wildcat" / "00-core.md",
     SKILLS_DIR / "08-pband-specifics.md",
 ]
 
@@ -41,12 +40,10 @@ PROFILE_POINTER_FILES = [
 # known-RFI subbands, which are not receiver edges and belong in the skill.
 NO_BAND_EDGE_FILES = [
     SKILLS_DIR / "02-orientation.md",
-    SKILLS_DIR / "wildcat" / "00-core.md",
 ]
 
 SEFD_TABLE_FILES = [
     SKILLS_DIR / "11-imaging.md",
-    SKILLS_DIR / "wildcat" / "11-imaging.md",
 ]
 
 GRIDDER_FILES = SEFD_TABLE_FILES

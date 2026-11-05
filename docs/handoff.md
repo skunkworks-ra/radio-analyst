@@ -25,5 +25,4 @@ a session reaching for them mid-run should be looked at.
    flag versions in `<ms>.flagversions`.
 3. Before touching the MS: check for a stale `table.lock` (`pgrep` for owning
    process; if none, remove the lock).
-4. Keep MS-opening tool calls sequential — see the concurrency limit in
-   skill `wildcat/00-core.md`.
+4. Keep MS-opening tool calls sequential.

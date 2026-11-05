@@ -100,7 +100,6 @@ radio-analyst/
 ├── .claude/
 │   ├── skills/
 │   │   ├── radio-interferometry/  ← 18 files: SKILL.md + 00..13 knowledge files
-│   │   │                             (plus wildcat/, unreachable from SKILL.md)
 │   │   └── ms-simulator/          ← SKILL.md + 01..05 knowledge files
 │   └── commands/                  ← inspect, precal, calibrate, polcal, image, simulate
 ├── docs/                          ← session context, tool survey, fix plan, handoff
