@@ -23,4 +23,5 @@ intents_present: <yes | no>  (yes if any field has intents)
 cal_fields: <comma-separated calibrator field names>
 bp_field: <bandpass calibrator field name>
 bp_cal_min_elevation_deg: <lowest elevation over the bandpass calibrator's scans>
+bp_field_centre_ghz: <observing_frequency centre_ghz of the bandpass field>
 ```
