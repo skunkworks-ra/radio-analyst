@@ -38,7 +38,8 @@ decision gate.
 2. With `online_flags=<path>`: `ms_verify_import(ms_path, online_flag_file)` —
    if `ready_for_preflag` is False, STOP. With `online_flags=none`: skip this step.
 
-3. If intents are missing from Phase-1 orientation: `ms_set_intents(ms_path)`.
+3. If intents are missing from Phase-1 orientation: `ms_set_intents(ms_path, workdir,
+   execute=True)`, one call, no preview.
    If you ran it, `cal_fields` for step 4 is every field its `field_intent_map`
    gives a `CALIBRATE_*` intent; that replaces the handoff's `cal_fields`.
 
