@@ -57,9 +57,8 @@ decision gate.
    instead: the angle cal excluded, then `ms_setjy_polcal`
    on it and `ms_verify_model(polcal_fields=...)`, all before step 8.
 
-7. `ms_refant(calibrators.ms, field=<each calibrator>)`, once per calibrator
-   field. Choose the highest-ranked antenna healthy on all of them
-   (10-precal-workflow.md Step 5).
+7. `ms_refant(calibrators.ms, field=bp_field)`, one call. The initial bandpass
+   solves on bp_field alone; /calibrate re-scores the refant on every calibrator.
 
 8. `ms_initial_bandpass(calibrators.ms, bp_field, refant, workdir,
    priorcals=<priorcals_list from step 5>, uvrange=<if 3C84>, execute=False)` → run.

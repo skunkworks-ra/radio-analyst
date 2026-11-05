@@ -31,8 +31,7 @@ ms_verify_priorcals(workdir)             → confirm all required tables exist
 ms_setjy(usescratch=True, execute=False, ...) → generate setjy.py
   → run setjy.py in the foreground (no run_in_background, timeout=600000); on timeout STOP and report
 
-ms_refant(calibrators.ms, field=bp_field)    → refant ranked on BP cal
-ms_refant(calibrators.ms, field=phase_field) → refant ranked on phase cal (pick antenna healthy on both)
+ms_refant(calibrators.ms, field=bp_field)    → refant ranked on BP cal (calibrate re-scores on all calibrators)
 ms_initial_bandpass(execute=False, ...)   → generate initial_bandpass.py
   → run initial_bandpass.py in the foreground (no run_in_background, timeout=600000); on timeout STOP and report
 
@@ -202,13 +201,10 @@ gain solve over flux+phase cals), so it must be well populated on all of them. T
 phase cal especially: the science target inherits its gain solutions, so a refant
 weak on the phase cal corrupts the target even when the bandpass looks perfect.
 
-Run `ms_refant` once per calibrator field and choose the antenna that ranks well
-on **all** of them:
-
-```
-ms_refant(calibrators.ms, field=bp_field)      → ranked list scored on the BP cal
-ms_refant(calibrators.ms, field=phase_field)   → ranked list scored on the phase cal
-```
+In precal the initial bandpass solves on the bandpass calibrator alone, so run
+`ms_refant(calibrators.ms, field=bp_field)` once. The calibrate stage runs
+`ms_refant` once per calibrator field and chooses the antenna that ranks well on
+**all** of them, before the full solve.
 
 A `flag_score` near 0 means the antenna is fully flagged on that field — never
 pick it, however high it ranks on another. Prefer the highest-ranked antenna with
