@@ -278,10 +278,7 @@ def run(
         }
         if uvrange:
             data["uvrange"] = uvrange
-        warnings.append(
-            f"Script written to {script_path}. Run it externally, "
-            "then call ms_verify_caltables to confirm outputs."
-        )
+        warnings.append(f"Script written to {script_path}. Run it externally.")
         return response_envelope(
             tool_name=TOOL_NAME,
             ms_path=ms_path,
