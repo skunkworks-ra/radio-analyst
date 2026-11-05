@@ -204,10 +204,7 @@ def run(
     }
 
     if not execute:
-        warnings.append(
-            f"Scripts written to {workdir}. Run preflag.py externally, "
-            "then call ms_flag_summary to assess the flag delta."
-        )
+        warnings.append(f"Scripts written to {workdir}. Run preflag.py externally.")
         return response_envelope(
             tool_name=TOOL_NAME,
             ms_path=ms_path,

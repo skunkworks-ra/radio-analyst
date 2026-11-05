@@ -18,27 +18,27 @@ pass of RFI removed, ready for the full calibration solve.
 ```
 ms_sdm_summary(sdm_path)                 → what this dataset IS, before importing it
 ms_import_asdm(execute=False, ...)       → generate import_asdm.py
-  → run import_asdm.py as background job; wait for completion however long it takes
+  → run import_asdm.py in the foreground (no run_in_background, timeout=600000); on timeout STOP and report
 ms_verify_import(ms_path, flag_file)     → confirm MS valid + .flagonline.txt present
 
 ms_apply_preflag(execute=False, ...)     → generate preflag.py + preflag_cmds.txt
-  → run preflag.py as background job; wait for completion however long it takes
+  → run preflag.py in the foreground (no run_in_background, timeout=600000); on timeout STOP and report
 
 ms_generate_priorcals(execute=False)     → generate priorcals.py
-  → run priorcals.py as background job; wait for completion however long it takes
+  → run priorcals.py in the foreground (no run_in_background, timeout=600000); on timeout STOP and report
 ms_verify_priorcals(workdir)             → confirm all required tables exist
 
 ms_setjy(usescratch=True, execute=False, ...) → generate setjy.py
-  → run setjy.py as background job; wait for completion however long it takes
+  → run setjy.py in the foreground (no run_in_background, timeout=600000); on timeout STOP and report
 
 ms_refant(calibrators.ms, field=bp_field)    → refant ranked on BP cal
 ms_refant(calibrators.ms, field=phase_field) → refant ranked on phase cal (pick antenna healthy on both)
 ms_initial_bandpass(execute=False, ...)   → generate initial_bandpass.py
-  → run initial_bandpass.py as background job; wait for completion however long it takes
+  → run initial_bandpass.py in the foreground (no run_in_background, timeout=600000); on timeout STOP and report
 
 ms_verify_model(field=bp_field)          → confirm a real model, not the 1 Jy default
 ms_apply_initial_rflag(execute=False)    → generate initial_rflag.py
-  → run initial_rflag.py as background job; wait for completion however long it takes
+  → run initial_rflag.py in the foreground (no run_in_background, timeout=600000); on timeout STOP and report
 ```
 
 ---

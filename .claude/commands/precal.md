@@ -41,7 +41,8 @@ decision gate.
 3. If intents are missing from Phase-1 orientation: `ms_set_intents(ms_path)`.
 
 4. `ms_apply_preflag(ms_path, workdir, cal_fields, online_flag_file, execute=False)`
-   → run the generated script as a background job, wait for completion.
+   → run the generated script in the foreground (Bash without run_in_background,
+     timeout=600000) and wait for it. If the call times out, STOP and report.
    With `online_flags=none`, pass `online_flag_file=""`; the other flags still run.
 
 5. `ms_generate_priorcals(calibrators.ms, workdir, execute=False)` → run.
