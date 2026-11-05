@@ -37,6 +37,12 @@ BAND_WAVELENGTH_TO_CODE: dict[str, str] = {
     "0.7cm": "Q",
 }
 
+# Nominal frequency of each callist band, from its wavelength label (c / lambda).
+_C_CM_GHZ = 29.9792458
+BAND_NOMINAL_GHZ: dict[str, float] = {
+    code: _C_CM_GHZ / float(wl[:-2]) for wl, code in BAND_WAVELENGTH_TO_CODE.items()
+}
+
 # Quality codes in descending order of suitability
 QUALITY_RANK: dict[str, int] = {"P": 4, "S": 3, "W": 2, "C": 1, "X": 0, "?": -1}
 
@@ -276,6 +282,118 @@ def _angular_separation_deg(ra1: float, dec1: float, ra2: float, dec2: float) ->
     return math.degrees(2 * math.asin(math.sqrt(a)))
 
 
+def flux_at_frequency(band_flux: dict[str, float | None], freq_ghz: float) -> dict | None:
+    """Power-law flux at freq_ghz from the two callist bands that bracket it.
+
+    band_flux maps band code to catalogued flux (Jy). Each band sits at its
+    nominal frequency (BAND_NOMINAL_GHZ). The spectral index is fitted through
+    the nearest band at or below and the nearest at or above freq_ghz; a band
+    at exactly freq_ghz is returned as is. No extrapolation: None when
+    freq_ghz is outside the catalogued bands or fewer than two have a flux.
+    """
+    pts = sorted(
+        (BAND_NOMINAL_GHZ[c], c, f)
+        for c, f in band_flux.items()
+        if c in BAND_NOMINAL_GHZ and f is not None and f > 0
+    )
+    lo = [p for p in pts if p[0] <= freq_ghz]
+    hi = [p for p in pts if p[0] >= freq_ghz]
+    if not lo or not hi:
+        return None
+    (nu1, c1, s1), (nu2, c2, s2) = lo[-1], hi[0]
+    used = [lo[-1]] if c1 == c2 else [lo[-1], hi[0]]
+    inputs = [{"band": c, "nominal_ghz": round(nu, 4), "flux_jy": f} for nu, c, f in used]
+    if c1 == c2:
+        return {
+            "flux_jy": s1,
+            "freq_ghz": freq_ghz,
+            "band": c1,
+            "spectral_index": None,
+            "inputs": inputs,
+        }
+    alpha = math.log(s2 / s1) / math.log(nu2 / nu1)
+    return {
+        "flux_jy": round(s1 * (freq_ghz / nu1) ** alpha, 4),
+        "freq_ghz": freq_ghz,
+        "band": None,
+        "spectral_index": round(alpha, 4),
+        "inputs": inputs,
+    }
+
+
+def vla_band_for_freq(freq_ghz: float) -> str | None:
+    """Callist band code covering freq_ghz, from the VLA telescope profile's band edges."""
+    from ms_inspect.util.telescope import profile_from_name
+
+    vla = profile_from_name("EVLA")
+    code = vla.band_code(freq_ghz * 1e9) if vla else None
+    return {"Ku": "U"}.get(code, code)
+
+
+def expected_flux(
+    entry: PhaseCalEntry,
+    freq_ghz: float | None,
+    band_code: str | None = None,
+    position_match: bool = True,
+    identity_exact: bool = True,
+) -> tuple[dict | None, str, str]:
+    """Expected callist flux of entry: (value, flag, note).
+
+    The row at the observed band if the list has one (COMPLETE); otherwise a
+    power law through the bracketing bands (INFERRED). band_code is taken
+    from freq_ghz via the VLA band edges when not given. COMPLETE drops to
+    INFERRED when the position match is not exact (identity_exact=False).
+    UNAVAILABLE when entry is not the source at the position, or nothing
+    can be computed. The value always carries flux_jy, freq_ghz, band,
+    spectral_index and inputs.
+    """
+    if not position_match:
+        return (
+            None,
+            "UNAVAILABLE",
+            f"{entry.iau_name} is a neighbour, not the source at this position.",
+        )
+    code = band_code.upper() if band_code else None
+    if code is None and freq_ghz is not None:
+        code = vla_band_for_freq(freq_ghz)
+    row = entry.band(code) if code else None
+    if row is not None and row.flux_jy is not None:
+        value = {
+            "flux_jy": row.flux_jy,
+            "freq_ghz": freq_ghz,
+            "band": row.band_code,
+            "spectral_index": None,
+            "inputs": [
+                {
+                    "band": row.band_code,
+                    "nominal_ghz": round(BAND_NOMINAL_GHZ[row.band_code], 4),
+                    "flux_jy": row.flux_jy,
+                }
+            ],
+        }
+        flag = "COMPLETE" if identity_exact else "INFERRED"
+        note = f"Callist row for {entry.iau_name} at band {row.band_code}."
+        if not identity_exact:
+            note += " Position match is not exact."
+        return value, flag, note
+    if freq_ghz is None:
+        return None, "UNAVAILABLE", f"No row at band {code or '?'} and no frequency to interpolate."
+    est = flux_at_frequency({k: v.flux_jy for k, v in entry.bands.items()}, freq_ghz)
+    if est is None:
+        return (
+            None,
+            "UNAVAILABLE",
+            f"No row at band {code or '?'} and {freq_ghz} GHz is not bracketed by two "
+            "catalogued bands; no extrapolation.",
+        )
+    return (
+        est,
+        "INFERRED",
+        f"No row for {entry.iau_name} at band {code or '?'}: power law through the bracketing "
+        "bands at their nominal frequencies. Catalogue fluxes are old and phase calibrators vary.",
+    )
+
+
 def lookup_nearest(
     ra_deg: float,
     dec_deg: float,
@@ -283,11 +401,17 @@ def lookup_nearest(
     array_config: str | None = None,
     max_sep_deg: float = 0.5,
     min_quality: str = "W",
+    identity_arcsec: float = 5.0,
 ) -> PhaseCalMatch | None:
     """Find the nearest catalog source within max_sep_deg.
 
     If band_code and array_config are given, the match must be usable at that
     band/config (quality >= min_quality).  Returns None if no match found.
+
+    A source within identity_arcsec (and within max_sep_deg) is the source at
+    that position and is always returned, with band=None if it has no row at
+    band_code and its quality even if below min_quality. It is never replaced
+    by a neighbour.
 
     Args:
         ra_deg:       Target RA in decimal degrees (J2000).
@@ -303,14 +427,24 @@ def lookup_nearest(
     catalog = _get_catalog()
     best: PhaseCalMatch | None = None
     best_sep = max_sep_deg
+    id_sep = min(identity_arcsec / 3600.0, max_sep_deg)
+    identity: PhaseCalMatch | None = None
+
+    def _match(entry: PhaseCalEntry, sep: float) -> PhaseCalMatch:
+        band_entry = entry.band(band_code) if band_code else None
+        quality = (
+            band_entry.quality_for_config(array_config) if (band_entry and array_config) else None
+        )
+        return PhaseCalMatch(entry=entry, separation_deg=sep, band=band_entry, quality=quality)
 
     for entry in catalog.values():
         sep = _angular_separation_deg(ra_deg, dec_deg, entry.ra_deg, entry.dec_deg)
+        if sep <= id_sep and (identity is None or sep < identity.separation_deg):
+            identity = _match(entry, sep)
         if sep > best_sep:
             continue
 
         band_entry = entry.band(band_code) if band_code else None
-
         # If band/config filter requested, skip unusable sources
         if (
             band_code
@@ -320,12 +454,9 @@ def lookup_nearest(
             continue
 
         best_sep = sep
-        quality = (
-            band_entry.quality_for_config(array_config) if (band_entry and array_config) else None
-        )
-        best = PhaseCalMatch(entry=entry, separation_deg=sep, band=band_entry, quality=quality)
+        best = _match(entry, sep)
 
-    return best
+    return identity if identity is not None else best
 
 
 def cone_search(ra_deg: float, dec_deg: float, radius_arcsec: float = 5.0) -> PhaseCalMatch | None:
