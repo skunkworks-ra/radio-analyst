@@ -27,7 +27,7 @@ Load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
 installed as a plugin), then read its `10-precal-workflow.md`
 supporting file (a sibling of that skill's `SKILL.md`) before starting.
 Execute the stages below in order; STOP and report if any stage fails its
-decision gate.
+decision gate. Run each generated script as written; do not Read it first.
 
 **Workflow:**
 
