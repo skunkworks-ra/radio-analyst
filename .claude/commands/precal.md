@@ -1,6 +1,7 @@
 ---
 description: Pre-calibration workflow for a CASA Measurement Set (preflag → priorcals → setjy → refant → initial bandpass → residual rflag). Follows skill 10-precal-workflow.md.
 allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
+               mcp__plugin_radio-analyst_ms-inspect__ms_field_list,
                mcp__plugin_radio-analyst_ms-inspect__ms_verify_import,
                mcp__plugin_radio-analyst_ms-modify__ms_set_intents,
                mcp__plugin_radio-analyst_ms-modify__ms_apply_preflag,
@@ -55,7 +56,7 @@ Every MCP tool takes one argument, `params`: `{"ms_path": ..., ...}`.
    Then `ms_verify_priorcals(calibrators.ms, workdir)` — its `priorcals_list` goes to step 8.
 
 6. `ms_setjy(calibrators.ms, workdir, usescratch=True, execute=False)` → run.
-   Check warnings field for resolved calibrators (3C84 uvrange gate).
+   Check its warnings field.
    If polarisation is in the run scope, follow 10-precal-workflow.md Step 4
    instead: the angle cal excluded, then `ms_setjy_polcal`
    on it and `ms_verify_model(polcal_fields=...)`, all before step 8.
@@ -63,8 +64,10 @@ Every MCP tool takes one argument, `params`: `{"ms_path": ..., ...}`.
 7. `ms_refant(calibrators.ms, field=bp_field)`, one call. The initial bandpass
    solves on bp_field alone; /calibrate re-scores the refant on every calibrator.
 
-8. `ms_initial_bandpass(calibrators.ms, bp_field, ref_ant, workdir,
-   priorcals=<priorcals_list from step 5>, uvrange=<if 3C84>, execute=False)` → run.
+8. `ms_field_list(calibrators.ms)`: read bp_field's `resolved_source` and warnings,
+   and pick `uvrange` by 10-precal-workflow.md Step 5, "UV limits on the bandpass
+   calibrator". Then `ms_initial_bandpass(calibrators.ms, bp_field, ref_ant, workdir,
+   priorcals=<priorcals_list from step 5>, uvrange=<from that table>, execute=False)` → run.
 
 9. `ms_verify_model(calibrators.ms, field=bp_field)` — if the model is the
    1 Jy default, skip the rflag below. Otherwise
