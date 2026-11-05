@@ -24,8 +24,9 @@ or `online_flags=none`. `none` means the MS has no online flag file (no ASDM) an
 that is expected. If `workdir` or `online_flags` is missing, STOP and ask for it.
 
 Load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
-installed as a plugin), then read its `10-precal-workflow.md`
+installed as a plugin), then read only its `10-precal-workflow.md`
 supporting file (a sibling of that skill's `SKILL.md`) before starting.
+Skip the files the skill lists under "Start here"; precal does not use them.
 Execute the stages below in order; STOP and report if any stage fails its
 decision gate. Run each generated script as written; do not Read it first.
 Every MCP tool takes one argument, `params`: `{"ms_path": ..., ...}`.

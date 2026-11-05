@@ -10,6 +10,9 @@ directly as a utility function by skills and scripts.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from ms_inspect.exceptions import ComputationError
 from ms_inspect.util.calibrators import infer_intents_from_role
 from ms_inspect.util.calibrators import lookup as cal_lookup
 from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
@@ -346,6 +349,14 @@ def set_intents(
     p = validate_ms_path(ms_path)
     casa_calls: list[str] = []
     warnings: list[str] = []
+
+    # Refuse before any MS write: the execute path records to workdir only after
+    # it has rewritten STATE, so a missing workdir must not be discovered there.
+    if workdir and not Path(workdir).is_dir():
+        raise ComputationError(
+            f"workdir does not exist: {workdir}. Create it before calling this tool.",
+            ms_path=ms_path,
+        )
 
     # ------------------------------------------------------------------
     # Step 1: Read fields, positions, existing intents

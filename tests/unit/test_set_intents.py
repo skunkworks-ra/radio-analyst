@@ -301,3 +301,28 @@ class TestPolSourcesAvailable:
         summary = _pol_sources_available(fields, intent_map, band_ghz=None)
 
         assert "unavailable" in summary["catalogued_pol_sources"][0]["effective_role_at_band"]
+
+
+class TestMissingWorkdir:
+    """A missing workdir is refused before the MS is opened, let alone written."""
+
+    def _make_ms(self, tmp_path):
+        ms = tmp_path / "test.ms"
+        ms.mkdir()
+        (ms / "table.info").write_text("Type = Measurement Set\n")
+        return ms
+
+    def test_missing_workdir_raises_before_ms_access(self, tmp_path):
+        import pytest
+
+        from ms_inspect.exceptions import ComputationError
+        from ms_modify.intents import set_intents
+
+        ms = self._make_ms(tmp_path)
+        boom = AssertionError("MS opened despite a missing workdir")
+        with (
+            patch("ms_modify.intents.open_msmd", side_effect=boom),
+            patch("ms_modify.intents.open_table", side_effect=boom),
+            pytest.raises(ComputationError, match="workdir does not exist"),
+        ):
+            set_intents(str(ms), execute=True, workdir=str(tmp_path / "nodir"))
