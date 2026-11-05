@@ -40,13 +40,15 @@ from ms_inspect.util.conversions import (
 )
 from ms_inspect.util.formatting import field, response_envelope
 from ms_inspect.util.frequencies import field_frequencies
+from ms_inspect.util.phase_cal_catalog import (
+    EXACT_ARCSEC,
+    IDENTITY_ARCSEC,
+    callist_band_code,
+    expected_flux,
+    get_source,
+)
 from ms_inspect.util.phase_cal_catalog import cone_search as vla_cone_search
-from ms_inspect.util.phase_cal_catalog import expected_flux, get_source
 from ms_inspect.util.telescope import TelescopeProfile, resolve_telescope
-
-# Telescope-profile band codes that the VLA calibrator list spells differently.
-# The list has no S or Ka entries, so those bands find no band entry.
-_CALLIST_BAND_CODE = {"Ku": "U"}
 
 # CASA gaincal and bandpass default: an antenna with fewer baselines than this
 # gets no solution.
@@ -939,7 +941,7 @@ def _callist_band(telescope: TelescopeProfile | None, freq: dict) -> str | None:
         code = telescope.band_code(ghz * 1e9)
         if code:
             break
-    return _CALLIST_BAND_CODE.get(code, code)
+    return callist_band_code(code)
 
 
 def _vla_flux_estimate(
@@ -1002,7 +1004,7 @@ def _vla_positional_match(
         return field(None, flag="UNAVAILABLE", note="No coordinates for VLA positional match")
 
     try:
-        result = vla_cone_search(ra_deg, dec_deg, radius_arcsec=5.0)
+        result = vla_cone_search(ra_deg, dec_deg)
     except Exception as e:
         return field(
             None,
@@ -1011,7 +1013,9 @@ def _vla_positional_match(
         )
 
     if result is None:
-        return field(None, flag="UNAVAILABLE", note="No VLA calibrator within 5 arcsec")
+        return field(
+            None, flag="UNAVAILABLE", note=f"No VLA calibrator within {IDENTITY_ARCSEC:g} arcsec"
+        )
 
     entry = result.entry
     separation_arcsec = result.separation_deg * 3600.0
@@ -1034,7 +1038,7 @@ def _vla_positional_match(
         },
     }
 
-    flag_val = "COMPLETE" if separation_arcsec < 1.0 else "INFERRED"
+    flag_val = "COMPLETE" if separation_arcsec < EXACT_ARCSEC else "INFERRED"
     note = f"VLA callist match: {entry.iau_name}"
     if entry.alt_name:
         note += f" ({entry.alt_name})"

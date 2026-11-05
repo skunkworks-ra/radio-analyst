@@ -43,6 +43,16 @@ BAND_NOMINAL_GHZ: dict[str, float] = {
     code: _C_CM_GHZ / float(wl[:-2]) for wl, code in BAND_WAVELENGTH_TO_CODE.items()
 }
 
+# Telescope-profile band codes that the callist spells differently. The list
+# has no S or Ka entries, so those bands find no band entry.
+TELESCOPE_TO_CALLIST_BAND: dict[str, str] = {"Ku": "U"}
+
+# A catalogue source within IDENTITY_ARCSEC of a position is the source at that
+# position (identity, not a neighbour). Within EXACT_ARCSEC the identity is
+# exact: values taken from it are COMPLETE, beyond it INFERRED.
+IDENTITY_ARCSEC = 5.0
+EXACT_ARCSEC = 1.0
+
 # Quality codes in descending order of suitability
 QUALITY_RANK: dict[str, int] = {"P": 4, "S": 3, "W": 2, "C": 1, "X": 0, "?": -1}
 
@@ -327,7 +337,12 @@ def vla_band_for_freq(freq_ghz: float) -> str | None:
 
     vla = profile_from_name("EVLA")
     code = vla.band_code(freq_ghz * 1e9) if vla else None
-    return {"Ku": "U"}.get(code, code)
+    return callist_band_code(code)
+
+
+def callist_band_code(code: str | None) -> str | None:
+    """Callist spelling of a telescope-profile band code (TELESCOPE_TO_CALLIST_BAND)."""
+    return TELESCOPE_TO_CALLIST_BAND.get(code, code)
 
 
 def expected_flux(
@@ -401,7 +416,7 @@ def lookup_nearest(
     array_config: str | None = None,
     max_sep_deg: float = 0.5,
     min_quality: str = "W",
-    identity_arcsec: float = 5.0,
+    identity_arcsec: float = IDENTITY_ARCSEC,
 ) -> PhaseCalMatch | None:
     """Find the nearest catalog source within max_sep_deg.
 
@@ -459,7 +474,9 @@ def lookup_nearest(
     return identity if identity is not None else best
 
 
-def cone_search(ra_deg: float, dec_deg: float, radius_arcsec: float = 5.0) -> PhaseCalMatch | None:
+def cone_search(
+    ra_deg: float, dec_deg: float, radius_arcsec: float = IDENTITY_ARCSEC
+) -> PhaseCalMatch | None:
     """Nearest catalog source within radius_arcsec, position only.
 
     The identity check used by ms_field_list and ms_set_intents: a field whose

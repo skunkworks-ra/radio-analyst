@@ -1793,7 +1793,8 @@ class PhaseCalLookupInput(BaseModel):
         "Cross-match a sky position against the NRAO VLA phase calibrator catalog. "
         "Returns the nearest qualifying source within max_sep_deg, with its position "
         "accuracy, flux density, UV limits, and quality codes (P/S/W/C/X) per array "
-        "configuration at the requested band. A source within 5 arcsec is the source at "
+        "configuration at the requested band. A source within "
+        f"{_pcc.IDENTITY_ARCSEC:g} arcsec is the source at "
         "the position and is returned even with no row or a low grade at the band "
         "(position_match=true). flux_estimate: the callist row at the observed band "
         "(COMPLETE), else a power law through the bracketing bands at freq_ghz (INFERRED). "
@@ -1811,7 +1812,7 @@ async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
     """
     Cross-match a J2000 sky position against the bundled VLA phase calibrator catalog.
 
-    Returns the source within 5 arcsec of the position if there is one (whatever its
+    Returns the source within IDENTITY_ARCSEC of the position if there is one (whatever its
     band row or grade), else the nearest source within max_sep_deg that meets the
     band/config quality filter (if specified).  The quality codes follow the NRAO convention:
       P = <3% closure errors (best), S = 3-10%, W = 10%+ (phase-only),
@@ -1870,7 +1871,7 @@ async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
             "uvmax_kl": b.uvmax_kl,
         }
     sep_arcsec = match.separation_deg * 3600.0
-    position_match = sep_arcsec <= 5.0
+    position_match = sep_arcsec <= _pcc.IDENTITY_ARCSEC
     band_note = None
     if params.band_code and match.band is None:
         where = (
@@ -1887,7 +1888,7 @@ async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
         params.freq_ghz,
         band_code=params.band_code,
         position_match=position_match,
-        identity_exact=sep_arcsec < 1.0,
+        identity_exact=sep_arcsec < _pcc.EXACT_ARCSEC,
     )
     flux_estimate = {"value": est, "flag": est_flag, "note": est_note}
 

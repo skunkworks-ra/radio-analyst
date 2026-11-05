@@ -176,3 +176,22 @@ def test_field_list_flux_estimate_vla_only():
     for tel in (profile_from_name("MeerKAT"), None):
         out = _vla_flux_estimate(_match("1331+305"), C_FREQ, tel)
         assert (out["value"], out["flag"]) == (None, "UNAVAILABLE")
+
+
+def test_callist_band_code():
+    from ms_inspect.util.phase_cal_catalog import callist_band_code
+
+    assert callist_band_code("Ku") == "U"
+    assert callist_band_code("L") == "L"
+    assert callist_band_code(None) is None
+
+
+def test_identity_defaults_come_from_the_constant():
+    import inspect
+
+    from ms_inspect.util.phase_cal_catalog import IDENTITY_ARCSEC, cone_search, lookup_nearest
+
+    assert inspect.signature(cone_search).parameters["radius_arcsec"].default == IDENTITY_ARCSEC
+    assert (
+        inspect.signature(lookup_nearest).parameters["identity_arcsec"].default == IDENTITY_ARCSEC
+    )

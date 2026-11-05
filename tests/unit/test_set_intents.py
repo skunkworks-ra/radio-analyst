@@ -83,7 +83,7 @@ class TestComputeIntentMap:
 
         assert result[0]["source"] == "vla_cone_search"
         assert result[0]["intents"] == ["CALIBRATE_PHASE#ON_SOURCE"]
-        mock_cone.assert_called_once_with(211.75, 28.45, radius_arcsec=5.0)
+        mock_cone.assert_called_once_with(211.75, 28.45)
 
     @patch("ms_modify.intents.vla_cone_search")
     def test_vla_cone_search_no_match(self, mock_cone):
