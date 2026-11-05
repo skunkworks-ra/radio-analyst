@@ -317,8 +317,5 @@ After Step 8, make a go/no-go decision:
 | Bandpass calibrator model is the 1 Jy default | Hard stop — re-run setjy before proceeding |
 | None of the above | Proceed to calibration solve |
 
-Pass the following forward to the calibration solve:
-- `refant`: top-ranked surviving antenna from `ms_refant`
-- `priorcals`: list from `ms_verify_priorcals`
-- `bp_field`: the bandpass calibrator field selection
-- `workdir`: directory containing `init_gain.g` and `BP0.b`
+Pass `workdir` forward to the calibration solve. Calibrate re-derives refant,
+priorcals and bp_field itself.

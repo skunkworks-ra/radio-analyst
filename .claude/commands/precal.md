@@ -70,5 +70,5 @@ decision gate.
 10. Final decision gate (§Decision gate): go/no-go for full calibration solve.
 
 **Output:** a structured report of each stage's outcome, flagged warnings,
-and the forward hand-off values (`refant`, `priorcals`, `bp_field`, `workdir`)
-ready for `/calibrate`.
+and `workdir` for `/calibrate` (calibrate re-derives refant, priorcals and
+bp_field itself).
