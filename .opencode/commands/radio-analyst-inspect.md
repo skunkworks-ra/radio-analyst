@@ -8,8 +8,7 @@ allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_field_list,
 
 Inspect this Measurement Set for precal: $ARGUMENTS
 
-Load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
-installed as a plugin).
+Do not load a skill or read any file. Use only the two tools below.
 
 Run these two tools, in this order:
 1. ms_field_list
