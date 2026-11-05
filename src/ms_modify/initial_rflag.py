@@ -107,8 +107,6 @@ _flagged = (
 )
 _record_stage({workdir!r}, "initial_rflag", {ms_str!r}, {{"flagged_fraction": _flagged}})
 print("Initial rflag + tfcrop complete.")
-print("Use ms_flag_summary to inspect the flag delta,")
-print("and ms_residual_stats to verify the residual distribution.")
 """
 
 
@@ -211,7 +209,7 @@ def run(
         warnings.append(
             f"Script written to {workdir}. "
             "Ensure initial_bandpass.py has been run first (CORRECTED + MODEL must exist). "
-            "Then run initial_rflag.py externally and call ms_flag_summary to capture the delta."
+            "Then run initial_rflag.py externally."
         )
         return response_envelope(
             tool_name=TOOL_NAME,
