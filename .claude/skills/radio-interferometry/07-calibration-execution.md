@@ -10,9 +10,10 @@ Sequence: initial phase → delay → bandpass → gain (flux) → gain (phase, 
 
 ## Execution protocol
 
-Every `execute=False` tool call generates a CASA script that runs as a background
-job. **Wait for it to finish, however long it takes** — do not impose timeouts or
-retry counters; CASA solves on real data are long-running. Confirm success by the
+Every `execute=False` tool call generates a CASA script. Run it detached and
+poll it as SKILL.md "Running generated scripts" says. **Wait for it to finish,
+however long it takes** — do not impose timeouts or retry counters; CASA solves
+on real data are long-running. Confirm success by the
 expected output (caltable on disk, return code 0) after the job exits.
 
 ---

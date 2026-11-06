@@ -36,6 +36,9 @@ decision gate. Run each generated script as written; do not Read it first.
 Record each validated write step with `ms_reduction_log`, as `ledger.md` says.
 Every MCP tool takes one argument, `params`: `{"ms_path": ..., ...}`.
 
+Every "→ run" below: run the script detached and poll it, as the skill's
+"Running generated scripts" says. No time limit.
+
 **Workflow:**
 
 1. `ms_workflow_status(ms_path, workdir)` — where are we starting from?
@@ -52,8 +55,7 @@ Every MCP tool takes one argument, `params`: `{"ms_path": ..., ...}`.
 
 4. `ms_apply_preflag(ms_path, workdir, cal_fields, online_flag_file, execute=False)`,
    `cal_fields` one comma-separated string
-   → run the generated script in the foreground (Bash without run_in_background,
-     timeout=600000) and wait for it. If the call times out, STOP and report.
+   → run.
    With `online_flags=none`, pass `online_flag_file=""`; the other flags still run.
 
 5. `ms_generate_priorcals(calibrators.ms, workdir, execute=False)` → run.

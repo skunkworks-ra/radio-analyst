@@ -18,26 +18,26 @@ pass of RFI removed, ready for the full calibration solve.
 ```
 ms_sdm_summary(sdm_path)                 → what this dataset IS, before importing it
 ms_import_asdm(execute=False, ...)       → generate import_asdm.py
-  → run import_asdm.py in the foreground (no run_in_background, timeout=600000); on timeout STOP and report
+  → run import_asdm.py detached and poll until it exits (SKILL.md "Running generated scripts"); no time limit
 ms_verify_import(ms_path, flag_file)     → confirm MS valid + .flagonline.txt present
 
 ms_apply_preflag(execute=False, ...)     → generate preflag.py + preflag_cmds.txt
-  → run preflag.py in the foreground (no run_in_background, timeout=600000); on timeout STOP and report
+  → run preflag.py detached and poll until it exits (SKILL.md "Running generated scripts"); no time limit
 
 ms_generate_priorcals(execute=False)     → generate priorcals.py
-  → run priorcals.py in the foreground (no run_in_background, timeout=600000); on timeout STOP and report
+  → run priorcals.py detached and poll until it exits (SKILL.md "Running generated scripts"); no time limit
 ms_verify_priorcals(workdir)             → confirm all required tables exist
 
 ms_setjy(usescratch=True, execute=False, ...) → generate setjy.py
-  → run setjy.py in the foreground (no run_in_background, timeout=600000); on timeout STOP and report
+  → run setjy.py detached and poll until it exits (SKILL.md "Running generated scripts"); no time limit
 
 ms_refant(calibrators.ms, field=bp_field)    → refant ranked on BP cal (calibrate re-scores on all calibrators)
 ms_initial_bandpass(execute=False, ...)   → generate initial_bandpass.py
-  → run initial_bandpass.py in the foreground (no run_in_background, timeout=600000); on timeout STOP and report
+  → run initial_bandpass.py detached and poll until it exits (SKILL.md "Running generated scripts"); no time limit
 
 ms_verify_model(field=bp_field)          → confirm a real model, not the 1 Jy default
 ms_apply_initial_rflag(execute=False)    → generate initial_rflag.py
-  → run initial_rflag.py in the foreground (no run_in_background, timeout=600000); on timeout STOP and report
+  → run initial_rflag.py detached and poll until it exits (SKILL.md "Running generated scripts"); no time limit
 ```
 
 ---
@@ -107,8 +107,8 @@ deterministic hardware records.
 calibrators to `calibrators.ms`. It quacks the first 5 s of every scan
 (`quack_interval_s`): the first integrations read 4 to 17 % low.
 
-**Always generate the script first (`execute=False`).** Review `preflag_cmds.txt`
-before running — it is the complete audit record of what will be flagged.
+**Always generate the script first (`execute=False`).** `preflag_cmds.txt` is
+the audit record of what is flagged.
 
 ---
 

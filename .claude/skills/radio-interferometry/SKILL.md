@@ -40,6 +40,24 @@ Python that has casatasks:
 If neither is available, stop and say so. Do not install casatools into
 another environment.
 
+Start each script detached so it survives this session, then poll until it
+exits, however long that takes. `<script>` is the absolute `script_path` the
+tool returned; `<python>` is the interpreter above.
+
+Launch, once per script, as its own Bash call:
+```
+rm -f <script>.rc; setsid nohup sh -c '<python> <script> > <script>.log 2>&1; echo $? > <script>.rc.tmp; mv <script>.rc.tmp <script>.rc' > /dev/null 2>&1 < /dev/null &
+```
+Poll, in the foreground (no run_in_background) with Bash timeout=600000:
+```
+timeout 540 sh -c 'until [ -f <script>.rc ]; do sleep 30; done'; cat <script>.rc 2>/dev/null || echo running
+```
+If it prints `running`, run the poll again; never launch again and never STOP
+on elapsed time. If the `.rc` value is not 0, STOP and report the last 20 lines
+of `<script>.log`. Launch the next script only after this one's `.rc` is 0.
+A deliberate re-run of the same script (a re-solve) is a new launch; its
+`rm -f` clears the old `.rc`.
+
 ## Start here
 
 Read these three now, before anything else:

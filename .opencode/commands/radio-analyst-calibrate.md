@@ -33,6 +33,8 @@ use them. Execute the stages below in order; STOP and report if any
 ms_calsol_stats outlier gate fails. Record each validated write step with
 `ms_reduction_log`, as `ledger.md` says.
 Every MCP tool takes one argument, `params`: `{"ms_path": ..., ...}`.
+Every "→ run" below: run the script detached and poll it, as the skill's
+"Running generated scripts" says. No time limit.
 The tools in allowed-tools above are granted for this stage, `ms_flag_summary` included,
 even if an earlier stage denied one of them: call them.
 

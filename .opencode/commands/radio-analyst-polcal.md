@@ -22,6 +22,8 @@ installed as a plugin), then read its `09-polcal-execution.md`
 supporting file (a sibling of that skill's `SKILL.md`) before
 starting. Prerequisite: delay.K, bandpass.B, and gain.G (or gain.fluxscaled)
 must already exist — run `/calibrate` first if not.
+Every "→ run" below: run the script detached and poll it, as the skill's
+"Running generated scripts" says. No time limit.
 
 **Workflow:**
 
