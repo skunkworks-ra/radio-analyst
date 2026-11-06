@@ -253,6 +253,7 @@ def _freq_view(
         CustomJS,
         Div,
         LinearColorMapper,
+        Range1d,
         Slider,
     )
     from bokeh.palettes import Turbo256
@@ -308,12 +309,19 @@ def _freq_view(
         store[f"a{ai}"] = entry
 
     src = ColumnDataSource(data=_cds_init(store["a0"]))
+    # One fixed frequency axis for every antenna and both panels: an auto range
+    # follows whichever channels are unflagged, so it jumps as the slider moves.
+    all_f = [f for spw in spw_ids for f in sol["chan_freqs"].get(spw, [])]
+    f_lo, f_hi = (min(all_f), max(all_f)) if all_f else (0.0, 1.0)
+    pad = 0.01 * (f_hi - f_lo) if f_hi > f_lo else 0.001
+    x_range = Range1d(f_lo - pad, f_hi + pad)
     figs = []
     if want_amp:
         fa = figure(
             width=1000,
             height=280,
             title="Amplitude",
+            x_range=x_range,
             x_axis_label="Frequency (GHz)",
             y_axis_label="Amp",
             toolbar_location="right",
@@ -332,6 +340,7 @@ def _freq_view(
             width=1000,
             height=280,
             title="Phase",
+            x_range=x_range,
             x_axis_label="Frequency (GHz)",
             y_axis_label="Phase (deg)",
             toolbar_location="right",

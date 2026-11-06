@@ -198,3 +198,32 @@ class TestTimeViewRange:
         assert isinstance(amp.x_range, Range1d)
         assert amp.x_range is pha.x_range
         assert amp.x_range.start < 0 < (20.0 / 3600.0) < amp.x_range.end
+
+
+class TestFreqViewRange:
+    """B vs frequency: one fixed frequency axis, shared by both panels, for every antenna."""
+
+    def test_both_panels_share_one_fixed_range(self):
+        from bokeh.models import Range1d
+        from bokeh.plotting import figure
+
+        sol = _sol("B", 8)
+        layout = calsol_plot._freq_view(sol, True, True, "h", "t")
+        amp, pha = [c for c in layout.children if isinstance(c, figure)]
+        assert isinstance(amp.x_range, Range1d)
+        assert amp.x_range is pha.x_range
+        f = [v for spw in sol["spw_ids"] for v in sol["chan_freqs"][spw]]
+        pad = 0.01 * (max(f) - min(f))
+        assert np.isclose(amp.x_range.start, min(f) - pad)
+        assert np.isclose(amp.x_range.end, max(f) + pad)
+
+    def test_phase_only_view_gets_the_fixed_range(self):
+        from bokeh.models import Range1d
+        from bokeh.plotting import figure
+
+        sol = _sol("Xf", 8)
+        layout = calsol_plot._freq_view(sol, False, True, "h", "t", color_by_spw=True)
+        (pha,) = [c for c in layout.children if isinstance(c, figure)]
+        assert isinstance(pha.x_range, Range1d)
+        f = [v for spw in sol["spw_ids"] for v in sol["chan_freqs"][spw]]
+        assert pha.x_range.start < min(f) and max(f) < pha.x_range.end
