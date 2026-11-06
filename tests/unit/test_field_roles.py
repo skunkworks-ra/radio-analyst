@@ -330,6 +330,32 @@ class TestVlaCalibratorListRole:
         assert _val(rec, "field_role") == ["phase"]
         assert "observed in 1 scan." in rec["field_role"]["note"]
 
+    def test_pol_calibrator_identity_is_reported(self, monkeypatch):
+        result = self._run(monkeypatch)
+        pol = _rec(result, "J0319+4130")["pol_calibrator"]
+        assert pol["flag"] == "COMPLETE"
+        assert pol["value"]["name"] == "3C84"
+        assert "leakage" in pol["value"]["role"]
+        assert _rec(result, "J1822-0938")["pol_calibrator"]["value"] is None
+
+    def test_pol_calibrator_is_never_a_targets_phase_cal(self, monkeypatch):
+        # A target next to 3C84 still pairs with J1822, not with the pol cal.
+        specs = _3C391_NO_INTENTS + [("NearPolCal", [], 50.5, 41.0)]
+        _patch(monkeypatch, specs, scan_fields=_3C391_SCANS + [10])
+        rec = _rec(field_list_run("/fake.ms"), "NearPolCal")
+        assert rec["nearest_phase_cal"] == "J1822-0938"
+
+    def test_pol_cals_left_out_of_the_pool_are_named(self, monkeypatch):
+        result = self._run(monkeypatch)
+        assert any("J0319+4130" in w and "nearest_phase_cal" in w for w in result["warnings"])
+
+    def test_sole_pol_phase_cal_leaves_the_target_without_one(self, monkeypatch):
+        specs = [("J0319+4130", [], 49.950667, 41.511695), ("NearPolCal", [], 50.5, 41.0)]
+        _patch(monkeypatch, specs, scan_fields=[0, 1, 0, 1, 0])
+        result = field_list_run("/fake.ms")
+        assert _rec(result, "NearPolCal")["nearest_phase_cal"] is None
+        assert any("J0319+4130" in w for w in result["warnings"])
+
     def test_mosaic_pointings_stay_unassigned(self, monkeypatch):
         result = self._run(monkeypatch)
         for i in range(1, 8):

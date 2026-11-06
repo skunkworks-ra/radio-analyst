@@ -48,6 +48,7 @@ from ms_inspect.util.phase_cal_catalog import (
     get_source,
 )
 from ms_inspect.util.phase_cal_catalog import cone_search as vla_cone_search
+from ms_inspect.util.pol_calibrators import lookup_pol
 from ms_inspect.util.telescope import TelescopeProfile, resolve_telescope
 
 # CASA gaincal and bandpass default: an antenna with fewer baselines than this
@@ -393,6 +394,7 @@ def run(ms_path: str) -> dict:
             "resolved_source": cal_resolved,
             "vla_cal_match": vla_cal_match_field,
             "vla_cal_flux_estimate": _vla_flux_estimate(vla_cal_match_field, fq, telescope),
+            "pol_calibrator": _pol_calibrator_field(name),
         }
         fields_out.append(record)
 
@@ -455,9 +457,14 @@ def run(ms_path: str) -> dict:
     # ------------------------------------------------------------------
     # nearest_phase_cal enrichment for target fields
     # ------------------------------------------------------------------
-    # Classify fields into phase_cals and targets
+    # Classify fields into phase_cals and targets. A polarisation calibrator is
+    # its own phase calibrator, so it is never a target's nearest phase cal.
     phase_cal_records = []
+    pol_cals_excluded = []
     for rec in fields_out:
+        if rec["pol_calibrator"]["value"] is not None:
+            pol_cals_excluded.append(rec["name"])
+            continue
         role_field = rec.get("field_role", {})
         role_val = role_field.get("value") if isinstance(role_field, dict) else role_field
         intents_field = rec.get("intents", {})
@@ -477,6 +484,11 @@ def run(ms_path: str) -> dict:
             dec = dec_f.get("value") if isinstance(dec_f, dict) else dec_f
             phase_cal_records.append({"name": rec["name"], "ra": ra, "dec": dec})
 
+    if pol_cals_excluded:
+        warnings.append(
+            "Polarisation calibrators left out of the nearest_phase_cal pool (each is its "
+            f"own phase calibrator): {', '.join(pol_cals_excluded)}"
+        )
     for rec in fields_out:
         role_field = rec.get("field_role", {})
         role_val = role_field.get("value") if isinstance(role_field, dict) else role_field
@@ -600,6 +612,22 @@ def _extract_coords(
         )
 
     return ra_rad, dec_rad, "COMPLETE", None
+
+
+def _pol_calibrator_field(name: str) -> dict:
+    """Polarisation-catalogue identity of a field, by name."""
+    entry = lookup_pol(name)
+    if entry is None:
+        return field(None, flag="UNAVAILABLE", note="Not in the polarisation calibrator catalogue")
+    return field(
+        {"name": entry.b1950_name, "category": entry.category, "role": list(entry.role)},
+        flag="COMPLETE",
+        note=(
+            f"Matched '{name}' to pol catalogue entry '{entry.b1950_name}'. A polarisation "
+            "calibrator is its own phase calibrator and is not offered as a target's "
+            "nearest_phase_cal."
+        ),
+    )
 
 
 def _angular_sep_deg(ra1_deg: float, dec1_deg: float, ra2_deg: float, dec2_deg: float) -> float:

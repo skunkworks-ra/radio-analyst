@@ -435,9 +435,12 @@ the corresponding recovery tree to diagnose and retry with modified parameters.
 ### Source classification (pre-flight)
 
 **Assigning `{PHASE_FIELD}`:** If multiple phase calibrators are present, use
-`ms_field_list` and read `nearest_phase_cal.name` + `nearest_phase_cal.separation_deg`
+`ms_field_list` and read `nearest_phase_cal` + `separation_deg`
 for each target field. Assign the nearest phase calibrator to each target. If two targets
-share the same nearest cal, use that cal for both.
+share the same nearest cal, use that cal for both. A field with `pol_calibrator` set
+that is not `{FLUX_FIELD}` or `{BP_FIELD}` is its own phase calibrator: it is in
+`{PHASE_FIELD}` for the gain solve, fluxscale and its own 7b applycal, and it is never
+a target's phase calibrator.
 
 Before the gaincal call, classify each field in `{FLUX_FIELD},{PHASE_FIELD}` into
 one of four types. Use `ms_field_list` output and domain knowledge to decide.
