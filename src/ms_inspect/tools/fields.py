@@ -399,10 +399,8 @@ def run(ms_path: str) -> dict:
     # ------------------------------------------------------------------
     # VLA calibrator-list role inference for fields with no intents
     # ------------------------------------------------------------------
-    # Flux, bandpass and polarisation calibrators are in the calibrator
-    # catalogue, so a field with no intents and no catalogue entry that matches
-    # the VLA calibrator list and is observed in two or more scans is a phase
-    # calibrator. A single-scan match is too ambiguous to name.
+    # A field with no intents and no calibrator-catalogue entry that matches the
+    # VLA calibrator list is a phase calibrator, however many scans it has.
     scans_per_field = Counter(fid for _, fid, _ in scan_sequence)
     for rec in fields_out:
         intent_f = rec.get("intents", {})
@@ -413,11 +411,11 @@ def run(ms_path: str) -> dict:
             and intent_f.get("flag") == "UNAVAILABLE"
             and isinstance(vla_f, dict)
             and vla_f.get("value")
-            and n_scans >= 2
         ):
             note = (
                 "No intents and not in the calibrator catalogue. Matches VLA calibrator "
-                f"list entry {vla_f['value'].get('name')} and is observed in {n_scans} scans."
+                f"list entry {vla_f['value'].get('name')} and is observed in {n_scans} "
+                f"scan{'' if n_scans == 1 else 's'}."
             )
             rec["intents"] = field(infer_intents_from_role(["phase"]), flag="INFERRED", note=note)
             rec["field_role"] = field(["phase"], flag="INFERRED", note=note)

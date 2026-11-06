@@ -325,9 +325,10 @@ class TestVlaCalibratorListRole:
         assert _flag(rec, "intents") == "INFERRED"
         assert "1822-096" in rec["field_role"]["note"]
 
-    def test_listed_single_scan_field_stays_unassigned(self, monkeypatch):
+    def test_listed_single_scan_field_is_phase(self, monkeypatch):
         rec = _rec(self._run(monkeypatch), "J0319+4130")
-        assert _val(rec, "field_role") is None
+        assert _val(rec, "field_role") == ["phase"]
+        assert "observed in 1 scan." in rec["field_role"]["note"]
 
     def test_mosaic_pointings_stay_unassigned(self, monkeypatch):
         result = self._run(monkeypatch)
