@@ -417,7 +417,7 @@ def _time_view(sol: dict, header: str, title: str) -> object:
     data on every field's source.
     """
     from bokeh.layouts import column
-    from bokeh.models import CheckboxGroup, ColumnDataSource, CustomJS, Div, Slider
+    from bokeh.models import CheckboxGroup, ColumnDataSource, CustomJS, Div, Range1d, Slider
     from bokeh.plotting import figure
 
     ant_names, spw_ids = sol["ant_names"], sol["spw_ids"]
@@ -431,6 +431,11 @@ def _time_view(sol: dict, header: str, title: str) -> object:
     for v in grouped.values():
         v.sort(key=lambda r: r["time"])
     t0 = min((r["time"] for r in sol["rows"]), default=0.0)
+    # One fixed time axis for every antenna and both panels: an auto range follows
+    # whichever samples are unflagged, so it jumps as the slider moves.
+    t_span = (max((r["time"] for r in sol["rows"]), default=t0) - t0) / 3600.0
+    pad = 0.02 * t_span if t_span > 0 else 0.05
+    x_range = Range1d(-pad, t_span + pad)
 
     # store[key]["f{fi}"] = {x, amp_p{p}, pha_p{p}}; plus meta.
     store: dict[str, dict] = {}
@@ -470,6 +475,7 @@ def _time_view(sol: dict, header: str, title: str) -> object:
         width=1000,
         height=300,
         title="Amplitude",
+        x_range=x_range,
         x_axis_label="Time (h)",
         y_axis_label="Amp",
         toolbar_location="right",
@@ -478,6 +484,7 @@ def _time_view(sol: dict, header: str, title: str) -> object:
         width=1000,
         height=300,
         title="Phase",
+        x_range=x_range,
         x_axis_label="Time (h)",
         y_axis_label="Phase (deg)",
         toolbar_location="right",

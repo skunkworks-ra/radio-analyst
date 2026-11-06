@@ -178,3 +178,23 @@ def test_single_unwritable_output_dir_returns_error_envelope(tmp_path):
     r = calsol_plot.run(str(caltable), str(blocker / "plots"))
     assert r["status"] == "error"
     assert r["error_type"] == "OUTPUT_DIR_UNWRITABLE"
+
+
+class TestTimeViewRange:
+    """G vs time: one fixed time axis, shared by both panels, for every antenna."""
+
+    def _figs(self, sol):
+        from bokeh.plotting import figure
+
+        layout = calsol_plot._time_view(sol, "h", "t")
+        return [c for c in layout.children if isinstance(c, figure)]
+
+    def test_both_panels_share_one_fixed_range(self):
+        from bokeh.models import Range1d
+
+        sol = _sol("G", 1)
+        sol["rows"][0]["flag"][:] = True  # ea01 fully flagged on spw 0
+        amp, pha = self._figs(sol)
+        assert isinstance(amp.x_range, Range1d)
+        assert amp.x_range is pha.x_range
+        assert amp.x_range.start < 0 < (20.0 / 3600.0) < amp.x_range.end
