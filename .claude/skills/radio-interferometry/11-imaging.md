@@ -103,10 +103,10 @@ from the synthesized beam: 0, then ~2–3× and ~5–10× the beam in pixels, up
 the largest structure) or `deconvolver='asp'`. Which one, and which scales, is a
 judgment (T3), and worth stating in the report.
 
-Tool gap: `ms_tclean` does not yet take `scales`, so multiscale cannot be set up
-through it. Until it does, `asp`, which chooses its own scales, is the route
-through the tool. A hand-edited script with `scales` must be recorded in the
-ledger as an edit.
+Order: a `hogbom` first pass, then `multiscale` with `scales` (`ms_tclean`
+takes them, in pixels, 0 first). `asp` chooses its own scales but is expensive
+(`ms_tclean` warns): use it last, only when multiscale still leaves extended
+flux in the residual.
 
 **Masking.** `ms_tclean` cleans inside the primary-beam mask (`usemask='pb'`).
 Do not switch to CASA's automatic masking (`usemask='auto-multithresh'`): it

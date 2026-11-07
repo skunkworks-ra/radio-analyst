@@ -27,6 +27,9 @@ TOOL_NAME = "ms_tclean"
 #: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
 DEBUG_TASKS = ("tclean",)
 
+#: Deconvolvers that take tclean's `scales` (pixels; 0 is a point component).
+SCALE_DECONVOLVERS = ("multiscale", "mtmfs")
+
 # Global tclean stopcodes (casatasks imager_deconvolver). Converged = {2, 8}.
 _STOPCODE_DESC = {
     1: "iteration limit reached before threshold",
@@ -97,6 +100,7 @@ def _build_script(
     start: str | None,
     width: str | None,
     outframe: str | None,
+    scales: list[int] | None = None,
 ) -> str:
     # Same rule the execute=True path uses at the bottom of run(): mtmfs with
     # nterms writes Taylor terms, so there is no plain .image to record.
@@ -106,6 +110,8 @@ def _build_script(
         optional_lines += f"    spw          = {spw!r},\n"
     if deconvolver == "mtmfs" and nterms is not None:
         optional_lines += f"    nterms       = {nterms},\n"
+    if deconvolver in SCALE_DECONVOLVERS and scales:
+        optional_lines += f"    scales       = {list(scales)!r},\n"
     if wprojplanes is not None:
         optional_lines += f"    wprojplanes  = {wprojplanes},\n"
     if cfcache is not None:
@@ -234,6 +240,7 @@ def run(
     start: str | None = None,
     width: str | None = None,
     outframe: str | None = None,
+    scales: list[int] | None = None,
     execute: bool = False,
     debug: bool = False,
     debug_params: dict | None = None,
@@ -256,7 +263,8 @@ def run(
                      gridder='awp2' — awp2 does not implement conjbeams, and
                      plain 'mfs' needs several major cycles to converge the
                      wideband flux normalization.
-        deconvolver: 'hogbom' or 'mtmfs' (default 'hogbom').
+        deconvolver: 'hogbom' (default), 'mtmfs', 'multiscale' or 'asp'.
+        scales:      Multiscale scales in pixels (0 first); multiscale and mtmfs only.
         nterms:      Taylor terms for mtmfs (default None; pass 2 for mtmfs).
         gridder:     'standard', 'wproject', 'mosaic', 'awproject' or 'awp2'
                      (default 'standard'). First-pass mosaics use 'mosaic'.
@@ -315,6 +323,25 @@ def run(
             f"gridder='{gridder}' with wprojplanes unset: CASA defaults to "
             "wprojplanes=1 (no W-projection). Pass wprojplanes explicitly if "
             "W-terms are significant (Fresnel < 0.9)."
+        )
+
+    if scales and deconvolver not in SCALE_DECONVOLVERS:
+        warnings.append(
+            f"scales={scales} ignored: deconvolver='{deconvolver}' does not take scales "
+            f"(only {list(SCALE_DECONVOLVERS)} do)."
+        )
+    if deconvolver == "multiscale" and not scales:
+        warnings.append(
+            "deconvolver='multiscale' with no scales: tclean's default scales=[] "
+            "gives point components only. Pass scales in pixels, starting at 0."
+        )
+    if deconvolver == "asp":
+        warnings.append(
+            "deconvolver='asp' is expensive: it optimizes a set of adaptive-scale "
+            "(Aspen) components, and a run takes far longer than hogbom or multiscale "
+            "on the same image (not measured here). Use it last, after hogbom and "
+            "multiscale, and run the script detached. Its own tclean parameters "
+            "(largestscale, fusedthreshold) are reachable only through debug_params."
         )
 
     # awproject-family full-polarization guardrails (warn-only). Both are real
@@ -410,6 +437,7 @@ def run(
         start=start,
         width=width,
         outframe=outframe,
+        scales=scales,
     )
     _debug = debug_mode.validate(debug, debug_params, DEBUG_TASKS)
     if _debug:
@@ -473,6 +501,8 @@ def run(
     )
     if deconvolver == "mtmfs" and nterms is not None:
         tclean_kwargs["nterms"] = nterms
+    if deconvolver in SCALE_DECONVOLVERS and scales:
+        tclean_kwargs["scales"] = list(scales)
     if wprojplanes is not None:
         tclean_kwargs["wprojplanes"] = wprojplanes
     if cfcache is not None and gridder == "awproject":

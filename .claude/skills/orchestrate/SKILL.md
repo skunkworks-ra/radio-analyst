@@ -176,8 +176,11 @@ it is the stage's).
 
 ### 4. image (11-imaging.md:324-362, quality gates)
 
-The radiometer estimate is the image stage's own number (commands/image.md
-step 4); record that it comes from the handoff.
+The image stage makes two images: a `hogbom` first pass and a `multiscale`
+second pass (commands/image.md steps 4-5, 11-imaging.md Step 2). Run the checks
+on the second-pass image; record the first-pass numbers beside them. The
+radiometer estimate is the image stage's own number (commands/image.md step 4);
+record that it comes from the handoff.
 
 | Check | Tool, field | Pass | On fail |
 |---|---|---|---|
@@ -188,6 +191,10 @@ step 4); record that it comes from the handoff.
 
 Record as `not_checked`: `beam_major_arcsec` and `peak_jy` (11:357-358) unless
 the handoff gives the expected beam.
+
+A retry after a failed image check may hand the stage `deconvolver: asp` (the
+change: 11 Step 2 puts asp last, after multiscale). asp is expensive: say so in
+the record's `reason`, and hand it only once multiscale has been tried.
 
 ## Retries and debug mode
 

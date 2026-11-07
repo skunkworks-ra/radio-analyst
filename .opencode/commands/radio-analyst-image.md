@@ -29,7 +29,7 @@ Prerequisite: CORRECTED_DATA populated on the target field(s) — run
 1. `ms_workflow_status(ms_path, workdir)` — confirm CORRECTED is populated.
 
 2. **Step 0 — field and Stokes** per 11-imaging.md §0. If the arguments give
-   `stokes:` or `field:`, use them. Otherwise: the run's named
+   `stokes:`, `field:` or `deconvolver:`, use them. Otherwise: the run's named
    targets (else all target fields, a mosaic for pointings of one source);
    Stokes='IQUV' if polcal ran, else 'I'. State both in the report.
 
@@ -42,7 +42,12 @@ Prerequisite: CORRECTED_DATA populated on the target field(s) — run
 
 4. Derive tclean parameters per 11-imaging.md §Steps 1–7:
    - specmode (§1): 'mfs' unless user asks for a cube
-   - deconvolver (§2): 'mtmfs' with nterms=2 if bw/freq > 0.2, else 'hogbom'
+   - deconvolver (§2), two passes. First pass: 'hogbom' ('mtmfs' with nterms=2
+     if bw/freq > 0.2). Second pass: 'multiscale' with `scales` per §2 (for mtmfs,
+     keep 'mtmfs' and add `scales`). If the arguments give `deconvolver:`, the
+     second pass uses it ('asp' is the last resort: ms_tclean warns it is
+     expensive). Report the scales with the beam (arcsec) and cell they came
+     from, so they can be recomputed.
    - cell (§3): 1 / (max_baseline_lambda × 3), rounded to 1 sf
    - imsize (§4): primary-beam-FWHM / cell, rounded up to composite number
    - Fresnel check (§5) → wprojplanes
@@ -51,16 +56,24 @@ Prerequisite: CORRECTED_DATA populated on the target field(s) — run
    - threshold (§7): 3 × the OSS equation-1 noise (eta_c, n_pol, per-pointing t_int
      for a mosaic, robust factor 1.2); format as mJy
 
-5. `ms_tclean(ms_path, imagename, field, stokes, specmode, deconvolver,
-   nterms, gridder, wprojplanes, cell, imsize, weighting='briggs',
-   robust=0.5, niter=50000, threshold, savemodel='modelcolumn',
-   workdir, execute=False)` → run the generated script. Wait for completion.
+5. First pass: `ms_tclean(ms_path, imagename=<name>_hogbom, field, stokes,
+   specmode, deconvolver, nterms, gridder, wprojplanes, cell, imsize,
+   weighting='briggs', robust=0.5, niter=50000, threshold,
+   savemodel='modelcolumn', workdir, execute=False)` → run the generated script.
+   Then step 6 on it.
+
+   Second pass: the same call with `imagename=<name>_<deconvolver>`, the
+   second-pass `deconvolver` and `scales` from step 4 → run. Then step 6 on it.
+   MODEL_DATA now holds the second-pass model. Record both calls in the ledger;
+   the first one's step label says "first pass (hogbom)".
 
 6. `ms_image_stats(imagename.image.pbcor, psf_path=imagename.psf,
-   pb_level=abs(pblimit), png_path=imagename.png)` — quality metrics; open the
+   pb_level=abs(pblimit), png_path=imagename.png)` (for mtmfs the image is the
+   `.tt0` one: use the pbcor name on disk) — quality metrics; open the
    PNG per 11-imaging.md §Step 9.
 
-7. Apply 11-imaging.md §Step 9 gates:
+7. Apply 11-imaging.md §Step 9 gates to the second-pass image; report the
+   first-pass numbers beside them:
    - residual_rms_jy vs. radiometer prediction (2× tolerance)
    - residual_dynamic_range thresholds per field type
    - beam_major_arcsec vs. expected_beam_major_arcsec (20% tolerance)

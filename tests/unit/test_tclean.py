@@ -229,3 +229,33 @@ class TestCorrectedDataGuardrail:
     ):
         _, warnings = _run(tmp_path, real_ms_calibrated)
         assert not any("Could not verify" in w for w in warnings)
+
+
+class TestScalesAndAsp:
+    def test_multiscale_scales_rendered(self, tmp_path, real_ms_calibrated):
+        script, warnings = _run(
+            tmp_path, real_ms_calibrated, deconvolver="multiscale", scales=[0, 5, 15]
+        )
+        assert "deconvolver  = 'multiscale'" in script
+        assert "scales       = [0, 5, 15]" in script
+        assert not any("no scales" in w or "ignored: deconvolver" in w for w in warnings)
+
+    def test_scales_ignored_for_hogbom_with_warning(self, tmp_path, real_ms_calibrated):
+        script, warnings = _run(tmp_path, real_ms_calibrated, scales=[0, 5])
+        assert "scales       =" not in script
+        assert any("scales=[0, 5] ignored" in w for w in warnings)
+
+    def test_multiscale_without_scales_warns(self, tmp_path, real_ms_calibrated):
+        _, warnings = _run(tmp_path, real_ms_calibrated, deconvolver="multiscale")
+        assert any("no scales" in w for w in warnings)
+
+    def test_asp_warns_cost(self, tmp_path, real_ms_calibrated):
+        script, warnings = _run(tmp_path, real_ms_calibrated, deconvolver="asp")
+        assert "deconvolver  = 'asp'" in script
+        assert any("'asp' is expensive" in w for w in warnings)
+
+    def test_hogbom_no_scale_or_asp_warning(self, tmp_path, real_ms_calibrated):
+        _, warnings = _run(tmp_path, real_ms_calibrated)
+        assert not any(
+            "no scales" in w or "ignored: deconvolver" in w or "is expensive" in w for w in warnings
+        )

@@ -1944,7 +1944,17 @@ class TcleanInput(BaseModel):
     )
     deconvolver: str = Field(
         default="hogbom",
-        description="'hogbom' (default first-pass) or 'mtmfs' for wideband (fractional BW > 20%).",
+        description=(
+            "'hogbom' (default first pass), 'mtmfs' for wideband (fractional BW > 20%), "
+            "'multiscale' for extended emission (with scales), or 'asp' (expensive; last)."
+        ),
+    )
+    scales: list[int] | None = Field(
+        default=None,
+        description=(
+            "Multiscale scales in pixels, 0 first (point components). Used by "
+            "deconvolver 'multiscale' and 'mtmfs'; ignored otherwise."
+        ),
     )
     nterms: int | None = Field(
         default=None,
@@ -2096,7 +2106,8 @@ async def ms_tclean(params: TcleanInput) -> ToolResult:
         params.specmode:    'mfs', 'cube', or 'mvc'.
         params.nchan/start/width/outframe: frequency-cube channelization
                             (specmode='cube' only; ignored otherwise).
-        params.deconvolver: 'hogbom' or 'mtmfs'.
+        params.deconvolver: 'hogbom', 'mtmfs', 'multiscale' or 'asp'.
+        params.scales:      Multiscale scales in pixels (multiscale/mtmfs).
         params.nterms:      Taylor terms (pass 2 for mtmfs; omit for hogbom).
         params.gridder:     'standard', 'wproject', 'mosaic', 'awproject' or 'awp2'.
         params.wprojplanes: W-projection planes (omit if Fresnel >= 0.9).
@@ -2139,6 +2150,7 @@ async def ms_tclean(params: TcleanInput) -> ToolResult:
         start=params.start,
         width=params.width,
         outframe=params.outframe,
+        scales=params.scales,
         execute=params.execute,
         debug=params.debug,
         debug_params=params.debug_params,
