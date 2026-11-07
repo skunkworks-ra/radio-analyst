@@ -120,6 +120,14 @@ class ReportInput(BaseModel):
         default="", description="What the result does not support; checks skipped and why."
     )
     image_path: str = Field(default="", description="CASA image to show (plane 0). Optional.")
+    reuse_saved: bool = Field(
+        default=False,
+        description=(
+            "Rebuild with the narrative saved by the previous call (report_inputs.json); "
+            "fields given here replace the saved ones. Default False: the narrative is "
+            "exactly what this call passes."
+        ),
+    )
 
 
 class SDMSummaryInput(BaseModel):
@@ -243,6 +251,7 @@ async def ms_report(params: ReportInput) -> ToolResult:
         params.decisions,
         params.caveats,
         params.image_path,
+        params.reuse_saved,
     )
 
 

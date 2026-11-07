@@ -152,3 +152,51 @@ def test_long_backtick_span_is_plain_text(workdir):
     page = (Path(workdir) / "report.html").read_text()
     assert "<code>refant = ea21</code>" in page
     assert f"<code>{long}</code>" not in page and long in page
+
+
+def test_accounting_table_and_rebuild_without_inputs(workdir):
+    from ms_create.report import run
+
+    run(workdir, summary="- first pass")
+    acct = {
+        "total_cost_usd": 1.7,
+        "model_cost_usd": {"m-sonnet": 1.45, "m-haiku": 0.25},
+        "num_turns": 41,
+        "duration_s": 2730,
+        "permission_denials": [],
+        "note": "measured and estimated",
+        "sessions": [
+            {
+                "session": "main (orchestrator)",
+                "model": "m-sonnet",
+                "tool_calls": 40,
+                "output_tokens": 57204,
+                "tokens_exact": True,
+                "cost_usd_estimate": 1.45,
+            },
+            {
+                "session": "radio-analyst:precal-stage",
+                "model": "m-haiku",
+                "tool_calls": 34,
+                "output_tokens": 336,
+                "tokens_exact": False,
+                "cost_usd_estimate": 0.05,
+            },
+        ],
+    }
+    (Path(workdir) / "accounting.json").write_text(json.dumps(acct))
+    run(workdir, reuse_saved=True)  # rebuild with the saved narrative
+    page = (Path(workdir) / "report.html").read_text()
+    assert "first pass" in page
+    assert "Cost and sessions" in page and "radio-analyst:precal-stage" in page
+    assert "≥ 336" in page and "0.0500 (est.)" in page and "1.4500<" in page
+
+
+def test_empty_call_does_not_replay_saved_narrative(workdir):
+    from ms_create.report import run
+
+    run(workdir, summary="- old narrative")
+    out = run(workdir)
+    page = (Path(workdir) / "report.html").read_text()
+    assert "old narrative" not in page
+    assert out["data"]["narrative_source"]["value"] == "this call"

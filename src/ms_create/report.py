@@ -14,6 +14,13 @@ Build one HTML report of a reduction from what the workdir already holds:
   - every PNG in the workdir and its plots/ (image previews, caltable plots),
     embedded in the page so it stands alone
   - an interactive view of one image plane, if `image_path` is given
+  - a "Cost and sessions" table, if `accounting.json` (accounting.py) is in the
+    workdir: per session (orchestrator, each stage agent) tool calls, tokens and
+    cost, with which numbers are measured and which estimated
+
+The narrative inputs are saved to report_inputs.json; a call with none of them
+reuses the saved ones, so the report can be rebuilt after the session ends
+(when the accounting exists) without the model.
 
 The narrative sections (summary, decisions, caveats) are written by the model
 and passed in as text; this tool lays them out and adds no judgement of its own.
@@ -247,6 +254,61 @@ def _png_gallery(pngs: list[Path], wd: Path) -> str:
     return "".join(figs)
 
 
+def _accounting_html(wd: Path) -> str:
+    path = wd / "accounting.json"
+    if not path.exists():
+        return "<p>No accounting.json in the workdir (written after the session ends).</p>"
+    try:
+        a = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        return f"<p>accounting.json could not be read: {html.escape(str(exc))}</p>"
+    cols = [
+        ("session", "session"),
+        ("model", "model"),
+        ("messages", "messages"),
+        ("tool_calls", "tool calls"),
+        ("input_tokens", "input"),
+        ("output_tokens", "output"),
+        ("cache_read_tokens", "cache read"),
+        ("cache_write_tokens", "cache write"),
+        ("cost_usd_estimate", "cost USD"),
+    ]
+    head = "<tr>" + "".join(f"<th>{h}</th>" for _, h in cols) + "</tr>"
+    rows = []
+    for r in a.get("sessions", []):
+        exact = r.get("tokens_exact")
+        cells = []
+        for k, _ in cols:
+            v = r.get(k)
+            if v is None:
+                cells.append("<td>n/a</td>")
+                continue
+            if k == "output_tokens" and not exact and v is not None:
+                v = f"≥ {v}"
+            if k == "cost_usd_estimate" and v is not None:
+                v = f"{v:.4f}" + ("" if exact else " (est.)")
+            cells.append(f"<td>{html.escape(str(v))}</td>")
+        rows.append("<tr>" + "".join(cells) + "</tr>")
+    per_model = ", ".join(
+        f"{html.escape(m)} {c:.4f}"
+        for m, c in (a.get("model_cost_usd") or {}).items()
+        if c is not None
+    )
+    total = a.get("total_cost_usd")
+    summary = (
+        f"<p>Total {total:.4f} USD (measured; per model: {per_model}). "
+        f"{a.get('num_turns')} main turns, {a.get('duration_s', 0):.0f} s, "
+        f"permission denials: {html.escape(str(a.get('permission_denials') or 'none'))}.</p>"
+        if total is not None
+        else ""
+    )
+    return (
+        summary
+        + f"<table>{head}{''.join(rows)}</table>"
+        + f"<p><i>{html.escape(a.get('note', ''))}</i></p>"
+    )
+
+
 def _plot_links(wd: Path) -> list[str]:
     found = sorted({*wd.glob("*.html"), *wd.glob("plots/*.html")} - {wd / REPORT_NAME})
     return [str(p.relative_to(wd)) for p in found]
@@ -309,6 +371,7 @@ def run(
     decisions: str = "",
     caveats: str = "",
     image_path: str = "",
+    reuse_saved: bool = False,
 ) -> dict:
     """
     Write <workdir>/report.html.
@@ -329,6 +392,26 @@ def run(
     wd = Path(workdir)
     if not wd.is_dir():
         raise ComputationError(f"workdir does not exist: {workdir}", ms_path=workdir)
+
+    # The narrative is saved so the report can be rebuilt after the session
+    # ends (when accounting.json exists). Reuse only on request: an empty call
+    # must not silently replay an earlier narrative.
+    saved = wd / "report_inputs.json"
+    given = {
+        "summary": summary,
+        "decisions": decisions,
+        "caveats": caveats,
+        "image_path": image_path,
+    }
+    narrative_source = "this call"
+    if reuse_saved and saved.exists():
+        prev = json.loads(saved.read_text())
+        given = {k: v or prev.get(k, "") for k, v in given.items()}
+        stamp = datetime.fromtimestamp(saved.stat().st_mtime, UTC).strftime("%Y-%m-%d %H:%M:%SZ")
+        narrative_source = f"report_inputs.json saved {stamp}"
+    saved.write_text(json.dumps(given, indent=1))
+    summary, decisions = given["summary"], given["decisions"]
+    caveats, image_path = given["caveats"], given["image_path"]
 
     records = _read_jsonl(wd / "reduction_log.jsonl")
     open_items = _open_items(wd)
@@ -376,8 +459,10 @@ def run(
     now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%SZ")
     body = [
         f"<h1>Reduction report</h1><p>{html.escape(str(wd.resolve()))}<br>built {now}, "
-        f"{len(records)} recorded steps</p>",
+        f"{len(records)} recorded steps; narrative from {html.escape(narrative_source)}</p>",
         *(f"<h2>{t}</h2>{b}" for t, b in sections if b),
+        "<h2>Cost and sessions</h2>",
+        _accounting_html(wd),
         "<h2>Images</h2>",
         _png_gallery(pngs, wd),
         "<h2>Image plane</h2>",
@@ -413,6 +498,7 @@ def run(
             if open_items is not None
             else fmt_field(None, "UNAVAILABLE", "no reduce_hooks.jsonl Stop record"),
             "plots": fmt_field(plots),
+            "narrative_source": fmt_field(narrative_source),
             "images_embedded": fmt_field([str(p.relative_to(wd)) for p in pngs]),
             "images_embedded_bytes": fmt_field(sum(p.stat().st_size for p in pngs)),
             "replay_script": fmt_field(str(replay))
