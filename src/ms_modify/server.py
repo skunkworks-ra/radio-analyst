@@ -2150,6 +2150,56 @@ async def ms_tclean(params: TcleanInput) -> ToolResult:
 # ---------------------------------------------------------------------------
 
 
+class CasaTaskInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task: str = Field(..., description="CASA task name, e.g. 'statwt'.", min_length=1)
+    params: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Task parameters by name (ms_casa_task_spec lists them). Checked against the "
+            "installed casatasks XML."
+        ),
+    )
+    workdir: str = Field(
+        ..., description="Existing directory for the script, outputs and result file.", min_length=1
+    )
+    execute: bool = Field(
+        default=False,
+        description="If False (default), write the script and return. If True, run in-process.",
+    )
+
+
+@mcp.tool(
+    name="ms_casa_task",
+    description=(
+        "Run a CASA task that has no dedicated tool: casatasks.<task>(**params). Refuses a "
+        "task a dedicated tool wraps. Outputs must be inside workdir and not an MS; an "
+        "existing output caltable is archived to .attemptN. Writes a script (default); "
+        "the task's return value goes to <script>.result.json."
+    ),
+    annotations={
+        "title": "Generic CASA Task",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_casa_task(params: CasaTaskInput) -> ToolResult:
+    """Run (or script) one unwrapped CASA task through the generic guard."""
+    from ms_modify import casa_task as _ct
+
+    lock = _ct.lock_path(params.params, params.workdir)
+    return await _run_tool(
+        _ct.run,
+        task=params.task,
+        params=params.params,
+        workdir=params.workdir,
+        execute=params.execute,
+        _lock_path=lock,
+    )
+
+
 def main() -> None:
     init_server_logging("ms-modify")
     transport = os.environ.get("RADIO_MCP_TRANSPORT", "stdio").lower()

@@ -11,8 +11,8 @@ This repository ships **three Model Context Protocol (MCP) servers** for an
 AI-assisted radio interferometric reduction pipeline targeting VLA/JVLA/EVLA,
 MeerKAT, and uGMRT:
 
-- **ms-inspect** — read-only inspection and diagnostics (34 tools, port 8000)
-- **ms-modify** — calibration, flagging, and MS modification (17 tools, port 8001)
+- **ms-inspect** — read-only inspection and diagnostics (35 tools, port 8000)
+- **ms-modify** — calibration, flagging, and MS modification (18 tools, port 8001)
 - **ms-create** — ASDM ingestion, reduction logging and the report (4 tools, port 8002)
 
 `ms-inspect` began as Phase 1 only — Layer 1 (Orientation) and Layer 2
@@ -316,6 +316,7 @@ Environment variable reference:
 | `ms_residual_stats` | `tools/residual_stats.py` | CORRECTED − MODEL amplitude distribution per SPW (pre-rflag threshold guide) |
 | `ms_corrected_stats` | `tools/corrected_stats.py` | Per-field parallel-hand amplitude (median/robust-std/p95) + phase RMS of a data column, **vector-averaged over the channel range** (so faint sources are not noise-biased). Post-applycal calibration sanity check. |
 | `ms_casa_task_lookup` | `util/casa_task_index.py` | Resolve a CASA task name to its casadocs API page and its casa6 source file (raw content). Returns URLs only, no fetch — caller `WebFetch`s the URL. `NOT_FOUND` if the task is not in the bundled index. |
+| `ms_casa_task_spec` | `tools/casa_task_spec.py` | Parameters of an installed CASA task (name, type, default, description, sub-parameter, must-exist) from the casatasks XML; empty task lists the installed tasks |
 
 ### Phase 3 — Imaging inspection (1 tool)
 
@@ -369,6 +370,7 @@ Functions are also callable directly by skills and scripts.
 | `ms_fluxscale` | `ms_modify/fluxscale.py` | Bootstrap flux scale from flux standard |
 | `ms_applycal` | `ms_modify/applycal.py` | Apply caltables; write CORRECTED_DATA |
 | `ms_tclean` | `ms_modify/tclean.py` | Generate (and optionally execute) a tclean imaging script; validates CORRECTED_DATA; pbcor=True hardcoded. Cube args (`nchan`/`start`/`width`/`outframe`) for frequency cubes incl. IQUV polarization cubes (specmode='cube'); ignored otherwise |
+| `ms_casa_task` | `ms_modify/casa_task.py` | Run a CASA task with no dedicated tool (`casatasks.<task>(**params)`); refuses a task a dedicated tool wraps; outputs inside workdir, not an MS; existing output caltable archived to `.attemptN`; return value to `<script>.result.json` |
 | *(utility)* | `ms_modify/slurm.py` | SLURM batch submission: wrap scripts in sbatch files, chain with afterok dependencies |
 
 Debug mode: every write tool above that calls a CASA task, except

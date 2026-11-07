@@ -35,9 +35,11 @@
       "ms_gaincal_snr_predict": {"ms_path": "{SMOKE_MS}", "field": "0", "flux_jy": 1.0, "solint_seconds": 60},
       "ms_image_stats": {"image_path": "/nonexistent/image.image"},
       "ms_phase_cal_lookup": {"ra_deg": 180.0, "dec_deg": 30.0},
-      "ms_casa_task_lookup": {"task_name": "tclean"}
+      "ms_casa_task_lookup": {"task_name": "tclean"},
+      "ms_casa_task_spec": {"task": "statwt"}
     },
     "ms-modify": {
+      "ms_casa_task": {"task": "statwt", "params": {"vis": "{SMOKE_MS}"}, "workdir": "/nonexistent/workdir"},
       "ms_set_intents": {"ms_path": "{SMOKE_MS}", "dry_run": true},
       "ms_initial_bandpass": {"ms_path": "{SMOKE_MS}", "bp_field": "0", "applycal_field": "0", "ref_ant": "ea01", "workdir": "/nonexistent/workdir"},
       "ms_apply_rflag": {"ms_path": "{SMOKE_MS}", "workdir": "/nonexistent/workdir"},

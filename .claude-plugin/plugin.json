@@ -1,7 +1,7 @@
 {
   "name": "radio-analyst",
   "version": "0.1.1",
-  "description": "CASA data reduction for radio interferometers (VLA, MeerKAT, uGMRT): 55 MCP tools, interferometrist skills, and inspect/precal/calibrate/polcal/image workflows",
+  "description": "CASA data reduction for radio interferometers (VLA, MeerKAT, uGMRT): 57 MCP tools, interferometrist skills, and inspect/precal/calibrate/polcal/image workflows",
   "author": {
     "name": "Srikrishna Sekhar and Preshanth Jagannathan",
     "url": "https://github.com/skunkworks-ra"

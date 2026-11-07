@@ -30,6 +30,7 @@ class ParamSpec:
     default: object  # parsed Python value, or None when the XML gives none
     description: str  # the XML <shortdescription>
     subparam: bool
+    mustexist: bool  # the XML marks this path as an input that must already exist
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,7 @@ def parse_task_xml(path: Path) -> TaskSpec:
             default=_parse_default(ptype, p.find(f"{_NS}value")),
             description=_text(p.find(f"{_NS}shortdescription")),
             subparam=p.get("subparam") == "true",
+            mustexist=p.get("mustexist") == "true",
         )
     return TaskSpec(
         name=task.get("name", path.stem),

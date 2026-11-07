@@ -863,7 +863,7 @@ On tool error:
 **Phase 1 (Layers 1 & 2): 13 tools** — the tables above plus `ms_flag_preflight`.
 
 > **Note on scope.** This design document was originally written for Phase 1
-> (Layers 1 & 2) only. The `ms_inspect` server has since grown to **34 tools**
+> (Layers 1 & 2) only. The `ms_inspect` server has since grown to **35 tools**
 > as later calibration/imaging phases were implemented, and the read-only
 > contract now spans the whole reduction. The remaining `ms_inspect` tools are
 > catalogued below; `ms_modify` (§8b) and `ms_create` (§8c) are full MCP servers
@@ -926,15 +926,16 @@ On tool error:
 | Tool | What it returns |
 |------|----------------|
 | `ms_casa_task_lookup` | A CASA task's casadocs API page and casa6 source-file URLs from a bundled index (no fetch; the caller fetches). `NOT_FOUND` if the task is not in the index |
+| `ms_casa_task_spec` | Parameters of an installed CASA task, read from the casatasks XML |
 
-**Total `ms_inspect`: 34 tools.**
+**Total `ms_inspect`: 35 tools.**
 
 ---
 
 ## 8b. Write Utilities (ms_modify)
 
 The companion `ms_modify` package **writes** to the MS. It is a full FastMCP
-server in its own right (`ms_modify.server`, port 8001) exposing **17 tools**;
+server in its own right (`ms_modify.server`, port 8001) exposing **18 tools**;
 the same functions are also callable programmatically by skills and scripts
 (e.g. for metadata repair before calibration can proceed).
 
@@ -957,6 +958,7 @@ the same functions are also callable programmatically by skills and scripts
 | `ms_fluxscale` | Bootstrap flux scale from a flux standard |
 | `ms_applycal` | Apply caltables; write CORRECTED_DATA |
 | `ms_tclean` | Generate (and optionally execute) a validated tclean imaging script |
+| `ms_casa_task` | Run a CASA task that has no dedicated tool, through the generic guard (outputs in workdir, `.attemptN`, script) |
 
 All modify tools default to `execute=False` (emit a reviewable script) and
 accept `execute=True` to run in-process.
