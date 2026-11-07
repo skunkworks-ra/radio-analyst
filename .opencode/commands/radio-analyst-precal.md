@@ -27,10 +27,13 @@ Arguments: the MS path, `workdir=<dir>`, and `online_flags=<path to .flagonline.
 or `online_flags=none`. `none` means the MS has no online flag file (no ASDM) and
 that is expected. If `workdir` or `online_flags` is missing, STOP and ask for it.
 
-Load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
+If your task prompt contains `SKILL EXCERPTS` blocks, they are the skill text
+for this stage: use them, and do not load the skill or read its files.
+Otherwise load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
 installed as a plugin), then read only its `10-precal-workflow.md` and
-`ledger.md` supporting files (siblings of that skill's `SKILL.md`) before starting.
-Skip the files the skill lists under "Start here"; precal does not use them.
+`ledger.md` supporting files (siblings of that skill's `SKILL.md`) before starting,
+skipping the files the skill lists under "Start here".
+
 Execute the stages below in order; STOP and report if any stage fails its
 decision gate. Run each generated script as written; do not Read it first.
 Record each validated write step with `ms_reduction_log`, as `ledger.md` says.

@@ -8,6 +8,7 @@ description: >
 allowed-tools: Agent,
                Read,
                Write,
+               Bash,
                mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
                mcp__plugin_radio-analyst_ms-inspect__ms_verify_priorcals,
                mcp__plugin_radio-analyst_ms-inspect__ms_verify_caltables,
@@ -44,7 +45,7 @@ stage fails. Keys:
 {
   "n": 1, "stage": "precal", "attempt": 1,
   "prompt": "<the exact prompt you gave the stage agent>",
-  "handoff": "<the stage agent's handoff block, verbatim>",
+  "handoff": "<the stage agent's handoff block, verbatim and whole; never abridged>",
   "checks": [
     {"criterion": "<the condition, as the source states it>",
      "source": "<skill file:line>",
@@ -58,6 +59,7 @@ stage fails. Keys:
   "change": "<on a retry: what the next attempt does differently>",
   "debug_params": {},
   "agent_id": "<the agent id the Agent tool returned, if it shows one>",
+  "excerpts": ["<each excerpt command you ran for this prompt>"],
   "agent_usage": "<the usage the Agent tool reported for this call, verbatim>"
 }
 ```
@@ -82,6 +84,39 @@ stage.
 | 2 | precal | `radio-analyst:precal-stage` | `<ms_path> workdir=<workdir> online_flags=<...>`, the INSPECT HANDOFF lines, `pol_scope: off` |
 | 3 | calibrate | `radio-analyst:calibrate-stage` | `<ms_path> workdir=<workdir>` |
 | 4 | image | `radio-analyst:image-stage` | `<ms_path> workdir=<workdir>`, `stokes: I` |
+
+## Skill excerpts: the stage gets only the lines it needs
+
+A stage agent does not load the radio-interferometry skill. You cut the
+sections its command uses and send them in its prompt. `{ri}` is the
+radio-interferometry skill directory: the sibling `radio-interferometry/` of
+this skill's base directory. Bash is for this command only:
+
+```
+awk -v H='<heading 1>|<heading 2>|...' 'BEGIN{n=split(H,a,"|")} /^## /{p=0; for(i=1;i<=n;i++) if(index($0,a[i])==1) p=1} p' {ri}/<file>
+```
+
+Each heading is the start of a `## ` line; the section runs to the next `## `.
+
+| Stage | File | Headings |
+|---|---|---|
+| precal | `10-precal-workflow.md` | `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 5 —`, `## Step 6 —`, `## Step 8 —`, `## Decision gate` |
+| precal, calibrate | `ledger.md` | the whole file (`cat`) |
+| calibrate | `07b-gaincal-recovery.md` | the whole file (`cat`; Step 4b sends the stage there) |
+| calibrate | `07-calibration-execution.md` | `## Execution protocol`, `## Placeholder reference`, `## Field selection`, `## solint guidance`, `## Calibration table naming`, `## Caltable solution flagging`, `## Drilling into`, `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 4b —`, `## Step 5 —`, `## Step 6 —`, `## Decision gate`, `## Antenna-set consistency`, `## Step 7 —`, `## Post-applycal assessment`, `## parang parameter` |
+| image | `11-imaging.md` | `## Placeholder reference`, `## Step 0 —`, `## Step 0.5 —`, `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 5 —`, `## Step 6 —`, `## Step 7 —`, `## Step 8 —`, `## Step 9 —` |
+| precal, calibrate, image | `SKILL.md` | `## Running generated scripts` |
+
+Put the output at the end of the stage prompt, after the arguments and values,
+as one block per file:
+
+```
+SKILL EXCERPTS (<file>, sections: <headings>)
+<the command's output, verbatim>
+END SKILL EXCERPTS
+```
+
+Record the exact command(s) in the attempt's JSON under `"excerpts"`.
 
 ## Checks after each stage
 

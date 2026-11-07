@@ -223,7 +223,7 @@ def test_orchestrator_grants_registered_read_only_tools_and_calls_each_stage():
     for t in _tools(fm["allowed-tools"]):
         m = _ORCH_TOOL_RE.match(t)
         if not m:
-            assert t in ("Agent", "Read", "Write"), t
+            assert t in ("Agent", "Read", "Write", "Bash"), t
             continue
         server, tool = m.groups()
         assert server == "ms-inspect", f"orchestrator must not hold write tools: {t}"
@@ -232,3 +232,21 @@ def test_orchestrator_grants_registered_read_only_tools_and_calls_each_stage():
     for stage in STAGES:
         assert f"`radio-analyst:{stage}-stage`" in body
     assert body.count("Retry cap: 5") == 1
+
+
+def test_orchestrator_excerpt_headings_exist_in_their_files():
+    # The orchestrator cuts skill sections by heading; a renamed heading would
+    # silently drop that section from the stage's prompt.
+    ri = REPO_ROOT / ".claude" / "skills" / "radio-interferometry"
+    body = (REPO_ROOT / ".claude" / "skills" / "orchestrate" / "SKILL.md").read_text()
+    table = body.split("| Stage | File | Headings |", 1)[1].split("\n\n", 1)[0]
+    n = 0
+    for row in table.splitlines()[2:]:
+        cells = [c.strip() for c in row.strip("|").split("|")]
+        fname = cells[1].strip("`")
+        heads = re.findall(r"`(## [^`]+)`", cells[2])
+        lines = (ri / fname).read_text().splitlines()
+        for h in heads:
+            assert sum(line.startswith(h) for line in lines) == 1, (fname, h)
+            n += 1
+    assert n > 0

@@ -25,11 +25,14 @@ allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
 
 Run the full calibration solve sequence on this MS: $ARGUMENTS
 
-Load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
+If your task prompt contains `SKILL EXCERPTS` blocks, they are the skill text
+for this stage: use them, and do not load the skill or read its files.
+Otherwise load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
 installed as a plugin), then read only its `07-calibration-execution.md` and
 `ledger.md` supporting files (siblings of that skill's `SKILL.md`) before
-starting. Skip the files the skill lists under "Start here"; calibrate does not
-use them. Execute the stages below in order; STOP and report if any
+starting, skipping the files the skill lists under "Start here".
+
+Execute the stages below in order; STOP and report if any
 ms_calsol_stats outlier gate fails. Record each validated write step with
 `ms_reduction_log`, as `ledger.md` says.
 Every MCP tool takes one argument, `params`: `{"ms_path": ..., ...}`.

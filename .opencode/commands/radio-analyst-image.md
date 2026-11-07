@@ -16,7 +16,9 @@ allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
 
 Run first-pass imaging on this calibrated MS: $ARGUMENTS
 
-Load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
+If your task prompt contains `SKILL EXCERPTS` blocks, they are the skill text
+for this stage: use them, and do not load the skill or read its files.
+Otherwise load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
 installed as a plugin), then read its `11-imaging.md` supporting
 file (a sibling of that skill's `SKILL.md`) before starting.
 Prerequisite: CORRECTED_DATA populated on the target field(s) — run
