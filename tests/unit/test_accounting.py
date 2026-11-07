@@ -69,13 +69,37 @@ def test_tokens_tool_calls_and_list_price_cost(transcript):
     rows = {r["session"]: r for r in a["sessions"]}
     main = rows["main (orchestrator)"]
     assert main["messages"] == 1 and main["tool_calls"] == 2 and main["output_tokens"] == 100
-    # Sonnet: 10*2 + 100*10 + 1000*0.1*2 = 1220 per 1e6
-    assert main["cost_usd_estimate"] == round(1220 / 1e6, 4)
+    # Sonnet: 10*2 + 100*10 + 1000*0.05*2 = 1120 per 1e6
+    assert main["cost_usd_estimate"] == round(1120 / 1e6, 4)
     pre, cal = rows["ra:precal-stage"], rows["ra:calibrate-stage"]
     assert pre["cost_usd_estimate"] == round((2 * 0.1 + 20 * 0.5 + 50_000 * 0.01) / 1e6, 4)
     # above the 100K tier: input 0.50, output 2.50
     assert cal["cost_usd_estimate"] == round((2 * 0.5 + 20 * 2.5 + 150_000 * 0.05) / 1e6, 4)
     assert set(a["model_cost_usd_estimate"]) == {"claude-sonnet-5-5", "claude-haiku-5-5"}
+
+
+def test_cache_writes_priced_by_ttl():
+    # orch_20261106/full2 main session (Sonnet, all writes 1-hour) and a
+    # 5-minute Haiku message; Sonnet total equals the CLI's measured 1.4507101.
+    sonnet = {
+        "input_tokens": 48,
+        "output_tokens": 57204,
+        "cache_read_input_tokens": 2183021,
+        "cache_creation_input_tokens": 165068,
+        "cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 165068},
+    }
+    assert round(accounting._cost("claude-sonnet-5-5", sonnet), 7) == 1.4507101
+    haiku = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 1000,
+        "cache_creation": {"ephemeral_5m_input_tokens": 1000, "ephemeral_1h_input_tokens": 0},
+    }
+    assert accounting._cost("claude-haiku-5-5", haiku) == pytest.approx(1000 * 0.1 * 1.25 / 1e6)
+    # no TTL breakdown: all writes at the 5-minute rate
+    del haiku["cache_creation"]
+    assert accounting._cost("claude-haiku-5-5", haiku) == pytest.approx(1000 * 0.1 * 1.25 / 1e6)
 
 
 def test_unknown_model_has_no_cost(tmp_path):

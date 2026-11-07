@@ -14,12 +14,14 @@ sum to the CLI's measured Haiku totals to the token, and the main transcript to
 its Sonnet totals.)
 
 Cost per session is an ESTIMATE from list prices (PRICES), applied per message:
-cache read at 0.1x and cache write at 1.25x the input price, and the Haiku 5.5
-tier above 100K-token prompts. Checked against the CLI's measured cost on two
-runs (orch_20261106 full2 and smoke2): Haiku matched both (0.2537, 0.0030).
-Sonnet did not: -2.0% and -27%. Its cache writes are all 1-hour, whose rate the
-price source does not give, and no single rate fits both runs (they imply 2.68
-and 3.72 $/M), so the Sonnet cost is approximate. Opus prices are unchecked.
+cache read at 0.1x the input price (Sonnet 5.5: 0.05x), cache write at 1.25x for
+5-minute and 2x for 1-hour entries (usage.cache_creation splits writes by TTL),
+and the Haiku 5.5 tier above 100K-token prompts. The Sonnet read rate is the one
+the CLI's own cost computation implies (solving orch_20261106 full2 and smoke2
+gives read 0.1000 and write 4.0000 $/M); the price source lists $0.20. It
+matches the CLI's cost on three runs it was not fitted to (full1, full3, smoke1)
+for Sonnet and Haiku. That is the CLI's figure, not an invoice. Opus prices are
+unchecked.
 
 The workdir is the one the session's own ms_report call named (read from the
 transcript), so a session that never built a report writes nothing.
@@ -36,14 +38,18 @@ from pathlib import Path
 
 #: $ per million tokens: (input, output, tier) with tier = (prompt tokens above
 #: which, input, output). Source: claude-api skill model table (cached
-#: 2026-10-06). A model not listed gets no cost.
+#: 2026-10-06), except the Sonnet read rate (CACHE_READ_FACTORS), which follows
+#: the CLI. A model not listed gets no cost.
 PRICES: dict[str, tuple[float, float, tuple[int, float, float] | None]] = {
     "claude-sonnet-5-5": (2.00, 10.00, None),
     "claude-haiku-5-5": (0.10, 0.50, (100_000, 0.50, 2.50)),
     "claude-opus-5-5": (4.00, 20.00, None),
 }
 CACHE_READ_FACTOR = 0.1
-CACHE_WRITE_FACTOR = 1.25
+#: per-model read factor where the CLI's measured cost shows a different one
+CACHE_READ_FACTORS = {"claude-sonnet-5-5": 0.05}
+CACHE_WRITE_FACTOR = 1.25  # 5-minute TTL
+CACHE_WRITE_1H_FACTOR = 2.0
 
 ACCOUNTING_NAME = "accounting.json"
 _FIELDS = (
@@ -87,11 +93,16 @@ def _cost(model: str | None, u: dict) -> float | None:
     )
     if tier and prompt > tier[0]:
         pin, pout = tier[1], tier[2]
+    write = u.get("cache_creation_input_tokens") or 0
+    write_1h = min((u.get("cache_creation") or {}).get("ephemeral_1h_input_tokens") or 0, write)
     return (
         (u.get("input_tokens") or 0) * pin
         + (u.get("output_tokens") or 0) * pout
-        + (u.get("cache_read_input_tokens") or 0) * CACHE_READ_FACTOR * pin
-        + (u.get("cache_creation_input_tokens") or 0) * CACHE_WRITE_FACTOR * pin
+        + (u.get("cache_read_input_tokens") or 0)
+        * CACHE_READ_FACTORS.get(model or "", CACHE_READ_FACTOR)
+        * pin
+        + (write - write_1h) * CACHE_WRITE_FACTOR * pin
+        + write_1h * CACHE_WRITE_1H_FACTOR * pin
     ) / 1e6
 
 
@@ -137,9 +148,9 @@ def from_transcript(transcript_path: str) -> dict:
         "model_cost_usd_estimate": {m: round(c, 4) for m, c in by_model.items()},
         "note": (
             "Tokens per session are measured (Claude Code session transcripts). Cost is a "
-            "list-price estimate per message (accounting.py PRICES). Haiku's matched the "
-            "CLI's measured cost on two runs; Sonnet's came out 2% and 27% low, so treat "
-            "Sonnet cost as approximate."
+            "list-price estimate per message (accounting.py PRICES), cache writes priced by "
+            "TTL. Haiku and Sonnet match the CLI's own cost figure on five runs; Opus is "
+            "unchecked."
         ),
     }
 

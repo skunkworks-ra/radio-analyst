@@ -98,10 +98,10 @@ Default to `'mfs'` unless the user explicitly asks for a cube.
 as point components; on emission much larger than the beam (a supernova remnant
 such as 3C391, a radio halo, a nearby galaxy) it leaves the extended flux in the
 residual and the RMS reads high. That is a modelling failure, not noise. When the
-source is known or seen to be extended, use `deconvolver='multiscale'` (scales
-from the synthesized beam: 0, then ~2–3× and ~5–10× the beam in pixels, up to
-the largest structure) or `deconvolver='asp'`. Which one, and which scales, is a
-judgment (T3), and worth stating in the report.
+source is known or seen to be extended, use `deconvolver='multiscale'` with
+scales round(k × B) for k = 0, 1, 3, 5, where B = the hogbom pass's restored
+`beam_major_arcsec` / `{CELL}` (Step 3); 0 is a point component. Or use
+`deconvolver='asp'`. Which one is a judgment (T3); state it in the report.
 
 Order: a `hogbom` first pass, then `multiscale` with `scales` (`ms_tclean`
 takes them, in pixels, 0 first). `asp` chooses its own scales but is expensive

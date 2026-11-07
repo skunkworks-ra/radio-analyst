@@ -262,3 +262,19 @@ def test_opencode_stage_agent_inlines_its_command(stage):
     fm = _frontmatter(path)
     assert fm["mode"] == "subagent"
     assert path.read_text().count(f"@.claude/commands/{stage}.md") == 1
+
+
+@pytest.mark.parametrize("stage", ("precal", "calibrate", "image", "selfcal", "postcal"))
+def test_excerpts_travel_as_file_paths(stage):
+    # The orchestrator sends `SKILL EXCERPT FILE: <path>` lines; the stage command
+    # Reads them and its agent splits its args at the first such line.
+    orch = (REPO_ROOT / ".claude" / "skills" / "orchestrate" / "SKILL.md").read_text()
+    assert "SKILL EXCERPT FILE: <path>" in orch and "SKILL EXCERPTS" not in orch
+    command = (REPO_ROOT / ".claude" / "commands" / f"{stage}.md").read_text()
+    assert "If your task prompt contains `SKILL EXCERPT FILE:` lines, Read each named file" in (
+        command.replace("\n", " ")
+    )
+    for agent in (REPO_ROOT / "agents", REPO_ROOT / ".opencode" / "agents"):
+        body = (agent / f"{stage}-stage.md").read_text()
+        assert "before the first `SKILL EXCERPT FILE:` line" in body.replace("\n", " ")
+        assert "SKILL EXCERPTS" not in body

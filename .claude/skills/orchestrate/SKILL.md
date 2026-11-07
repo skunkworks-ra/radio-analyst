@@ -110,8 +110,10 @@ awk -v H='<heading 1>|<heading 2>|...' 'BEGIN{n=split(H,a,"|")} /^## /{p=0; for(
 ```
 
 Each heading is the start of a `## ` line; the section runs to the next `## `.
-Redirect the output to `{workdir}/orchestrator/ex_<stage>_<file>.txt` (never
-under `/tmp`). Do not Read the excerpt files yourself.
+Redirect the output of each `awk` or `cat` to
+`{workdir}/orchestrator/ex_<stage>_<file stem>.txt` (for example
+`ex_calibrate_07-calibration-execution.txt`; never under `/tmp`). Do not Read
+the excerpt files yourself.
 
 | Stage | File | Headings |
 |---|---|---|
