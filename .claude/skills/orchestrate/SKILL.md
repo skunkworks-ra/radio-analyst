@@ -95,6 +95,7 @@ in a clone). Find it once; the stages do not search for it.
 | 2 | precal | `radio-analyst:precal-stage` | `<ms_path> workdir=<workdir> online_flags=<...>`, the INSPECT HANDOFF lines, `pol_scope: off` |
 | 3 | calibrate | `radio-analyst:calibrate-stage` | `<ms_path> workdir=<workdir>` |
 | 4 | image | `radio-analyst:image-stage` | `<ms_path> workdir=<workdir>`, `stokes: I` |
+| 4b | postcal (when section 4 B or C finds outliers) | `radio-analyst:postcal-stage` | `<ms_path> workdir=<workdir>`, `field: <target fields>` |
 | 5 | selfcal (when section 4 says so) | `radio-analyst:selfcal-stage` | `<ms_path> workdir=<workdir> imagename=<prefix of the image to improve>` |
 
 ## Skill excerpts: the stage gets only the lines it needs
@@ -120,8 +121,8 @@ Keep the output in the prompt; if you save it, save it under
 | calibrate | `07-calibration-execution.md` | `## Execution protocol`, `## Placeholder reference`, `## Field selection`, `## solint guidance`, `## Calibration table naming`, `## Caltable solution flagging`, `## Drilling into`, `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 4b —`, `## Step 5 —`, `## Step 6 —`, `## Decision gate`, `## Antenna-set consistency`, `## Step 7 —`, `## Post-applycal assessment`, `## parang parameter` |
 | image | `11-imaging.md` | `## Placeholder reference`, `## Step 0 —`, `## Step 0.5 —`, `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 5 —`, `## Step 6 —`, `## Step 7 —`, `## Step 8 —`, `## Step 9 —` |
 | selfcal | `12-selfcal.md` | `## Prerequisites`, `## Step 0 —`, `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 5 —` |
-| selfcal | `ledger.md` | the whole file (`cat`) |
-| precal, calibrate, image, selfcal | `SKILL.md` | `## Running generated scripts` |
+| selfcal, postcal | `ledger.md` | the whole file (`cat`) |
+| precal, calibrate, image, selfcal, postcal | `SKILL.md` | `## Running generated scripts` |
 
 Put the output at the end of the stage prompt, after the arguments and values,
 as one block per file:
@@ -234,8 +235,7 @@ B. **Target amplitude against frequency.** `ms_spw_amp_severity({ms},
    the median `robust_sigma` of the SpWs with the lowest `severity`. Record, per
    SpW, the channels and half-SpWs over 13 Step 3's cut values; those values
    are the 24A-376 starting values (13:109-112), not a rule, so record the
-   numbers and say so. Residual RFI on that reading: stop and ask (post-cal
-   flagging is skill 13, not a stage here).
+   numbers and say so; note any residual RFI on that reading, then run C.
 C. **Target amplitude against time.** `ms_casa_task(task='visstat', params={vis:
    {ms}, field: <targets>, axis: 'amp', datacolumn: 'corrected', useflags: true,
    reportingaxes: 'integration'}, workdir, execute=True)`; Read the file at its
@@ -243,9 +243,18 @@ C. **Target amplitude against time.** `ms_casa_task(task='visstat', params={vis:
    per-integration mean amplitude and of `npts`, and the five integrations with
    the largest mean, each with its time, its ratio to that median and its
    `npts` against the median `npts` (a mostly flagged integration's mean rests
-   on few points). No skill rule gives a
-   cutoff: say so in the record, and if those integrations stand apart, stop
-   and ask. Note in the record that ms_casa_task was used for visstat only.
+   on few points). If B found residual RFI or integrations stand apart here,
+   go to D.
+D. **Flag, then check again.** Run stage 4b (postcal: rflag only on the
+   target's CORRECTED data, no clip; his call, 2026-11-06) with `field: <target
+   fields>`. Then run B and C again and record both. Then re-run the image
+   stage with `imagename: <target>_rflag`, so the earlier images stay for
+   comparison. Postcal flags once per reduction (one successful run; a retry
+   after a non-zero `.rc` counts against the cap of 5 like any stage); if B or
+   C still finds outliers after it, stop and ask. From here on, "the image" in
+   the steps below is the `_rflag` set. No skill rule gives a
+   cutoff: say so in the record. Note in the record that ms_casa_task was used
+   for visstat only.
 
 With A to C clear, the calibration and the data are ruled out, and the
 remaining gap is the imaging. Work down this order, one step per attempt:
@@ -268,6 +277,13 @@ remaining gap is the imaging. Work down this order, one step per attempt:
    clean model and both pass, run stage 5 (selfcal) with `imagename=` the
    prefix of the last target-field image (it wrote MODEL_DATA, which selfcal
    solves against; never the calibrator noise image).
+
+### 4b. postcal (rflag only)
+
+| Check | Tool, field | Pass | On fail |
+|---|---|---|---|
+| rflag ran on the targets | handoff `scripts` (`.rc` 0) and `ms_workflow_status` | rc 0 | retry |
+| Flagged fraction before and after, per target field | the stage's `ms_flag_summary` numbers, from the handoff | report it | none |
 
 ### 5. selfcal (12-selfcal.md:193-246)
 

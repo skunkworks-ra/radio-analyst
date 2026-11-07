@@ -189,7 +189,7 @@ def test_opencode_commands_match_claude_commands():
 # stage's tool grants.
 # ---------------------------------------------------------------------------
 
-STAGES = ("inspect", "precal", "calibrate", "image", "selfcal")
+STAGES = ("inspect", "precal", "calibrate", "image", "selfcal", "postcal")
 _ORCH_TOOL_RE = re.compile(r"^mcp__plugin_radio-analyst_(ms-\w+)__(\w+)$")
 
 
