@@ -1,5 +1,5 @@
 {
-  "description": "Build the radio-analyst Python/CASA environment under ${CLAUDE_PLUGIN_DATA} in the background, so the MCP servers never install inside their startup timeout. Log tool calls and reconcile them against the reduce contract once the reduce skill is invoked (scripts/plugin/reduce_hook.py).",
+  "description": "Build the radio-analyst Python/CASA environment under ${CLAUDE_PLUGIN_DATA} in the background, so the MCP servers never install inside their startup timeout. Log tool calls and reconcile them against the reduce contract once the reduce skill is invoked (scripts/plugin/reduce_hook.py). At session end, write per-session tokens and cost (ms_create/accounting.py) and rebuild the report.",
   "hooks": {
     "SessionStart": [
       {
@@ -70,6 +70,20 @@
               "${CLAUDE_PLUGIN_ROOT}/scripts/plugin/reduce_hook.py"
             ],
             "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/plugin/session_end.sh"
+            ],
+            "timeout": 60
           }
         ]
       }

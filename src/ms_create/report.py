@@ -257,7 +257,7 @@ def _png_gallery(pngs: list[Path], wd: Path) -> str:
 def _accounting_html(wd: Path) -> str:
     path = wd / "accounting.json"
     if not path.exists():
-        return "<p>No accounting.json in the workdir (written after the session ends).</p>"
+        return "<p>No accounting.json in the workdir (the SessionEnd hook writes it).</p>"
     try:
         a = json.loads(path.read_text())
     except (OSError, ValueError) as exc:
@@ -269,36 +269,31 @@ def _accounting_html(wd: Path) -> str:
         ("tool_calls", "tool calls"),
         ("input_tokens", "input"),
         ("output_tokens", "output"),
-        ("cache_read_tokens", "cache read"),
-        ("cache_write_tokens", "cache write"),
-        ("cost_usd_estimate", "cost USD"),
+        ("cache_read_input_tokens", "cache read"),
+        ("cache_creation_input_tokens", "cache write"),
+        ("cost_usd_estimate", "cost USD (est.)"),
     ]
     head = "<tr>" + "".join(f"<th>{h}</th>" for _, h in cols) + "</tr>"
     rows = []
     for r in a.get("sessions", []):
-        exact = r.get("tokens_exact")
         cells = []
         for k, _ in cols:
             v = r.get(k)
             if v is None:
                 cells.append("<td>n/a</td>")
-                continue
-            if k == "output_tokens" and not exact and v is not None:
-                v = f"≥ {v}"
-            if k == "cost_usd_estimate" and v is not None:
-                v = f"{v:.4f}" + ("" if exact else " (est.)")
-            cells.append(f"<td>{html.escape(str(v))}</td>")
+            elif k == "cost_usd_estimate":
+                cells.append(f"<td>{v:.4f}</td>")
+            else:
+                cells.append(f"<td>{html.escape(str(v))}</td>")
         rows.append("<tr>" + "".join(cells) + "</tr>")
     per_model = ", ".join(
         f"{html.escape(m)} {c:.4f}"
-        for m, c in (a.get("model_cost_usd") or {}).items()
+        for m, c in (a.get("model_cost_usd_estimate") or {}).items()
         if c is not None
     )
-    total = a.get("total_cost_usd")
+    total = a.get("total_cost_usd_estimate")
     summary = (
-        f"<p>Total {total:.4f} USD (measured; per model: {per_model}). "
-        f"{a.get('num_turns')} main turns, {a.get('duration_s', 0):.0f} s, "
-        f"permission denials: {html.escape(str(a.get('permission_denials') or 'none'))}.</p>"
+        f"<p>Total {total:.4f} USD, estimated (per model: {per_model}).</p>"
         if total is not None
         else ""
     )

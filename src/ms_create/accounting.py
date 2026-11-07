@@ -1,166 +1,185 @@
 """
-accounting.py — per-session accounting of a Claude Code headless run.
+accounting.py — per-session tokens and cost of a Claude Code run, from its
+session transcripts. Run by the plugin's SessionEnd hook
+(scripts/plugin/session_end.sh), so every run carries its own accounting.
 
-Reads the stream-json transcript of `claude -p --output-format stream-json`
-and writes `accounting.json` for ms_report's "Cost and sessions" table.
+Sources, all written by Claude Code itself:
+  <transcript>.jsonl                        the main session (the orchestrator)
+  <transcript dir>/subagents/agent-*.jsonl  one per subagent (stage agent)
+  <transcript dir>/subagents/agent-*.meta.json  its agentType
 
-What is measured and what is estimated:
-  - Tool calls, messages and cache tokens per session are MEASURED from the
-    stream (subagent messages carry the parent Agent call's id in
-    `parent_tool_use_id`). The stream's output_tokens are not final, so they are
-    a lower bound, except for a model's only session, which takes exact counts
-    from the CLI's modelUsage.
-  - Cost per model is MEASURED: the CLI's own `modelUsage[model].costUSD` in
-    the final `result` event.
-  - Cost per session is an ESTIMATE: each model's measured cost split over that
-    model's sessions by a token weight (input 1, output OUTPUT_WEIGHT, cache
-    read CACHE_READ_WEIGHT, cache write CACHE_WRITE_WEIGHT, relative to input).
-    Output tokens are not in the weight: the stream does not carry a session's
-    real output (it holds about 1.5% of it), so splitting by output would
-    follow noise. List prices alone did not reproduce the measured totals
-    (full2, list-price estimate over measured: Sonnet 1.15, Haiku 0.55; the
-    Haiku tier above 100K-token prompts is one reason), so only the split is
-    estimated and every model's total stays the measured one. A model with one
-    session (the orchestrator) gets its exact cost.
+Tokens per session are MEASURED: the final usage of each distinct assistant
+message, summed. (Checked on orch_20261106/full2: the four subagent transcripts
+sum to the CLI's measured Haiku totals to the token, and the main transcript to
+its Sonnet totals.)
 
-No CASA dependency.
+Cost per session is an ESTIMATE from list prices (PRICES), applied per message:
+cache read at 0.1x and cache write at 1.25x the input price, and the Haiku 5.5
+tier above 100K-token prompts. Checked against the CLI's measured cost on two
+runs (orch_20261106 full2 and smoke2): Haiku matched both (0.2537, 0.0030).
+Sonnet did not: -2.0% and -27%. Its cache writes are all 1-hour, whose rate the
+price source does not give, and no single rate fits both runs (they imply 2.68
+and 3.72 $/M), so the Sonnet cost is approximate. Opus prices are unchecked.
+
+The workdir is the one the session's own ms_report call named (read from the
+transcript), so a session that never built a report writes nothing.
+
+No CASA dependency. main() never raises: a hook must not fail the session.
 """
 
 from __future__ import annotations
 
 import json
+import sys
 from collections import defaultdict
 from pathlib import Path
 
-#: Token weights relative to an input token, for splitting a model's measured
-#: cost across its sessions: list-price ratios (cache read 0.1x, 5-minute cache
-#: write 1.25x). Output is left out; see the module docstring.
-CACHE_READ_WEIGHT = 0.1
-CACHE_WRITE_WEIGHT = 1.25
+#: $ per million tokens: (input, output, tier) with tier = (prompt tokens above
+#: which, input, output). Source: claude-api skill model table (cached
+#: 2026-10-06). A model not listed gets no cost.
+PRICES: dict[str, tuple[float, float, tuple[int, float, float] | None]] = {
+    "claude-sonnet-5-5": (2.00, 10.00, None),
+    "claude-haiku-5-5": (0.10, 0.50, (100_000, 0.50, 2.50)),
+    "claude-opus-5-5": (4.00, 20.00, None),
+}
+CACHE_READ_FACTOR = 0.1
+CACHE_WRITE_FACTOR = 1.25
 
 ACCOUNTING_NAME = "accounting.json"
+_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+)
 
 
-def from_claude_stream(jsonl_path: str) -> dict:
-    """Per-session tokens and cost from a Claude Code stream-json transcript."""
-    events = [
-        json.loads(line) for line in Path(jsonl_path).read_text().splitlines() if line.strip()
-    ]
-    agent_type: dict[str, str] = {}
-    # One message arrives as several events (one per content block), all with
-    # the same message id: tool calls are counted over every event, and the
-    # usage is the last event's (it carries the message's final counts).
-    per_msg: dict[str, dict] = {}
-    for ev in events:
+def _messages(path: Path) -> list[tuple[str | None, dict, int]]:
+    """(model, final usage, tool calls) per distinct assistant message id."""
+    usage: dict[str, tuple[str | None, dict]] = {}
+    tools: dict[str, set] = defaultdict(set)
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
         if ev.get("type") != "assistant":
             continue
-        msg = ev.get("message", {})
-        blocks = msg.get("content", [])
-        for block in blocks:
-            if block.get("type") == "tool_use" and block.get("name") in ("Agent", "Task"):
-                agent_type[block["id"]] = block.get("input", {}).get("subagent_type", "")
-        m = per_msg.setdefault(
-            msg.get("id"),
-            {
-                "key": ev.get("parent_tool_use_id") or "main",
-                "tool_ids": set(),
-                "usage": {},
-                "model": None,
-            },
+        msg = ev.get("message") or {}
+        mid = msg.get("id") or f"_{len(usage)}"
+        tools[mid].update(
+            b.get("id") for b in msg.get("content") or [] if b.get("type") == "tool_use"
         )
-        m["tool_ids"].update(b.get("id") for b in blocks if b.get("type") == "tool_use")
-        m["usage"] = msg.get("usage") or m["usage"]
-        m["model"] = msg.get("model") or m["model"]
-    sessions: dict[str, dict] = defaultdict(
-        lambda: {
-            "messages": 0,
-            "tool_calls": 0,
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "cache_read_tokens": 0,
-            "cache_write_tokens": 0,
-            "models": set(),
-        }
+        usage[mid] = (msg.get("model"), msg.get("usage") or {})
+    return [(m, u, len(tools[mid])) for mid, (m, u) in usage.items()]
+
+
+def _cost(model: str | None, u: dict) -> float | None:
+    price = PRICES.get(model or "")
+    if price is None:
+        return None
+    pin, pout, tier = price
+    prompt = sum(
+        u.get(k) or 0
+        for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
     )
-    for m in per_msg.values():
-        s = sessions[m["key"]]
-        u = m["usage"]
-        s["messages"] += 1
-        s["tool_calls"] += len(m["tool_ids"])
-        s["input_tokens"] += u.get("input_tokens") or 0
-        s["output_tokens"] += u.get("output_tokens") or 0
-        s["cache_read_tokens"] += u.get("cache_read_input_tokens") or 0
-        s["cache_write_tokens"] += u.get("cache_creation_input_tokens") or 0
-        if m["model"]:
-            s["models"].add(m["model"])
+    if tier and prompt > tier[0]:
+        pin, pout = tier[1], tier[2]
+    return (
+        (u.get("input_tokens") or 0) * pin
+        + (u.get("output_tokens") or 0) * pout
+        + (u.get("cache_read_input_tokens") or 0) * CACHE_READ_FACTOR * pin
+        + (u.get("cache_creation_input_tokens") or 0) * CACHE_WRITE_FACTOR * pin
+    ) / 1e6
 
-    result = next((e for e in reversed(events) if e.get("type") == "result"), {})
-    model_cost = {m: u.get("costUSD") for m, u in (result.get("modelUsage") or {}).items()}
-    # The stream's per-message output_tokens are not final (it under-counts
-    # output); a model with a single session takes its exact counts from the
-    # CLI's modelUsage. Elsewhere output_tokens is a lower bound.
-    model_usage = result.get("modelUsage") or {}
-    n_sessions: dict[str, int] = defaultdict(int)
-    for s_ in sessions.values():
-        if len(s_["models"]) == 1:
-            n_sessions[next(iter(s_["models"]))] += 1
-    for s_ in sessions.values():
-        mu = model_usage.get(next(iter(s_["models"]))) if len(s_["models"]) == 1 else None
-        s_["tokens_exact"] = bool(mu) and n_sessions[next(iter(s_["models"]))] == 1
-        if s_["tokens_exact"]:
-            s_["input_tokens"] = mu.get("inputTokens", s_["input_tokens"])
-            s_["output_tokens"] = mu.get("outputTokens", s_["output_tokens"])
-            s_["cache_read_tokens"] = mu.get("cacheReadInputTokens", s_["cache_read_tokens"])
-            s_["cache_write_tokens"] = mu.get("cacheCreationInputTokens", s_["cache_write_tokens"])
 
-    def weight(s: dict) -> float:
-        return (
-            s["input_tokens"]
-            + CACHE_READ_WEIGHT * s["cache_read_tokens"]
-            + CACHE_WRITE_WEIGHT * s["cache_write_tokens"]
-        )
+def _session(name: str, path: Path) -> dict:
+    row: dict = {"session": name, "messages": 0, "tool_calls": 0, **{k: 0 for k in _FIELDS}}
+    models: set[str] = set()
+    cost: float | None = 0.0
+    for model, u, n_tools in _messages(path):
+        row["messages"] += 1
+        row["tool_calls"] += n_tools
+        for k in _FIELDS:
+            row[k] += u.get(k) or 0
+        if model:
+            models.add(model)
+        c = _cost(model, u)
+        cost = None if c is None or cost is None else cost + c
+    row["model"] = ",".join(sorted(models))
+    row["cost_usd_estimate"] = round(cost, 4) if cost is not None else None
+    return row
 
+
+def from_transcript(transcript_path: str) -> dict:
+    """Accounting for a session and its subagents, from Claude Code transcripts."""
+    main = Path(transcript_path)
+    rows = [_session("main (orchestrator)", main)]
+    sub_dir = main.with_suffix("") / "subagents"
+    for f in sorted(sub_dir.glob("agent-*.jsonl")) if sub_dir.is_dir() else []:
+        meta = f.with_name(f.stem + ".meta.json")
+        try:
+            name = json.loads(meta.read_text()).get("agentType") or f.stem
+        except (OSError, ValueError):
+            name = f.stem
+        rows.append(_session(name, f))
+    costs = [r["cost_usd_estimate"] for r in rows]
     by_model: dict[str, float] = defaultdict(float)
-    for s in sessions.values():
-        if len(s["models"]) == 1:
-            by_model[next(iter(s["models"]))] += weight(s)
-
-    rows = []
-    for key, s in sessions.items():
-        model = next(iter(s["models"])) if len(s["models"]) == 1 else ",".join(sorted(s["models"]))
-        total = model_cost.get(model)
-        share = weight(s) / by_model[model] if by_model.get(model) else None
-        rows.append(
-            {
-                "session": "main (orchestrator)" if key == "main" else agent_type.get(key, key),
-                "tool_use_id": None if key == "main" else key,
-                "model": model,
-                **{k: v for k, v in s.items() if k != "models"},
-                "cost_usd_estimate": round(total * share, 4)
-                if total is not None and share is not None
-                else None,
-            }
-        )
+    for r in rows:
+        if r["cost_usd_estimate"] is not None:
+            by_model[r["model"]] += r["cost_usd_estimate"]
     return {
-        "source": str(jsonl_path),
-        "num_turns": result.get("num_turns"),
-        "duration_s": (result.get("duration_ms") or 0) / 1000,
-        "total_cost_usd": result.get("total_cost_usd"),
-        "model_cost_usd": model_cost,
-        "permission_denials": [d.get("tool_name") for d in result.get("permission_denials", [])],
+        "source": str(main),
         "sessions": rows,
+        "total_cost_usd_estimate": round(sum(costs), 4) if None not in costs else None,
+        "model_cost_usd_estimate": {m: round(c, 4) for m, c in by_model.items()},
         "note": (
-            "Per-model cost is measured (CLI modelUsage). A session that is its model's "
-            "only one has exact tokens and cost. For the others, output_tokens is a lower "
-            "bound (the stream holds only part of it), the stream also misses some cache "
-            "tokens (so those rows need not sum to the model's totals), and cost splits "
-            "the model's measured cost by input-side tokens (accounting.py): an estimate."
+            "Tokens per session are measured (Claude Code session transcripts). Cost is a "
+            "list-price estimate per message (accounting.py PRICES). Haiku's matched the "
+            "CLI's measured cost on two runs; Sonnet's came out 2% and 27% low, so treat "
+            "Sonnet cost as approximate."
         ),
     }
 
 
-def write(jsonl_path: str, workdir: str) -> Path:
-    """Write <workdir>/accounting.json from a stream-json transcript."""
-    out = Path(workdir) / ACCOUNTING_NAME
-    out.write_text(json.dumps(from_claude_stream(jsonl_path), indent=1))
-    return out
+def _report_workdir(transcript: Path) -> Path | None:
+    """The workdir of this session's last ms_report call, from its transcript."""
+    wd = None
+    for line in transcript.read_text().splitlines():
+        if "ms_report" not in line:
+            continue
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        for block in (ev.get("message") or {}).get("content") or []:
+            if block.get("type") == "tool_use" and str(block.get("name", "")).endswith("ms_report"):
+                params = block.get("input", {}).get("params", block.get("input", {}))
+                wd = params.get("workdir") or wd
+    return Path(wd) if wd and Path(wd).is_dir() else None
+
+
+def main() -> int:
+    """SessionEnd hook: write accounting.json and rebuild the report. Never fails."""
+    try:
+        hook = json.load(sys.stdin)
+        transcript = hook.get("transcript_path")
+        if not transcript or not Path(transcript).exists():
+            return 0
+        wd = _report_workdir(Path(transcript))
+        if wd is None:  # this session built no report: nothing to account into
+            return 0
+        (wd / ACCOUNTING_NAME).write_text(json.dumps(from_transcript(transcript), indent=1))
+        if (wd / "report_inputs.json").exists():
+            from ms_create import report
+
+            report.run(str(wd), reuse_saved=True)
+    except Exception as exc:  # a hook must not fail the session
+        print(f"accounting hook: {exc}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
