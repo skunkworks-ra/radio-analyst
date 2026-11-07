@@ -12,8 +12,9 @@ Arguments: the MS path, `workdir=<dir>`, and `field: <target fields>`. $ARGUMENT
 If `field:` is missing, STOP and ask for it: rflag must be scoped to the target
 fields, whose CORRECTED is valid after the final applycal.
 
-If your task prompt contains `SKILL EXCERPTS` blocks, they are the skill text
-for this stage: use them, and do not load the skill or read its files.
+If your task prompt contains `SKILL EXCERPT FILE:` lines, Read each named file
+once before starting: they are the skill text for this stage. Use them, and do
+not load the skill or read its files.
 Otherwise load the `radio-interferometry` skill (`radio-analyst:radio-interferometry`
 when installed as a plugin), then read only its `ledger.md`.
 

@@ -25,8 +25,9 @@ allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
 
 Run the full calibration solve sequence on this MS: $ARGUMENTS
 
-If your task prompt contains `SKILL EXCERPTS` blocks, they are the skill text
-for this stage: use them, and do not load the skill or read its files.
+If your task prompt contains `SKILL EXCERPT FILE:` lines, Read each named file
+once before starting: they are the skill text for this stage. Use them, and do
+not load the skill or read its files.
 Otherwise load the `radio-interferometry` skill (`radio-analyst:radio-interferometry` when
 installed as a plugin), then read only its `07-calibration-execution.md` and
 `ledger.md` supporting files (siblings of that skill's `SKILL.md`) before

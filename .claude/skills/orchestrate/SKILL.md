@@ -101,7 +101,7 @@ in a clone). Find it once; the stages do not search for it.
 ## Skill excerpts: the stage gets only the lines it needs
 
 A stage agent does not load the radio-interferometry skill. You cut the
-sections its command uses and send them in its prompt. `{ri}` is the
+sections its command uses into files and send it the file paths. `{ri}` is the
 radio-interferometry skill directory: the sibling `radio-interferometry/` of
 this skill's base directory. Bash is for this command only:
 
@@ -110,8 +110,8 @@ awk -v H='<heading 1>|<heading 2>|...' 'BEGIN{n=split(H,a,"|")} /^## /{p=0; for(
 ```
 
 Each heading is the start of a `## ` line; the section runs to the next `## `.
-Keep the output in the prompt; if you save it, save it under
-`{workdir}/orchestrator/`, never under `/tmp`.
+Redirect the output to `{workdir}/orchestrator/ex_<stage>_<file>.txt` (never
+under `/tmp`). Do not Read the excerpt files yourself.
 
 | Stage | File | Headings |
 |---|---|---|
@@ -124,13 +124,11 @@ Keep the output in the prompt; if you save it, save it under
 | selfcal, postcal | `ledger.md` | the whole file (`cat`) |
 | precal, calibrate, image, selfcal, postcal | `SKILL.md` | `## Running generated scripts` |
 
-Put the output at the end of the stage prompt, after the arguments and values,
-as one block per file:
+Put one line per file at the end of the stage prompt, after the arguments and
+values:
 
 ```
-SKILL EXCERPTS (<file>, sections: <headings>)
-<the command's output, verbatim>
-END SKILL EXCERPTS
+SKILL EXCERPT FILE: <path> (<file>, sections: <headings>)
 ```
 
 Record the exact command(s) in the attempt's JSON under `"excerpts"`.
