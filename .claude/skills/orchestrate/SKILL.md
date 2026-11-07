@@ -18,7 +18,11 @@ allowed-tools: Agent,
                mcp__plugin_radio-analyst_ms-inspect__ms_image_stats,
                mcp__plugin_radio-analyst_ms-inspect__ms_field_list,
                mcp__plugin_radio-analyst_ms-inspect__ms_spectral_window_list,
-               mcp__plugin_radio-analyst_ms-inspect__ms_casa_task_spec
+               mcp__plugin_radio-analyst_ms-inspect__ms_casa_task_spec,
+               mcp__plugin_radio-analyst_ms-inspect__ms_residual_stats,
+               mcp__plugin_radio-analyst_ms-inspect__ms_spw_amp_severity,
+               mcp__plugin_radio-analyst_ms-modify__ms_casa_task,
+               mcp__plugin_radio-analyst_ms-create__ms_report
 ---
 
 # Orchestrate: one MS, four stages, each checked
@@ -26,7 +30,9 @@ allowed-tools: Agent,
 Arguments: the MS path, `workdir=<dir>`, `online_flags=<path>|none`. If one is
 missing, stop and ask for it.
 
-You do not run CASA and you do not write to the MS. Stage agents do the work;
+You do not run CASA and you do not write to the MS. Two write tools are
+granted for narrow uses: `ms_casa_task` only for `visstat` (read-only), and
+`ms_report` only for the report at the end. Stage agents do the work;
 you hand each one its inputs, read its handoff, check the result with the
 read-only tools above, and decide what happens next. Every MCP tool takes one
 argument, `params`.
@@ -60,6 +66,7 @@ stage fails. Keys:
   "debug_params": {},
   "agent_id": "<the agent id the Agent tool returned, if it shows one>",
   "excerpts": ["<each excerpt command you ran for this prompt>"],
+  "png_reviewed": "<image stage and selfcal: what the PNG shows, after you Read it>",
   "agent_usage": "<the usage the Agent tool reported for this call, verbatim>"
 }
 ```
@@ -84,6 +91,7 @@ stage.
 | 2 | precal | `radio-analyst:precal-stage` | `<ms_path> workdir=<workdir> online_flags=<...>`, the INSPECT HANDOFF lines, `pol_scope: off` |
 | 3 | calibrate | `radio-analyst:calibrate-stage` | `<ms_path> workdir=<workdir>` |
 | 4 | image | `radio-analyst:image-stage` | `<ms_path> workdir=<workdir>`, `stokes: I` |
+| 5 | selfcal (when section 4 says so) | `radio-analyst:selfcal-stage` | `<ms_path> workdir=<workdir> imagename=<prefix of the image to improve>` |
 
 ## Skill excerpts: the stage gets only the lines it needs
 
@@ -105,7 +113,9 @@ Each heading is the start of a `## ` line; the section runs to the next `## `.
 | calibrate | `07b-gaincal-recovery.md` | the whole file (`cat`; Step 4b sends the stage there) |
 | calibrate | `07-calibration-execution.md` | `## Execution protocol`, `## Placeholder reference`, `## Field selection`, `## solint guidance`, `## Calibration table naming`, `## Caltable solution flagging`, `## Drilling into`, `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 4b —`, `## Step 5 —`, `## Step 6 —`, `## Decision gate`, `## Antenna-set consistency`, `## Step 7 —`, `## Post-applycal assessment`, `## parang parameter` |
 | image | `11-imaging.md` | `## Placeholder reference`, `## Step 0 —`, `## Step 0.5 —`, `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 5 —`, `## Step 6 —`, `## Step 7 —`, `## Step 8 —`, `## Step 9 —` |
-| precal, calibrate, image | `SKILL.md` | `## Running generated scripts` |
+| selfcal | `12-selfcal.md` | `## Prerequisites`, `## Step 0 —`, `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 5 —` |
+| selfcal | `ledger.md` | the whole file (`cat`) |
+| precal, calibrate, image, selfcal | `SKILL.md` | `## Running generated scripts` |
 
 Put the output at the end of the stage prompt, after the arguments and values,
 as one block per file:
@@ -185,16 +195,75 @@ record that it comes from the handoff.
 | Check | Tool, field | Pass | On fail |
 |---|---|---|---|
 | Image measures | `ms_image_stats(<imagename>.image.pbcor, psf_path, pb_level)` | status ok | retry |
-| `residual_rms_jy` vs the radiometer estimate (11:355) | `ms_image_stats` | within 2x | > 3x: stop, the problem is in calibration (11:360); 2x to 3x: retry |
+| `residual_rms_jy` vs the radiometer estimate (11:355) | `ms_image_stats` | within 2x | over 2x: "When noise is not met" below |
 | `residual_dynamic_range` (11:356) | `ms_image_stats` | > 20 for a target | retry |
 | `detection` label (11:364) | `ms_image_stats` | report it; not a pass/fail | none |
 
 Record as `not_checked`: `beam_major_arcsec` and `peak_jy` (11:357-358) unless
 the handoff gives the expected beam.
 
-A retry after a failed image check may hand the stage `deconvolver: asp` (the
-change: 11 Step 2 puts asp last, after multiscale). asp is expensive: say so in
-the record's `reason`, and hand it only once multiscale has been tried.
+#### When noise is not met
+
+A dirty or lightly cleaned image of filled, extended emission cannot be at the
+noise level: the residual comes down as cleaning goes deeper. So a residual over
+2x the radiometer estimate is not, by itself, a calibration failure. Rule out
+the sources of error first, in this order, then work on the image. Record each
+step's numbers as checks.
+
+A. **Noise on the calibrator.** A point-source calibrator images to the noise
+   when the calibration is good, so it is the representative noise test. Run the
+   image stage on the phase calibrator: arguments `<ms_path> workdir=<workdir>`,
+   `field: <phase cal>`, `stokes: I`, `passes: 1`, `imagename: <phase cal>_noise`
+   (its own name, so the target images are not overwritten). Its `residual_rms_jy` within
+   2x its own radiometer estimate (11:355) rules the calibration out. Over 2x:
+   the calibration is suspect; stop and ask.
+B. **Target amplitude against frequency.** `ms_spw_amp_severity({ms},
+   datacolumn='CORRECTED_DATA', field=<targets>)`. Its per-channel
+   `robust_sigma` is the 13 Step 3 measure (13:101-106, :143-148). The floor is
+   the median `robust_sigma` of the SpWs with the lowest `severity`. Record, per
+   SpW, the channels and half-SpWs over 13 Step 3's cut values; those values
+   are the 24A-376 starting values (13:109-112), not a rule, so record the
+   numbers and say so. Residual RFI on that reading: stop and ask (post-cal
+   flagging is skill 13, not a stage here).
+C. **Target amplitude against time.** `ms_casa_task(task='visstat', params={vis:
+   {ms}, field: <targets>, axis: 'amp', datacolumn: 'corrected', useflags: true,
+   reportingaxes: 'integration'}, workdir, execute=True)`; Read the file at its
+   `data.result_path.value`. Record the median over integrations of the
+   per-integration mean amplitude, and the five integrations with the largest
+   mean, with their times and their ratio to that median. No skill rule gives a
+   cutoff: say so in the record, and if those integrations stand apart, stop
+   and ask. Note in the record that ms_casa_task was used for visstat only.
+
+With A to C clear, the calibration and the data are ruled out, and the
+remaining gap is the imaging. Work down this order, one step per attempt:
+
+1. **Cleaning.** Read `converged` and `stopcode` for the image from
+   `{workdir}/stage_log.jsonl` (the `tclean` line), and its `deconvolver` from
+   its script `{workdir}/tclean_<prefix>.py`. Not converged, or the
+   deconvolver was hogbom: retry the image stage with the change named
+   (`deconvolver: multiscale`, then `deconvolver: asp` last: 11 Step 2; asp is
+   expensive, say so in `reason`).
+2. **Look at the image.** Read the PNG (`<prefix>.png`, the one `ms_image_stats`
+   wrote) with the Read tool before deciding anything further. Write what you
+   see into the record's `png_reviewed`: is the source structure clean, or are
+   there stripes, rings or negative bowls around it?
+3. **Selfcal, if the model is good.** This also covers 11:360 (over 3x: run
+   `ms_residual_stats` before re-imaging). Apply 12 Step 0 (12:36-62): `dynamic_range`
+   from `ms_image_stats` (< 30: selfcal unlikely to help, stop and ask; 30 and
+   up: proceed), and `ms_residual_stats` on each target pointing (any SpW with
+   `p95_amp / median_amp` > 10: RFI-dominated, stop and ask). If the PNG shows a
+   clean model and both pass, run stage 5 (selfcal) with `imagename=` the
+   prefix of the last target-field image (it wrote MODEL_DATA, which selfcal
+   solves against; never the calibrator noise image).
+
+### 5. selfcal (12-selfcal.md:193-246)
+
+| Check | Tool, field | Pass | On fail |
+|---|---|---|---|
+| Selfcal image measures | `ms_image_stats(<prefix>_sc1.image.pbcor, psf_path, pb_level)` | status ok | retry |
+| `dynamic_range` change vs the image before (12:217-222) | `ms_image_stats`, both images | report it | < 10%: did not help, end; 10% or more: end and recommend more rounds to the user (12:235-246, one pass only); decreased: diverged, end and point at the `pcal1.g` solutions |
+
+Read `<prefix>_sc1.png` and record `png_reviewed` as in section 4.
 
 ## Retries and debug mode
 
@@ -221,5 +290,10 @@ parameter the stage tool does not expose (its own parameters come first).
 
 ## End
 
-After image (or a stop), report: each stage, its attempts, the deciding check
-of each, and the record files. Do not judge the science beyond the checks.
+After the last stage (or a stop), build the report with
+`ms_report(workdir, summary, decisions, caveats, image_path=<last .image.pbcor>)`.
+It embeds every PNG in the workdir. Summary: each stage, its attempts and the
+deciding check of each. Decisions: each retry, debug use and selfcal decision
+with the numbers it rests on. Caveats: every `not_checked` row. Use backticks
+only around short `name = value` items. Then say in chat where the report is.
+Do not judge the science beyond the checks.

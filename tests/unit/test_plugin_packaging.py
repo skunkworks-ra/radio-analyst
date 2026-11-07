@@ -189,7 +189,7 @@ def test_opencode_commands_match_claude_commands():
 # stage's tool grants.
 # ---------------------------------------------------------------------------
 
-STAGES = ("inspect", "precal", "calibrate", "image")
+STAGES = ("inspect", "precal", "calibrate", "image", "selfcal")
 _ORCH_TOOL_RE = re.compile(r"^mcp__plugin_radio-analyst_(ms-\w+)__(\w+)$")
 
 
@@ -226,7 +226,9 @@ def test_orchestrator_grants_registered_read_only_tools_and_calls_each_stage():
             assert t in ("Agent", "Read", "Write", "Bash"), t
             continue
         server, tool = m.groups()
-        assert server == "ms-inspect", f"orchestrator must not hold write tools: {t}"
+        assert server == "ms-inspect" or t.endswith(("__ms_report", "__ms_casa_task")), (
+            f"orchestrator must not hold write tools: {t}"
+        )
         assert tool in registered[server], t
     body = path.read_text()
     for stage in STAGES:

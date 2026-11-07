@@ -29,7 +29,10 @@ Prerequisite: CORRECTED_DATA populated on the target field(s) — run
 1. `ms_workflow_status(ms_path, workdir)` — confirm CORRECTED is populated.
 
 2. **Step 0 — field and Stokes** per 11-imaging.md §0. If the arguments give
-   `stokes:`, `field:` or `deconvolver:`, use them. Otherwise: the run's named
+   `stokes:`, `field:`, `deconvolver:`, `imagename:` or `passes: 1`, use them.
+   `<name>` below is the `imagename:` given, else the target name. `passes: 1`:
+   the first pass only, with `savemodel='none'` so the field's MODEL_DATA is not
+   overwritten; t_on_source and the radiometer estimate are for the field imaged. Otherwise: the run's named
    targets (else all target fields, a mosaic for pointings of one source);
    Stokes='IQUV' if polcal ran, else 'I'. State both in the report.
 
@@ -38,7 +41,7 @@ Prerequisite: CORRECTED_DATA populated on the target field(s) — run
    - `ms_spectral_window_list(ms_path)` → bandwidth_hz
    - `ms_antenna_list(ms_path)` → dish_diameter_m, n_ant
    - `ms_baseline_lengths(ms_path)` → max_baseline_m, expected_beam_major_arcsec
-   - `ms_scan_list(ms_path)` → t_on_source_s for the target field
+   - `ms_scan_list(ms_path)` → t_on_source_s for the imaged field
 
 4. Derive tclean parameters per 11-imaging.md §Steps 1–7:
    - specmode (§1): 'mfs' unless user asks for a cube

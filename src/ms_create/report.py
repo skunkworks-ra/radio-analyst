@@ -11,6 +11,8 @@ Build one HTML report of a reduction from what the workdir already holds:
   - the open items the reduce hook recorded at its last Stop (reduce_hooks.jsonl)
   - the replay script from the last ledger render (reduction_replay.py), linked and shown
   - links to the HTML plots already written (caltable dashboards)
+  - every PNG in the workdir and its plots/ (image previews, caltable plots),
+    embedded in the page so it stands alone
   - an interactive view of one image plane, if `image_path` is given
 
 The narrative sections (summary, decisions, caveats) are written by the model
@@ -20,6 +22,7 @@ Re-running it overwrites report.html, so it can be rebuilt after every step.
 
 from __future__ import annotations
 
+import base64
 import html
 import json
 import re
@@ -32,17 +35,27 @@ from ms_inspect.util.formatting import response_envelope
 TOOL_NAME = "ms_report"
 REPORT_NAME = "report.html"
 MAX_IMAGE_PIX = 1024
+#: A backtick span longer than this is prose the model quoted whole, not a
+#: `name = value`; it is shown as plain text so the page does not turn into
+#: walls of monospace. A layout choice, not a measurement.
+MAX_CODE_SPAN = 80
 
 _CSS = """
 body { font-family: sans-serif; margin: 2em; max-width: 1200px; }
 table { border-collapse: collapse; width: 100%; }
-td, th { border: 1px solid #ccc; padding: 4px 6px; vertical-align: top; font-size: 13px; }
+td, th { border: 1px solid #ccc; padding: 6px 8px; vertical-align: top; font-size: 13px;
+         line-height: 1.4; overflow-wrap: anywhere; }
+table.steps { table-layout: fixed; }
+li { margin: 0.25em 0; line-height: 1.45; }
 th { background: #eee; }
 pre { margin: 0; white-space: pre-wrap; font-size: 12px; }
 tr.dropped { opacity: 0.4; }
 #keep { width: 100%; font-family: monospace; }
 code { background: #eef3ff; padding: 0 3px; }
 .choice { background: #fff3c4; }
+figure { margin: 1em 0; }
+figure img { max-width: 100%; border: 1px solid #ccc; }
+figcaption { font-size: 13px; color: #444; }
 td.params div { font-family: monospace; font-size: 12px; }
 td.params div.set { background: #fff3c4; }
 """
@@ -84,7 +97,12 @@ def _read_jsonl(path: Path) -> list[dict]:
 def _inline(line: str) -> str:
     """Escape, then `name = value` as code and [step N, ...] as a link to that row."""
     out = html.escape(line, quote=False)
-    out = re.sub(r"`([^`]+)`", r"<code>\1</code>", out)
+
+    def _code(m: re.Match) -> str:
+        span = m.group(1)
+        return span if len(span) > MAX_CODE_SPAN else f"<code>{span}</code>"
+
+    out = re.sub(r"`([^`]+)`", _code, out)
 
     def _step(m: re.Match) -> str:
         cls = ' class="choice"' if "model choice" in m.group(0) else ""
@@ -196,12 +214,37 @@ def _steps_table(records: list[dict], wd: Path) -> str:
         "<tr><th>keep</th><th>step</th><th>tool</th><th>why</th>"
         "<th>params</th><th>outputs</th><th>script</th></tr>"
     )
-    return f"<table>{head}{''.join(rows)}</table>"
+    cols = (
+        '<colgroup><col style="width:5%"><col style="width:4%"><col style="width:15%">'
+        '<col style="width:26%"><col style="width:22%"><col style="width:20%">'
+        '<col style="width:8%"></colgroup>'
+    )
+    return f'<table class="steps">{cols}{head}{"".join(rows)}</table>'
 
 
 def _open_items(wd: Path) -> list[str] | None:
     stops = [r for r in _read_jsonl(wd / "reduce_hooks.jsonl") if r.get("event") == "stop"]
     return stops[-1].get("open", []) if stops else None
+
+
+def _pngs(wd: Path) -> list[Path]:
+    """PNGs in the workdir and its plots/, oldest first (the order they were made)."""
+    found = {*wd.glob("*.png"), *wd.glob("plots/*.png")}
+    return sorted(found, key=lambda p: (p.stat().st_mtime, p.name))
+
+
+def _png_gallery(pngs: list[Path], wd: Path) -> str:
+    if not pngs:
+        return "<p>No PNG images in the workdir.</p>"
+    figs = []
+    for p in pngs:
+        data = base64.b64encode(p.read_bytes()).decode("ascii")
+        name = html.escape(str(p.relative_to(wd)))
+        figs.append(
+            f'<figure><img alt="{name}" src="data:image/png;base64,{data}">'
+            f"<figcaption>{name}</figcaption></figure>"
+        )
+    return "".join(figs)
 
 
 def _plot_links(wd: Path) -> list[str]:
@@ -215,7 +258,7 @@ def _image_panel(image_path: str) -> tuple[str, str, dict]:
     from bokeh.embed import components
     from bokeh.models import ColorBar, LinearColorMapper
     from bokeh.plotting import figure
-    from bokeh.resources import CDN
+    from bokeh.resources import INLINE
 
     from ms_inspect.util.casa_context import open_image
 
@@ -240,6 +283,7 @@ def _image_panel(image_path: str) -> tuple[str, str, dict]:
         match_aspect=True,
         x_range=(0, view.shape[1]),
         y_range=(0, view.shape[0]),
+        toolbar_location=None,
     )
     fig.image(
         image=[np.nan_to_num(view, nan=lo)],
@@ -255,7 +299,8 @@ def _image_panel(image_path: str) -> tuple[str, str, dict]:
         f"shape {shape}; plane 0 of axes past RA/Dec; every {step}th pixel; "
         f"colour range is the 1st to 99.9th percentile of the shown plane"
     )
-    return CDN.render() + script, div, fmt_field(image_path, "COMPLETE", note)
+    # INLINE, not CDN: the report must render with no network.
+    return INLINE.render() + script, div, fmt_field(image_path, "COMPLETE", note)
 
 
 def run(
@@ -288,6 +333,7 @@ def run(
     records = _read_jsonl(wd / "reduction_log.jsonl")
     open_items = _open_items(wd)
     plots = _plot_links(wd)
+    pngs = _pngs(wd)
     replay = wd / "reduction_replay.py"
     if replay.exists():
         replay_html = (
@@ -332,7 +378,9 @@ def run(
         f"<h1>Reduction report</h1><p>{html.escape(str(wd.resolve()))}<br>built {now}, "
         f"{len(records)} recorded steps</p>",
         *(f"<h2>{t}</h2>{b}" for t, b in sections if b),
-        "<h2>Image</h2>",
+        "<h2>Images</h2>",
+        _png_gallery(pngs, wd),
+        "<h2>Image plane</h2>",
         img_div,
         _PB_NOTE if image_path else "",
         "<h2>Steps</h2>",
@@ -365,6 +413,8 @@ def run(
             if open_items is not None
             else fmt_field(None, "UNAVAILABLE", "no reduce_hooks.jsonl Stop record"),
             "plots": fmt_field(plots),
+            "images_embedded": fmt_field([str(p.relative_to(wd)) for p in pngs]),
+            "images_embedded_bytes": fmt_field(sum(p.stat().st_size for p in pngs)),
             "replay_script": fmt_field(str(replay))
             if replay.exists()
             else fmt_field(None, "UNAVAILABLE", "ledger not rendered yet"),

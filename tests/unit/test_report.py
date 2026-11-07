@@ -6,6 +6,7 @@ Unit tests for ms_create/report.py — ms_report HTML builder. No CASA required
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -123,3 +124,31 @@ def test_dead_script_path_is_plain_text(tmp_path):
     steps = (tmp_path / "report.html").read_text().split("<h2>Steps")[1].split("<h2>Open")[0]
     assert "applycal.py" in steps
     assert 'href="applycal.py"' not in steps
+
+
+def test_workdir_pngs_are_embedded_in_order(workdir):
+    from ms_create.report import run
+
+    png = bytes.fromhex(
+        "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+        "0000000d49444154789c6360000002000100e221bc330000000049454e44ae426082"
+    )
+    (Path(workdir) / "img_hogbom.png").write_bytes(png)
+    (Path(workdir) / "plots").mkdir(exist_ok=True)
+    (Path(workdir) / "plots" / "gain.png").write_bytes(png)
+    out = run(workdir)
+    page = (Path(workdir) / "report.html").read_text()
+    assert page.count("data:image/png;base64,") == 2
+    assert "<figcaption>img_hogbom.png</figcaption>" in page
+    assert "<figcaption>plots/gain.png</figcaption>" in page
+    assert out["data"]["images_embedded"]["value"] == ["img_hogbom.png", "plots/gain.png"]
+
+
+def test_long_backtick_span_is_plain_text(workdir):
+    from ms_create.report import MAX_CODE_SPAN, run
+
+    long = "x " * MAX_CODE_SPAN
+    run(workdir, summary=f"- `refant = ea21` and `{long}`")
+    page = (Path(workdir) / "report.html").read_text()
+    assert "<code>refant = ea21</code>" in page
+    assert f"<code>{long}</code>" not in page and long in page
