@@ -61,7 +61,9 @@ Every "→ run" below: run the script detached and poll it, as the skill's
 5. `ms_generate_priorcals(calibrators.ms, workdir, execute=False)` → run.
    Then `ms_verify_priorcals(calibrators.ms, workdir)` — its `priorcals_list` goes to step 8.
 
-6. `ms_pol_cal_conditions(calibrators.ms)` and `ms_correlator_config(calibrators.ms)`
+6. If the arguments say `pol_scope: off`, polarisation is out of scope: skip to
+   the `ms_setjy` call at the end of this step. Otherwise
+   `ms_pol_cal_conditions(calibrators.ms)` and `ms_correlator_config(calibrators.ms)`
    first. Polarisation is in scope when `pol_angle_calibrator.available` and
    `leakage_calibrator.available` are true, `pol_angle_calibrator.pol_angle_deg`
    is not UNAVAILABLE, and `full_stokes` is true: follow 10-precal-workflow.md Step 4's

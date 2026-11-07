@@ -180,3 +180,55 @@ def test_opencode_commands_match_claude_commands():
         copy = dst / f"radio-analyst-{cmd.name}"
         assert copy.is_file() and not copy.is_symlink(), copy
         assert copy.read_text() == cmd.read_text(), f"{copy} differs from {cmd}"
+
+
+# ---------------------------------------------------------------------------
+# Stage agents (agents/*-stage.md) and the orchestrate skill. A stage agent runs
+# its command through the Skill tool, so its `tools:` must be exactly that
+# command's allowed-tools plus Skill: the command stays the single source of the
+# stage's tool grants.
+# ---------------------------------------------------------------------------
+
+STAGES = ("inspect", "precal", "calibrate", "image")
+_ORCH_TOOL_RE = re.compile(r"^mcp__plugin_radio-analyst_(ms-\w+)__(\w+)$")
+
+
+def _frontmatter(path: Path) -> dict:
+    return yaml.safe_load(path.read_text().split("---\n", 2)[1])
+
+
+def _tools(raw) -> list[str]:
+    return [t.strip() for t in (raw if isinstance(raw, list) else raw.split(",")) if t.strip()]
+
+
+@pytest.mark.parametrize("stage", STAGES)
+def test_stage_agent_tools_are_its_command_grants_plus_skill(stage):
+    agent = _frontmatter(REPO_ROOT / "agents" / f"{stage}-stage.md")
+    command = _frontmatter(REPO_ROOT / ".claude" / "commands" / f"{stage}.md")
+    assert agent["name"] == f"{stage}-stage"
+    assert agent["model"] == "haiku"
+    assert _tools(agent["tools"]) == _tools(command["allowed-tools"]) + ["Skill"]
+
+
+@pytest.mark.parametrize("stage", STAGES)
+def test_stage_agent_runs_its_own_command(stage):
+    body = (REPO_ROOT / "agents" / f"{stage}-stage.md").read_text()
+    assert f"skill `radio-analyst:{stage}`" in body
+
+
+def test_orchestrator_grants_registered_read_only_tools_and_calls_each_stage():
+    path = REPO_ROOT / ".claude" / "skills" / "orchestrate" / "SKILL.md"
+    fm = _frontmatter(path)
+    registered = _registered_tools()
+    for t in _tools(fm["allowed-tools"]):
+        m = _ORCH_TOOL_RE.match(t)
+        if not m:
+            assert t in ("Agent", "Read", "Write"), t
+            continue
+        server, tool = m.groups()
+        assert server == "ms-inspect", f"orchestrator must not hold write tools: {t}"
+        assert tool in registered[server], t
+    body = path.read_text()
+    for stage in STAGES:
+        assert f"`radio-analyst:{stage}-stage`" in body
+    assert body.count("Retry cap: 5") == 1

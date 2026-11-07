@@ -26,7 +26,8 @@ Prerequisite: CORRECTED_DATA populated on the target field(s) — run
 
 1. `ms_workflow_status(ms_path, workdir)` — confirm CORRECTED is populated.
 
-2. **Step 0 — field and Stokes** per 11-imaging.md §0: the run's named
+2. **Step 0 — field and Stokes** per 11-imaging.md §0. If the arguments give
+   `stokes:` or `field:`, use them. Otherwise: the run's named
    targets (else all target fields, a mosaic for pointings of one source);
    Stokes='IQUV' if polcal ran, else 'I'. State both in the report.
 
