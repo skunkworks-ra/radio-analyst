@@ -66,7 +66,7 @@ stage fails. Keys:
   "debug_params": {},
   "agent_id": "<the agent id the Agent tool returned, if it shows one>",
   "excerpts": ["<each excerpt command you ran for this prompt>"],
-  "png_reviewed": "<image stage and selfcal: what the PNG shows, after you Read it>",
+  "png_reviewed": "<image stage and selfcal: what the PNG shows, after you Read it; `not_viewed` if the image did not reach you>",
   "agent_usage": "<the usage the Agent tool reported for this call, verbatim>"
 }
 ```
@@ -84,6 +84,10 @@ prompt with the stage's arguments first (the stage command's own argument
 line), then the values you hand it, one per line as `name: value`. This is a
 Stokes I continuum reduction: scope values are fixed here, not left to the
 stage.
+
+Every stage prompt also carries `python: <path>`: the interpreter that runs the
+generated scripts (the one this session's context names, or `pixi run python`
+in a clone). Find it once; the stages do not search for it.
 
 | # | Stage | Agent | Arguments |
 |---|---|---|---|
@@ -105,6 +109,8 @@ awk -v H='<heading 1>|<heading 2>|...' 'BEGIN{n=split(H,a,"|")} /^## /{p=0; for(
 ```
 
 Each heading is the start of a `## ` line; the section runs to the next `## `.
+Keep the output in the prompt; if you save it, save it under
+`{workdir}/orchestrator/`, never under `/tmp`.
 
 | Stage | File | Headings |
 |---|---|---|
@@ -179,6 +185,10 @@ coherence rows `not_checked` with the string as the reason.
 | Phase cal gains (11:67) | same, `amp_robust_std` vs `amp_median` | < ~20% | retry |
 | Target not decorrelated (11:68) | `ms_corrected_stats({ms}, field=<targets>, chan_start, chan_end)` `amp_median`, `amp_robust_std` | `amp_median` > 0, std not ≫ median | retry |
 
+Record the target's `phase_rms_deg` per pointing beside that row. 11:68 gives no
+phase criterion for the target (a resolved source has structure phase), so it
+is a number to report, not a pass/fail.
+
 Record as `not_checked` with the reason: 07:655 (lost antennas flagged on both
 MSs: no read-only tool measures it) and 07:656 (fluxscale flux vs
 `flux_estimate`: copy the stage's value from the handoff into `value` and say
@@ -208,7 +218,8 @@ A dirty or lightly cleaned image of filled, extended emission cannot be at the
 noise level: the residual comes down as cleaning goes deeper. So a residual over
 2x the radiometer estimate is not, by itself, a calibration failure. Rule out
 the sources of error first, in this order, then work on the image. Record each
-step's numbers as checks.
+step's numbers as checks. Run A, B and C in that order, each one even when it is
+slow; a later step never stands in for an earlier one.
 
 A. **Noise on the calibrator.** A point-source calibrator images to the noise
    when the calibration is good, so it is the representative noise test. Run the
@@ -229,8 +240,10 @@ C. **Target amplitude against time.** `ms_casa_task(task='visstat', params={vis:
    {ms}, field: <targets>, axis: 'amp', datacolumn: 'corrected', useflags: true,
    reportingaxes: 'integration'}, workdir, execute=True)`; Read the file at its
    `data.result_path.value`. Record the median over integrations of the
-   per-integration mean amplitude, and the five integrations with the largest
-   mean, with their times and their ratio to that median. No skill rule gives a
+   per-integration mean amplitude and of `npts`, and the five integrations with
+   the largest mean, each with its time, its ratio to that median and its
+   `npts` against the median `npts` (a mostly flagged integration's mean rests
+   on few points). No skill rule gives a
    cutoff: say so in the record, and if those integrations stand apart, stop
    and ask. Note in the record that ms_casa_task was used for visstat only.
 

@@ -252,3 +252,13 @@ def test_orchestrator_excerpt_headings_exist_in_their_files():
             assert sum(line.startswith(h) for line in lines) == 1, (fname, h)
             n += 1
     assert n > 0
+
+
+@pytest.mark.parametrize("stage", STAGES)
+def test_opencode_stage_agent_inlines_its_command(stage):
+    # opencode has no Skill-loads-a-command step: the runner inlines the
+    # "@.claude/commands/<stage>.md" line, so the command stays the single source.
+    path = REPO_ROOT / ".opencode" / "agents" / f"{stage}-stage.md"
+    fm = _frontmatter(path)
+    assert fm["mode"] == "subagent"
+    assert path.read_text().count(f"@.claude/commands/{stage}.md") == 1

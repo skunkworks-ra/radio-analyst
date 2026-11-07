@@ -174,6 +174,14 @@ for cmd in pathlib.Path(".opencode/commands").glob("*.md"):
         body = pathlib.Path(m.group(1)).read_text().split("---", 2)[2].lstrip()
         cmd.unlink()
         cmd.write_text(t.replace(m.group(0), body))
+# Stage agents (.opencode/agents) name their command as "@.claude/commands/<stage>.md":
+# inline its body (without frontmatter), as Claude Code's Skill call loads it.
+for ag in pathlib.Path(".opencode/agents").glob("*.md"):
+    t = ag.read_text()
+    m = re.search(r"^@(\.claude/commands/\S+\.md)$", t, re.M)
+    if m:
+        body = pathlib.Path(m.group(1)).read_text().split("---", 2)[2].lstrip()
+        ag.write_text(t.replace(m.group(0), body))
 PYEOF
 export CLAUDE_PROJECT_DIR=/work/run
 python3 - <<'PYEOF'
@@ -218,6 +226,11 @@ fi
 set -e
 t3=$(date +%s)
 [[ -n "$sid" ]] && opencode export "$sid" >/out/session.json 2>>/out/opencode.stderr || true
+# Subagent (stage) sessions are child sessions: export each, for per-agent accounting.
+curl -s http://127.0.0.1:4096/session >/out/sessions.json 2>>/out/opencode.stderr || true
+python3 -c "import json;[print(x['id']) for x in json.load(open('/out/sessions.json')) if x.get('parentID')]" 2>/dev/null \
+    | while read -r cid; do opencode export "$cid" >"/out/session_$cid.json" 2>>/out/opencode.stderr || true; done
+step "child sessions exported: $(ls /out/session_*.json 2>/dev/null | wc -l)"
 [[ -s /out/session.json ]] || step "session export failed for '$sid'"
 kill $srv 2>/dev/null || true
 

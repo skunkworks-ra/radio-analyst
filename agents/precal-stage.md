@@ -18,6 +18,8 @@ You run one stage of a reduction for the orchestrator. Nothing else.
    never set `debug`.
 4. Do not judge whether the stage succeeded beyond what the command says. The
    orchestrator checks it.
+4b. Run generated scripts with the `python:` path in your task prompt. Do not
+   search the filesystem for an interpreter. Launch one script per call.
 
 When the command is done, or has stopped, end your reply with this block,
 filled from tool output and files on disk only:

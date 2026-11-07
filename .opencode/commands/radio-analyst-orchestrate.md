@@ -1,0 +1,16 @@
+---
+description: "Orchestrate a Stokes I continuum reduction of one MS with stage subagents, each stage checked before the next. Same as /radio-analyst:orchestrate in Claude Code."
+---
+@.claude/skills/orchestrate/SKILL.md
+
+Base directory for this skill: .claude/skills/orchestrate
+
+In opencode, launch each stage with the subagent tool; the agent id is the name
+after `radio-analyst:` in the stage table (for example `inspect-stage`). Where
+the skill names the Agent tool or `subagent_type`, use the subagent tool and the
+agent id. `{ri}` is `.claude/skills/radio-interferometry`. The subagent tool
+reports no usage: write `agent_usage: "n/a (opencode)"`; accounting comes from
+the session exports. If a PNG you Read does not reach you as an image, write
+`png_reviewed: "not_viewed"` and do not describe it.
+
+ARGUMENTS: $ARGUMENTS
