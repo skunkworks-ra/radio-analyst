@@ -27,8 +27,11 @@ from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
 from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import record_stage
+from ms_modify import debug_mode
 
 TOOL_NAME = "ms_generate_priorcals"
+#: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
+DEBUG_TASKS = ("gencal",)
 
 
 def _table_nrows(path: str) -> int:
@@ -195,6 +198,8 @@ def run(
     ms_path: str,
     workdir: str,
     execute: bool = False,
+    debug: bool = False,
+    debug_params: dict | None = None,
 ) -> dict:
     """
     Generate prior calibration tables (gc, opac, rq, antpos).
@@ -237,7 +242,11 @@ def run(
         rq_table=rq_table,
         antpos_table=antpos_table,
     )
+    _debug = debug_mode.validate(debug, debug_params, DEBUG_TASKS)
+    if _debug:
+        warnings.append(debug_mode.note(_debug))
     write_script(script_path, script_content)
+    debug_mode.inject_file(script_path, _debug)
     casa_calls.append(f"write_script → {script_path}")
 
     if not execute:
@@ -262,6 +271,8 @@ def run(
     # execute=True: run gencal in-process
     try:
         from casatasks import gencal  # type: ignore[import]
+
+        gencal = debug_mode.wrap("gencal", gencal, _debug)
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
 

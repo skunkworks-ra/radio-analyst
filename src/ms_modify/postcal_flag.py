@@ -43,8 +43,11 @@ from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, normalize_spw_sel, response_envelope
 from ms_inspect.util.logs import write_script
 from ms_inspect.util.selection import match_field_names, parallel_corr_by_ddid
+from ms_modify import debug_mode
 
 TOOL_NAME = "ms_postcal_flag"
+#: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
+DEBUG_TASKS = ("flagdata",)
 
 _FLAG_VERSION = "before_postcal_flag"
 
@@ -362,6 +365,8 @@ def run(
     timecutoff: float = 4.0,
     freqcutoff: float = 4.0,
     execute: bool = False,
+    debug: bool = False,
+    debug_params: dict | None = None,
 ) -> dict:
     """
     Generate (and optionally execute) post-calibration RFI flagging.
@@ -484,7 +489,11 @@ def run(
     )
 
     script_content = _build_script(ms_str, flag_calls, workdir=str(workdir_path))
+    _debug = debug_mode.validate(debug, debug_params, DEBUG_TASKS)
+    if _debug:
+        warnings.append(debug_mode.note(_debug))
     write_script(script_path, script_content)
+    debug_mode.inject_file(script_path, _debug)
     casa_calls.append(f"write_script → {script_path}")
 
     base_data: dict = {
@@ -521,6 +530,8 @@ def run(
 
     try:
         from casatasks import flagdata, flagmanager  # type: ignore[import]
+
+        flagdata = debug_mode.wrap("flagdata", flagdata, _debug)
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
 

@@ -31,9 +31,12 @@ from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, response_envelope
 from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import record_stage
+from ms_modify import debug_mode
 from ms_modify.exceptions import ApplycalFailedError
 
 TOOL_NAME = "ms_applycal"
+#: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
+DEBUG_TASKS = ("applycal",)
 
 
 def _safe_stem(text: str, limit: int = 40) -> str:
@@ -128,6 +131,8 @@ def run(
     parang: bool = True,
     flagbackup: bool = False,
     execute: bool = False,
+    debug: bool = False,
+    debug_params: dict | None = None,
 ) -> dict:
     """
     Apply calibration tables to a field and write CORRECTED_DATA.
@@ -223,6 +228,9 @@ def run(
             )
 
     script = _script_path(workdir_path, field, ms_str)
+    _debug = debug_mode.validate(debug, debug_params, DEBUG_TASKS)
+    if _debug:
+        warnings.append(debug_mode.note(_debug))
     write_script(
         script,
         _build_script(
@@ -239,6 +247,7 @@ def run(
             spwmap=spwmap,
         ),
     )
+    debug_mode.inject_file(script, _debug)
     casa_calls.append(f"write_script → {script}")
 
     if not execute:
@@ -268,6 +277,8 @@ def run(
     # execute=True
     try:
         from casatasks import applycal  # type: ignore[import]
+
+        applycal = debug_mode.wrap("applycal", applycal, _debug)
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
 

@@ -25,9 +25,12 @@ from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
 from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import record_stage
+from ms_modify import debug_mode
 from ms_modify.exceptions import FluxscaleFailedError
 
 TOOL_NAME = "ms_fluxscale"
+#: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
+DEBUG_TASKS = ("fluxscale",)
 
 
 def _resolve_field_ids(caltable: str, names: list[str]) -> list[str]:
@@ -101,6 +104,8 @@ def run(
     workdir: str,
     incremental: bool = False,
     execute: bool = False,
+    debug: bool = False,
+    debug_params: dict | None = None,
 ) -> dict:
     """
     Bootstrap flux density from primary to secondary calibrators.
@@ -155,6 +160,9 @@ def run(
     transfer = _resolve_field_ids(caltable, transfer)
 
     script_path = str(workdir_path / "fluxscale.py")
+    _debug = debug_mode.validate(debug, debug_params, DEBUG_TASKS)
+    if _debug:
+        warnings.append(debug_mode.note(_debug))
     write_script(
         script_path,
         _build_script(
@@ -167,6 +175,7 @@ def run(
             incremental=incremental,
         ),
     )
+    debug_mode.inject_file(script_path, _debug)
     casa_calls.append(f"write_script → {script_path}")
 
     if not execute:
@@ -195,6 +204,8 @@ def run(
     # execute=True
     try:
         from casatasks import fluxscale  # type: ignore[import]
+
+        fluxscale = debug_mode.wrap("fluxscale", fluxscale, _debug)
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
 

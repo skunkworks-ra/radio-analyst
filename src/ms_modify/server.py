@@ -10,6 +10,7 @@ All tools carry readOnlyHint: False — they modify the MS.
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
@@ -53,6 +54,30 @@ mcp = FastMCP(
 # ---------------------------------------------------------------------------
 # Input models
 # ---------------------------------------------------------------------------
+
+
+# debug / debug_params: declared last in every write tool that calls a CASA task
+# (ms_modify/debug_mode.py), so a model reads the tool's own parameters first.
+def _debug_field():
+    return Field(
+        default=False,
+        description=(
+            "Debug mode. Only with debug=True are debug_params accepted. Use on a "
+            "retry, when the tool's own parameters are not enough to diagnose a failure."
+        ),
+    )
+
+
+def _debug_params_field():
+    return Field(
+        default_factory=dict,
+        description=(
+            "Debug mode only: extra or overriding CASA parameters, keyed by the CASA "
+            "task this tool calls, e.g. {'gaincal': {'minsnr': 2.0}}. Names are checked "
+            "against the installed casatasks; data/product paths, flagging selection and "
+            "safety settings cannot be overridden."
+        ),
+    )
 
 
 class SetIntentsInput(BaseModel):
@@ -177,6 +202,8 @@ class InitialBandpassInput(BaseModel):
             "If True, execute the script in-process (may take several minutes)."
         ),
     )
+    debug: bool = _debug_field()
+    debug_params: dict[str, dict[str, Any]] = _debug_params_field()
 
 
 class ApplyRflagInput(BaseModel):
@@ -208,6 +235,8 @@ class ApplyRflagInput(BaseModel):
             "A flag backup named 'before_rflag' is always saved before applying."
         ),
     )
+    debug: bool = _debug_field()
+    debug_params: dict[str, dict[str, Any]] = _debug_params_field()
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +375,8 @@ async def ms_initial_bandpass(params: InitialBandpassInput) -> ToolResult:
         params.applymode,
         params.target_fields,
         params.execute,
+        debug=params.debug,
+        debug_params=params.debug_params,
     )
 
 
@@ -398,6 +429,8 @@ async def ms_apply_rflag(params: ApplyRflagInput) -> ToolResult:
         params.timedevscale,
         params.freqdevscale,
         params.execute,
+        debug=params.debug,
+        debug_params=params.debug_params,
     )
 
 
@@ -443,6 +476,8 @@ class ApplyPreflagInput(BaseModel):
             "If True, run flagdata(mode='list') + split in-process."
         ),
     )
+    debug: bool = _debug_field()
+    debug_params: dict[str, dict[str, Any]] = _debug_params_field()
 
 
 class GeneratePriorcalsInput(BaseModel):
@@ -458,6 +493,8 @@ class GeneratePriorcalsInput(BaseModel):
             "If True, run gencal in-process for all four tables."
         ),
     )
+    debug: bool = _debug_field()
+    debug_params: dict[str, dict[str, Any]] = _debug_params_field()
 
 
 class SetjyInput(BaseModel):
@@ -512,6 +549,8 @@ class SetjyInput(BaseModel):
             "If True, run setjy in-process for each flux field."
         ),
     )
+    debug: bool = _debug_field()
+    debug_params: dict[str, dict[str, Any]] = _debug_params_field()
 
 
 class SetjyPolcalInput(BaseModel):
@@ -643,6 +682,8 @@ class PolcalInput(BaseModel):
         default=False,
         description="If False (default), write script and return. If True, run in-process.",
     )
+    debug: bool = _debug_field()
+    debug_params: dict[str, dict[str, Any]] = _debug_params_field()
 
 
 class ApplyInitialRflagInput(BaseModel):
@@ -690,6 +731,8 @@ class ApplyInitialRflagInput(BaseModel):
             "If True, run the rflag + tfcrop passes in-process."
         ),
     )
+    debug: bool = _debug_field()
+    debug_params: dict[str, dict[str, Any]] = _debug_params_field()
 
 
 class PostcalFlagInput(BaseModel):
@@ -757,6 +800,8 @@ class PostcalFlagInput(BaseModel):
         default=False,
         description="If False (default), write scripts and return. If True, run flagdata(mode='list') in-process.",
     )
+    debug: bool = _debug_field()
+    debug_params: dict[str, dict[str, Any]] = _debug_params_field()
 
 
 class FlagCaltableInput(BaseModel):
@@ -825,6 +870,8 @@ class FlagCaltableInput(BaseModel):
             "ms_calsol_stats evidence). Written into the script header."
         ),
     )
+    debug: bool = _debug_field()
+    debug_params: dict[str, dict[str, Any]] = _debug_params_field()
 
 
 class FlagDataInput(BaseModel):
@@ -857,6 +904,8 @@ class FlagDataInput(BaseModel):
             "summary→manual→summary in-process and report the selection's flagged counts."
         ),
     )
+    debug: bool = _debug_field()
+    debug_params: dict[str, dict[str, Any]] = _debug_params_field()
 
 
 # ---------------------------------------------------------------------------
@@ -910,6 +959,8 @@ async def ms_apply_preflag(params: ApplyPreflagInput) -> ToolResult:
         params.do_tfcrop,
         params.execute,
         params.quack_interval_s,
+        debug=params.debug,
+        debug_params=params.debug_params,
     )
 
 
@@ -953,6 +1004,8 @@ async def ms_generate_priorcals(params: GeneratePriorcalsInput) -> ToolResult:
         params.ms_path,
         params.workdir,
         params.execute,
+        debug=params.debug,
+        debug_params=params.debug_params,
     )
 
 
@@ -1015,6 +1068,8 @@ async def ms_setjy(params: SetjyInput) -> ToolResult:
         usescratch=params.usescratch,
         exclude_fields=params.exclude_fields,
         execute=params.execute,
+        debug=params.debug,
+        debug_params=params.debug_params,
     )
 
 
@@ -1133,6 +1188,8 @@ async def ms_apply_initial_rflag(params: ApplyInitialRflagInput) -> ToolResult:
         params.timecutoff,
         params.freqcutoff,
         params.execute,
+        debug=params.debug,
+        debug_params=params.debug_params,
     )
 
 
@@ -1196,6 +1253,8 @@ async def ms_postcal_flag(params: PostcalFlagInput) -> ToolResult:
         params.timecutoff,
         params.freqcutoff,
         params.execute,
+        debug=params.debug,
+        debug_params=params.debug_params,
     )
 
 
@@ -1253,6 +1312,8 @@ async def ms_flag_caltable(params: FlagCaltableInput) -> ToolResult:
         params.execute,
         reason=params.reason,
         **{k: getattr(params, k) for k in flag_caltable.SELECTION_KEYS},
+        debug=params.debug,
+        debug_params=params.debug_params,
     )
 
 
@@ -1298,6 +1359,8 @@ async def ms_flag_data(params: FlagDataInput) -> ToolResult:
         params.reason,
         execute=params.execute,
         **{k: getattr(params, k) for k in flag_data.SELECTION_KEYS},
+        debug=params.debug,
+        debug_params=params.debug_params,
     )
 
 
@@ -1369,6 +1432,8 @@ class GaincalInput(BaseModel):
         default=False,
         description="If False (default), write script and return. If True, run in-process.",
     )
+    debug: bool = _debug_field()
+    debug_params: dict[str, dict[str, Any]] = _debug_params_field()
 
 
 class BandpassInput(BaseModel):
@@ -1410,6 +1475,8 @@ class BandpassInput(BaseModel):
         default=False,
         description="If False (default), write script and return. If True, run in-process.",
     )
+    debug: bool = _debug_field()
+    debug_params: dict[str, dict[str, Any]] = _debug_params_field()
 
 
 class FluxscaleInput(BaseModel):
@@ -1443,6 +1510,8 @@ class FluxscaleInput(BaseModel):
         default=False,
         description="If False (default), write script and return. If True, run in-process.",
     )
+    debug: bool = _debug_field()
+    debug_params: dict[str, dict[str, Any]] = _debug_params_field()
 
 
 class ApplycalInput(BaseModel):
@@ -1504,6 +1573,8 @@ class ApplycalInput(BaseModel):
         default=False,
         description="If False (default), write script and return. If True, run in-process.",
     )
+    debug: bool = _debug_field()
+    debug_params: dict[str, dict[str, Any]] = _debug_params_field()
 
 
 # ---------------------------------------------------------------------------
@@ -1579,6 +1650,8 @@ async def ms_gaincal(params: GaincalInput) -> ToolResult:
         params.target_fields,
         params.execute,
         gainfield=params.gainfield or None,
+        debug=params.debug,
+        debug_params=params.debug_params,
     )
 
 
@@ -1640,6 +1713,8 @@ async def ms_polcal(params: PolcalInput) -> ToolResult:
         params.target_fields,
         params.execute,
         gainfield=params.gainfield or None,
+        debug=params.debug,
+        debug_params=params.debug_params,
     )
 
 
@@ -1702,6 +1777,8 @@ async def ms_bandpass(params: BandpassInput) -> ToolResult:
         params.parang,
         params.target_fields,
         params.execute,
+        debug=params.debug,
+        debug_params=params.debug_params,
     )
 
 
@@ -1751,6 +1828,8 @@ async def ms_fluxscale(params: FluxscaleInput) -> ToolResult:
         params.workdir,
         params.incremental,
         params.execute,
+        debug=params.debug,
+        debug_params=params.debug_params,
     )
 
 
@@ -1814,6 +1893,8 @@ async def ms_applycal(params: ApplycalInput) -> ToolResult:
         params.parang,
         params.flagbackup,
         params.execute,
+        debug=params.debug,
+        debug_params=params.debug_params,
     )
 
 
@@ -1969,6 +2050,8 @@ class TcleanInput(BaseModel):
             "real mosaics can take hours)."
         ),
     )
+    debug: bool = _debug_field()
+    debug_params: dict[str, dict[str, Any]] = _debug_params_field()
 
 
 # ---------------------------------------------------------------------------
@@ -2057,6 +2140,8 @@ async def ms_tclean(params: TcleanInput) -> ToolResult:
         width=params.width,
         outframe=params.outframe,
         execute=params.execute,
+        debug=params.debug,
+        debug_params=params.debug_params,
     )
 
 

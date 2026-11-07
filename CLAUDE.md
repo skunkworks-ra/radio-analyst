@@ -147,6 +147,8 @@ radio-analyst/
 │   │   ├── applycal.py            ← ms_applycal
 │   │   ├── tclean.py              ← ms_tclean
 │   │   ├── pathguard.py           ← output-caltable path validation + safe-delete guard
+│   │   ├── task_spec.py           ← CASA task parameter specs from the installed casatasks XML
+│   │   ├── debug_mode.py          ← debug / debug_params pass-through for the write tools
 │   │   └── slurm.py               ← SLURM batch submission utility (not an MCP tool)
 │   └── ms_inspect/
 │       ├── __init__.py            ← version string
@@ -368,6 +370,11 @@ Functions are also callable directly by skills and scripts.
 | `ms_applycal` | `ms_modify/applycal.py` | Apply caltables; write CORRECTED_DATA |
 | `ms_tclean` | `ms_modify/tclean.py` | Generate (and optionally execute) a tclean imaging script; validates CORRECTED_DATA; pbcor=True hardcoded. Cube args (`nchan`/`start`/`width`/`outframe`) for frequency cubes incl. IQUV polarization cubes (specmode='cube'); ignored otherwise |
 | *(utility)* | `ms_modify/slurm.py` | SLURM batch submission: wrap scripts in sbatch files, chain with afterok dependencies |
+
+Debug mode: every write tool above that calls a CASA task, except
+`ms_setjy_polcal`, takes `debug` and `debug_params={task: {param: value}}`
+(`ms_modify/debug_mode.py`). Names are checked against the installed casatasks
+XML; data/product paths and flagging safety settings cannot be overridden.
 
 `set_intents` logic:
 1. Read fields + positions via `open_msmd`

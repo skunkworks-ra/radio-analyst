@@ -32,9 +32,12 @@ from ms_inspect.util.casa_context import validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
 from ms_inspect.util.logs import write_script
+from ms_modify import debug_mode
 from ms_modify.manual_selection import validate_manual_selection
 
 TOOL_NAME = "ms_flag_data"
+#: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
+DEBUG_TASKS = ("flagdata",)
 
 # flagdata selections exposed for an MS (feed is unimplemented in CASA; array
 # is single-valued for the target telescopes).
@@ -105,6 +108,8 @@ def run(
     intent: str = "",
     observation: str = "",
     execute: bool = False,
+    debug: bool = False,
+    debug_params: dict | None = None,
 ) -> dict:
     """
     Generate (and optionally execute) a manual flag of a named MS selection.
@@ -151,7 +156,11 @@ def run(
     warnings: list[str] = []
 
     script_path = str(workdir_path / "flag_data.py")
+    _debug = debug_mode.validate(debug, debug_params, DEBUG_TASKS)
+    if _debug:
+        warnings.append(debug_mode.note(_debug))
     write_script(script_path, _build_script(ms_str, str(workdir_path), sel, reason.strip()))
+    debug_mode.inject_file(script_path, _debug)
     casa_calls.append(f"write_script → {script_path}")
 
     base_data: dict = {
@@ -174,6 +183,8 @@ def run(
 
     try:
         from casatasks import flagdata  # type: ignore[import]
+
+        flagdata = debug_mode.wrap("flagdata", flagdata, _debug)
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
 

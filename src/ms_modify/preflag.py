@@ -27,8 +27,11 @@ from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, response_envelope
 from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import record_stage
+from ms_modify import debug_mode
 
 TOOL_NAME = "ms_apply_preflag"
+#: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
+DEBUG_TASKS = ("flagdata", "split")
 
 
 def _build_cmds_content(
@@ -136,6 +139,8 @@ def run(
     do_tfcrop: bool = True,
     execute: bool = False,
     quack_interval_s: float = 5.0,
+    debug: bool = False,
+    debug_params: dict | None = None,
 ) -> dict:
     """
     Apply deterministic pre-calibration flags and split calibrators.
@@ -188,7 +193,11 @@ def run(
 
     # Always write the script
     script_content = _build_script(ms_str, cmds_path, cal_ms, cal_fields, workdir=str(workdir_path))
+    _debug = debug_mode.validate(debug, debug_params, DEBUG_TASKS)
+    if _debug:
+        warnings.append(debug_mode.note(_debug))
     write_script(script_path, script_content)
+    debug_mode.inject_file(script_path, _debug)
     casa_calls.append(f"write_script → {script_path}")
 
     base_data: dict = {
@@ -216,6 +225,9 @@ def run(
     # execute=True: run in-process
     try:
         from casatasks import flagdata, split  # type: ignore[import]
+
+        flagdata = debug_mode.wrap("flagdata", flagdata, _debug)
+        split = debug_mode.wrap("split", split, _debug)
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
 

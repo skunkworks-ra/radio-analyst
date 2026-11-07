@@ -51,9 +51,12 @@ from ms_inspect.util.casa_context import open_table
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
 from ms_inspect.util.logs import write_script
+from ms_modify import debug_mode
 from ms_modify.manual_selection import validate_manual_selection
 
 TOOL_NAME = "ms_flag_caltable"
+#: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
+DEBUG_TASKS = ("flagdata",)
 
 # VisCal type (first token, ' Jones' stripped) → autoflag mode.
 _MODE_BY_TYPE: dict[str, str] = {
@@ -294,6 +297,8 @@ def run(
     timerange: str = "",
     observation: str = "",
     reason: str = "",
+    debug: bool = False,
+    debug_params: dict | None = None,
 ) -> dict:
     """
     Generate (and optionally execute) an autoflag pass on a caltable's solutions.
@@ -374,7 +379,11 @@ def run(
         selection=sel,
         reason=reason,
     )
+    _debug = debug_mode.validate(debug, debug_params, DEBUG_TASKS)
+    if _debug:
+        warnings.append(debug_mode.note(_debug))
     write_script(script_path, script_content)
+    debug_mode.inject_file(script_path, _debug)
     casa_calls.append(f"write_script → {script_path}")
 
     base_data: dict = {
@@ -412,6 +421,8 @@ def run(
     # execute=True: run in-process
     try:
         from casatasks import flagdata  # type: ignore[import]
+
+        flagdata = debug_mode.wrap("flagdata", flagdata, _debug)
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
 

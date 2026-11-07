@@ -37,8 +37,11 @@ from ms_inspect.util.formatting import response_envelope
 from ms_inspect.util.frequencies import field_frequencies
 from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import record_stage
+from ms_modify import debug_mode
 
 TOOL_NAME = "ms_setjy"
+#: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
+DEBUG_TASKS = ("setjy",)
 
 # Calibrators requiring special treatment
 _VARIABLE_WARN = {"3C84", "3C138", "3C48"}  # variable or partially pol
@@ -186,6 +189,8 @@ def run(
     usescratch: bool = True,
     exclude_fields: str = "",
     execute: bool = False,
+    debug: bool = False,
+    debug_params: dict | None = None,
 ) -> dict:
     """
     Set flux density models for standard calibrators in the MS.
@@ -408,7 +413,11 @@ def run(
 
     script_path = str(workdir_path / "setjy.py")
     script_content = _build_script(ms_str, plans, str(workdir_path), usescratch, inline_warnings)
+    _debug = debug_mode.validate(debug, debug_params, DEBUG_TASKS)
+    if _debug:
+        warnings.append(debug_mode.note(_debug))
     write_script(script_path, script_content)
+    debug_mode.inject_file(script_path, _debug)
     casa_calls.append(f"write_script → {script_path}")
 
     base_data: dict = {
@@ -455,6 +464,8 @@ def run(
     # execute=True: run setjy in-process
     try:
         from casatasks import setjy  # type: ignore[import]
+
+        setjy = debug_mode.wrap("setjy", setjy, _debug)
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
 

@@ -26,8 +26,11 @@ from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
 from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import record_stage
+from ms_modify import debug_mode
 
 TOOL_NAME = "ms_apply_initial_rflag"
+#: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
+DEBUG_TASKS = ("flagdata",)
 
 _FLAG_VERSION = "before_initial_rflag"
 
@@ -119,6 +122,8 @@ def run(
     timecutoff: float = 4.0,
     freqcutoff: float = 4.0,
     execute: bool = False,
+    debug: bool = False,
+    debug_params: dict | None = None,
 ) -> dict:
     """
     Generate (and optionally execute) initial rflag + tfcrop on residuals.
@@ -192,7 +197,11 @@ def run(
         freqcutoff,
         workdir=str(workdir_path),
     )
+    _debug = debug_mode.validate(debug, debug_params, DEBUG_TASKS)
+    if _debug:
+        warnings.append(debug_mode.note(_debug))
     write_script(script_path, script_content)
+    debug_mode.inject_file(script_path, _debug)
     casa_calls.append(f"write_script → {script_path}")
 
     base_data: dict = {
@@ -222,6 +231,8 @@ def run(
     # execute=True: run in-process — two direct passes, not mode='list'
     try:
         from casatasks import flagdata, flagmanager  # type: ignore[import]
+
+        flagdata = debug_mode.wrap("flagdata", flagdata, _debug)
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
 

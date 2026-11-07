@@ -20,9 +20,12 @@ from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, response_envelope
 from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import record_stage
+from ms_modify import debug_mode
 from ms_modify.exceptions import TcleanFailedError
 
 TOOL_NAME = "ms_tclean"
+#: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
+DEBUG_TASKS = ("tclean",)
 
 # Global tclean stopcodes (casatasks imager_deconvolver). Converged = {2, 8}.
 _STOPCODE_DESC = {
@@ -232,6 +235,8 @@ def run(
     width: str | None = None,
     outframe: str | None = None,
     execute: bool = False,
+    debug: bool = False,
+    debug_params: dict | None = None,
 ) -> dict:
     """
     Generate (and optionally execute) a tclean imaging script.
@@ -406,7 +411,11 @@ def run(
         width=width,
         outframe=outframe,
     )
+    _debug = debug_mode.validate(debug, debug_params, DEBUG_TASKS)
+    if _debug:
+        warnings.append(debug_mode.note(_debug))
     write_script(script_file, script_content)
+    debug_mode.inject_file(script_file, _debug)
     casa_calls.append(f"write_script → {script_file}")
 
     if not execute:
@@ -430,6 +439,8 @@ def run(
     # execute=True: run tclean in-process.
     try:
         from casatasks import tclean as _tclean  # type: ignore[import]
+
+        _tclean = debug_mode.wrap("tclean", _tclean, _debug)
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
 

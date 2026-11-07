@@ -21,9 +21,12 @@ from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, response_envelope
 from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import record_stage
+from ms_modify import debug_mode
 from ms_modify.exceptions import PolcalFailedError
 
 TOOL_NAME = "ms_polcal"
+#: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
+DEBUG_TASKS = ("polcal",)
 
 
 def _script_path(workdir: Path, caltable: str) -> Path:
@@ -96,6 +99,8 @@ def run(
     target_fields: str = "",
     execute: bool = False,
     gainfield: list[str] | None = None,
+    debug: bool = False,
+    debug_params: dict | None = None,
 ) -> dict:
     """
     Solve for polarisation calibration solutions.
@@ -196,6 +201,9 @@ def run(
             )
 
     script = _script_path(workdir_path, caltable)
+    _debug = debug_mode.validate(debug, debug_params, DEBUG_TASKS)
+    if _debug:
+        warnings.append(debug_mode.note(_debug))
     write_script(
         script,
         _build_script(
@@ -214,6 +222,7 @@ def run(
             gainfield=gainfield,
         ),
     )
+    debug_mode.inject_file(script, _debug)
     casa_calls.append(f"write_script → {script}")
 
     if not execute:
@@ -242,6 +251,8 @@ def run(
     # execute=True
     try:
         from casatasks import polcal  # type: ignore[import]
+
+        polcal = debug_mode.wrap("polcal", polcal, _debug)
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
 

@@ -26,9 +26,12 @@ from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_spw_sel, response_envelope
 from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import record_stage
+from ms_modify import debug_mode
 from ms_modify.exceptions import InitialBandpassFailedError
 
 TOOL_NAME = "ms_initial_bandpass"
+#: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
+DEBUG_TASKS = ("gaincal", "bandpass", "applycal")
 
 # Fixed parameters matching evla_pipe defaults — not exposed to caller
 _MINSNR = 3.0
@@ -163,6 +166,8 @@ def run(
     applymode: str = "calflagstrict",
     target_fields: str = "",
     execute: bool = False,
+    debug: bool = False,
+    debug_params: dict | None = None,
 ) -> dict:
     """
     Solve an initial coarse bandpass and populate the CORRECTED column.
@@ -255,7 +260,11 @@ def run(
         uvrange=uvrange,
         applymode=applymode,
     )
+    _debug = debug_mode.validate(debug, debug_params, DEBUG_TASKS)
+    if _debug:
+        warnings.append(debug_mode.note(_debug))
     write_script(script_path, script_content)
+    debug_mode.inject_file(script_path, _debug)
     casa_calls.append(f"write_script → {script_path}")
 
     # ------------------------------------------------------------------
@@ -292,6 +301,10 @@ def run(
     # ------------------------------------------------------------------
     try:
         from casatasks import applycal, bandpass, gaincal  # type: ignore[import]
+
+        applycal = debug_mode.wrap("applycal", applycal, _debug)
+        bandpass = debug_mode.wrap("bandpass", bandpass, _debug)
+        gaincal = debug_mode.wrap("gaincal", gaincal, _debug)
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
 

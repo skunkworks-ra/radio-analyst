@@ -24,9 +24,12 @@ from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, normalize_spw_sel, response_envelope
 from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import record_stage
+from ms_modify import debug_mode
 from ms_modify.exceptions import BandpassFailedError
 
 TOOL_NAME = "ms_bandpass"
+#: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
+DEBUG_TASKS = ("bandpass",)
 
 _BANDTYPE = "B"
 
@@ -109,6 +112,8 @@ def run(
     parang: bool = True,
     target_fields: str = "",
     execute: bool = False,
+    debug: bool = False,
+    debug_params: dict | None = None,
 ) -> dict:
     """
     Solve for the complex bandpass calibration.
@@ -181,6 +186,9 @@ def run(
             )
 
     script = _script_path(workdir_path, caltable)
+    _debug = debug_mode.validate(debug, debug_params, DEBUG_TASKS)
+    if _debug:
+        warnings.append(debug_mode.note(_debug))
     write_script(
         script,
         _build_script(
@@ -201,6 +209,7 @@ def run(
             parang=parang,
         ),
     )
+    debug_mode.inject_file(script, _debug)
     casa_calls.append(f"write_script → {script}")
 
     if not execute:
@@ -230,6 +239,8 @@ def run(
     # execute=True
     try:
         from casatasks import bandpass  # type: ignore[import]
+
+        bandpass = debug_mode.wrap("bandpass", bandpass, _debug)
     except ImportError:
         from ms_inspect.exceptions import CASANotAvailableError
 
