@@ -74,13 +74,14 @@ def _read_log(path: str | None) -> dict:
 
 def product_path(task: str, params: dict) -> str | None:
     """Absolute path of the product a stage-log line checks, or None if not given."""
-    param, suffix = PRODUCT.get(task, ("vis", ""))
+    param, suffixes = PRODUCT.get(task, ("vis", ("",)))
     value = params.get(param)
     if isinstance(value, list):
         value = value[0] if value else None
     if not isinstance(value, str) or not value:
         return None
-    return os.path.abspath(value + suffix)
+    candidates = [os.path.abspath(value + suffix) for suffix in suffixes]
+    return next((c for c in candidates if os.path.exists(c)), candidates[0])
 
 
 def record_stage_line(

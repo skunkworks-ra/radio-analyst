@@ -77,7 +77,8 @@ MCP_TASK_PARAMS: dict[str, tuple[str, ...]] = {
         "vis", "mode", "action", "datacolumn", "field", "spw", "antenna", "scan",
         "timerange", "correlation", "uvrange", "intent", "observation", "inpfile",
         "reason", "cmdreason", "flagbackup", "savepars", "outfile", "timecutoff",
-        "freqcutoff", "timedevscale", "freqdevscale", "clipminmax", "clipzeros",
+        "freqcutoff", "timedevscale", "freqdevscale", "clipminmax", "clipoutside",
+        "clipzeros",
         "quackinterval", "quackmode", "tolerance", "extendpols",
     ),
     "flagmanager": ("vis", "mode", "versionname", "comment"),
@@ -130,17 +131,20 @@ STAGES = (
     "tclean",
 )
 
-#: The product a stage-log line records: (parameter, suffix). A task not listed
-#: records ``vis``, the convention for a task that changes the MS in place.
-PRODUCT: dict[str, tuple[str, str]] = {
-    "bandpass": ("caltable", ""),
-    "fluxscale": ("fluxtable", ""),
-    "gaincal": ("caltable", ""),
-    "gencal": ("caltable", ""),
-    "importasdm": ("vis", ""),
-    "polcal": ("caltable", ""),
-    "split": ("outputvis", ""),
-    "tclean": ("imagename", ".image"),
+#: The product a stage-log line records: (parameter, suffixes). The first
+#: suffix whose path exists is the product; if none exists, the first is
+#: recorded as missing. tclean with deconvolver='mtmfs' writes only Taylor-term
+#: images (.image.tt0, ...), never a plain .image. A task not listed records
+#: ``vis``, the convention for a task that changes the MS in place.
+PRODUCT: dict[str, tuple[str, tuple[str, ...]]] = {
+    "bandpass": ("caltable", ("",)),
+    "fluxscale": ("fluxtable", ("",)),
+    "gaincal": ("caltable", ("",)),
+    "gencal": ("caltable", ("",)),
+    "importasdm": ("vis", ("",)),
+    "polcal": ("caltable", ("",)),
+    "split": ("outputvis", ("",)),
+    "tclean": ("imagename", (".image", ".image.tt0")),
 }
 
 #: Arguments the casa-modify tools take for the wrapper. Never passed to CASA.

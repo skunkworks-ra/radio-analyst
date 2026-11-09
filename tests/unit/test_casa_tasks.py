@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import types
 
 import numpy as np
 import pytest
@@ -23,9 +25,11 @@ from casa_tasks.runner import (
     MAX_LOGGED_PARAMS_CHARS,
     product_path,
     record_stage_line,
+    run_task,
     to_jsonable,
 )
 from casa_tasks.server import build_server, lock_path
+from ms_inspect.util.logs import LOGFILE_ENV
 from ms_inspect.util.stage_log import SCHEMA_VERSION, completed_stages, read_stage_log
 
 # --------------------------------------------------------------------- schemas
@@ -150,6 +154,61 @@ def test_lock_path(tmp_path):
 
 
 # ------------------------------------------------------------------ stage line
+
+
+def test_tclean_product_is_tt0_when_only_taylor_terms_exist(tmp_path):
+    prefix = str(tmp_path / "img")
+    assert product_path("tclean", {"imagename": prefix}) == prefix + ".image"
+    (tmp_path / "img.image.tt0").mkdir()
+    assert product_path("tclean", {"imagename": prefix}) == prefix + ".image.tt0"
+    (tmp_path / "img.image").mkdir()
+    assert product_path("tclean", {"imagename": prefix}) == prefix + ".image"
+
+
+def _stub_casatasks(monkeypatch, **tasks):
+    """Install a fake casatasks module so run_task runs without CASA."""
+    module = types.ModuleType("casatasks")
+    for name, fn in tasks.items():
+        setattr(module, name, fn)
+    monkeypatch.setitem(sys.modules, "casatasks", module)
+    monkeypatch.delenv(LOGFILE_ENV, raising=False)
+
+
+def test_run_task_passes_only_casa_params_and_records_stage(monkeypatch, tmp_path):
+    seen = {}
+
+    def gaincal(**kwargs):
+        seen.update(kwargs)
+        os.mkdir(kwargs["caltable"])
+        return {"solvestats": np.array([3, 4])}
+
+    _stub_casatasks(monkeypatch, gaincal=gaincal)
+    params = {"vis": "a.ms", "caltable": str(tmp_path / "g.G")}
+    env = run_task("gaincal", dict(params), stage="gaincal", workdir=str(tmp_path))
+    assert seen == params
+    assert env["status"] == "ok"
+    assert env["warnings"] == []
+    assert env["data"]["return"] == {"solvestats": [3, 4]}
+    assert completed_stages(read_stage_log(tmp_path)) == {"gaincal"}
+
+
+def test_run_task_exception_is_error_envelope_and_records_nothing(monkeypatch, tmp_path):
+    def gaincal(**kwargs):
+        raise AssertionError("the vis parameter must be a path that exists")
+
+    _stub_casatasks(monkeypatch, gaincal=gaincal)
+    env = run_task("gaincal", {"vis": "nope.ms"}, stage="gaincal", workdir=str(tmp_path))
+    assert env["status"] == "error"
+    assert env["error_type"] == "AssertionError"
+    assert "must be a path" in env["message"]
+    assert read_stage_log(tmp_path) == []
+
+
+def test_run_task_stage_without_workdir_warns(monkeypatch):
+    _stub_casatasks(monkeypatch, applycal=lambda **kw: None)
+    env = run_task("applycal", {"vis": "a.ms"}, stage="applycal", workdir="")
+    assert env["status"] == "ok"
+    assert "without workdir" in env["warnings"][0]
 
 
 def test_product_path(tmp_path):

@@ -31,6 +31,9 @@ from ms_inspect.util.dispatch import envelope_result, run_tool
 from ms_inspect.util.formatting import error_envelope
 from ms_inspect.util.logs import init_server_logging
 
+#: HTTP port when RADIO_MCP_PORT is unset; the ms-* servers use 8000-8002.
+_DEFAULT_PORT = {"inspect": 8003, "modify": 8004}
+
 #: Parameters whose value names the resource a call is serialized on, in order.
 _LOCK_PARAMS = ("vis", "imagename", "caltable", "asdm")
 
@@ -84,6 +87,7 @@ def build_server(kind: str, restricted: bool | None = None) -> FastMCP:
                 stage=wrapper.get("stage"),
                 workdir=wrapper.get("workdir"),
                 _lock_path=lock_path(params),
+                _label=f"casa-{kind}.{name}",
             )
         except Exception as exc:  # noqa: BLE001 - a crashed child is a tool error, not a server error
             vis = params.get("vis") if isinstance(params.get("vis"), str) else None
@@ -96,6 +100,8 @@ def _main(kind: str) -> None:
     init_server_logging(f"casa-{kind}")
     mcp = build_server(kind)
     if os.environ.get("RADIO_MCP_TRANSPORT", "stdio").lower() == "http":
+        mcp.settings.host = "127.0.0.1"
+        mcp.settings.port = int(os.environ.get("RADIO_MCP_PORT", _DEFAULT_PORT[kind]))
         mcp.run(transport="streamable-http")
     else:
         mcp.run(transport="stdio")

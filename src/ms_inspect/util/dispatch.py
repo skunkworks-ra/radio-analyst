@@ -120,7 +120,9 @@ def envelope_result(envelope: dict) -> CallToolResult:
     )
 
 
-async def run_tool(tool_fn, *args, _lock_path: str | None = None, **kwargs) -> CallToolResult:
+async def run_tool(
+    tool_fn, *args, _lock_path: str | None = None, _label: str | None = None, **kwargs
+) -> CallToolResult:
     """
     Execute a tool function in a child process; return the tool result.
 
@@ -135,6 +137,9 @@ async def run_tool(tool_fn, *args, _lock_path: str | None = None, **kwargs) -> C
     the resource (e.g. `reduction_log.run(action, workdir, ...)`).
 
     Tools with neither a positional argument nor `_lock_path` run unserialized.
+
+    `_label` names the call in events.jsonl, for a generic tool function that
+    serves many tools (the casa_tasks servers pass the CASA task name).
 
     The convention is checked, not assumed: a key that is neither an existing
     path nor path-shaped raises, rather than silently locking on something
@@ -173,7 +178,8 @@ async def run_tool(tool_fn, *args, _lock_path: str | None = None, **kwargs) -> C
         raise
     finally:
         log_event(
-            tool=f"{getattr(tool_fn, '__module__', '?')}.{getattr(tool_fn, '__qualname__', '?')}",
+            tool=_label
+            or f"{getattr(tool_fn, '__module__', '?')}.{getattr(tool_fn, '__qualname__', '?')}",
             resource=lock_key,
             status=status,
             error_type=error_type,
