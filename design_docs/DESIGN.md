@@ -805,7 +805,7 @@ Every tool response is a JSON object with this envelope:
 }
 ```
 
-`completeness_summary` is the worst-case flag across all fields: if any field is `SUSPECT`, the summary is `SUSPECT`.
+`completeness_summary` is the worst-case flag across all fields: if any field is `SUSPECT`, the summary is `SUSPECT`. The dispatch parent also sets at least `SUSPECT` when CASA logged a SEVERE line inside a casatasks task during the call (lines in `casa_severe`, plus a warning); some tasks log SEVERE and still succeed.
 
 `warnings` is a list of strings for non-fatal issues (e.g. "2 antennas have placeholder positions").
 

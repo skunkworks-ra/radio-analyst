@@ -7,12 +7,15 @@ alone that litters the repo root, the user's project, and every pool worker.
 
 - By default every process here points that setting at ``os.devnull``
   (``configure_casa_log``, run when any of the three packages is imported).
-- The tool-dispatch parent passes one real log per server process to its
-  children through ``_ANALYST_CASA_LOGFILE``; a child, and any pool worker it
-  spawns, then writes there.
-- Everything lives under ``<workdir>/logs/``: ``casa-*.log`` (one per server
-  process), ``server.log`` (Python logging) and ``events.jsonl`` (one line per
-  tool call). The workdir is ``RADIO_MCP_DIR`` if set, else the cwd.
+- The tool-dispatch parent gives every tool call its own CASA log and passes
+  it to the child through ``_ANALYST_CASA_LOGFILE``; the child, and any pool
+  worker it spawns, writes there. One file per call means the parent can read
+  back exactly what CASA logged during that call (util/dispatch.py). A script
+  the call generates logs to the same file when it is run later.
+- Everything lives under ``<workdir>/logs/``: ``casa-*.log`` (one per tool
+  call), ``server.log`` (Python logging) and ``events.jsonl`` (one line per
+  tool call, naming its CASA log). The workdir is ``RADIO_MCP_DIR`` if set,
+  else the cwd.
 - ``prune_logs`` removes CASA logs older than 14 days, then the oldest until
   the rest fit in 200 MB. It runs at server start.
 
@@ -25,17 +28,21 @@ import json
 import logging
 import os
 import time
+import uuid
 from pathlib import Path
 
 #: Set by the dispatch parent (and by launch.sh to ``os.devnull``) to name the CASA log.
 LOGFILE_ENV = "_ANALYST_CASA_LOGFILE"
+#: Byte offset in the CASA log where the next stage-log line starts counting. A
+#: generated script sets it at start (with_casa_log), because it appends to a
+#: log that already holds the generating call's lines; each stage-log line then
+#: moves it past what it counted. Unset means 0.
+LOGSTART_ENV = "_ANALYST_CASA_LOGSTART"
 #: Overrides the directory whose ``logs/`` subdirectory holds everything.
 WORKDIR_ENV = "RADIO_MCP_DIR"
 
 RETENTION_DAYS = 14
 RETENTION_BYTES = 200 * 1024 * 1024
-
-_casa_logfile: str | None = None
 
 
 def configure_casa_log() -> None:
@@ -56,15 +63,12 @@ def logs_dir() -> Path:
     return Path(os.environ.get(WORKDIR_ENV) or os.getcwd()) / "logs"
 
 
-def casa_log_path() -> str:
-    """The one CASA log for this server process, created lazily with its directory."""
-    global _casa_logfile
-    if _casa_logfile is None:
-        directory = logs_dir()
-        directory.mkdir(parents=True, exist_ok=True)
-        stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
-        _casa_logfile = str((directory / f"casa-{stamp}-{os.getpid()}.log").resolve())
-    return _casa_logfile
+def call_log_path() -> str:
+    """A new CASA log path for one tool call; creates the logs directory, not the file."""
+    directory = logs_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    return str((directory / f"casa-{stamp}-{uuid.uuid4().hex[:8]}.log").resolve())
 
 
 def prune_logs(
@@ -147,15 +151,19 @@ def log_event(**fields) -> None:
 def with_casa_log(script: str) -> str:
     """Insert the CASA log setting into a generated script, after any shebang.
 
-    The script then writes to the server's CASA log (or nowhere, if it was
-    generated outside a server) instead of creating ``casa-*.log`` in whatever
-    directory it is run from, and its ``_record_stage`` lines carry the path.
+    The script then writes to the CASA log of the call that generated it (or
+    nowhere, if it was generated outside a server) instead of creating
+    ``casa-*.log`` in whatever directory it is run from, and its
+    ``_record_stage`` lines carry the path. It also records where its own lines
+    begin in that log (LOGSTART_ENV).
     """
     path = os.environ.get(LOGFILE_ENV) or os.devnull
     preamble = (
         f"# CASA log: {path}\n"
         "import os as _os\n"
         f'_os.environ["{LOGFILE_ENV}"] = {path!r}\n'
+        f'_os.environ["{LOGSTART_ENV}"] = str(_os.path.getsize({path!r}) '
+        f"if _os.path.isfile({path!r}) else 0)\n"
         "try:\n"
         "    from casaconfig import config as _casaconfig\n"
         f"    _casaconfig.logfile = {path!r}\n"

@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import glob
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -151,15 +152,25 @@ def _classify(task: str, params: dict[str, Any]) -> tuple[dict[str, str], list[s
     return outputs, inputs
 
 
-def lock_path(params: dict[str, Any], workdir: str) -> str:
-    """Resource the server locks: concatvis (concat appends into it), else the first input."""
-    for k in ("concatvis",) + INPUT_PARAMS:
+#: Parameters whose value names a path the call reads or writes, and so locks.
+LOCK_PARAMS = tuple(dict.fromkeys(INPUT_PARAMS + OUTPUT_PARAMS + IN_OR_OUT + ("gaintable",)))
+
+
+def lock_paths(params: dict[str, Any], workdir: str) -> list[str]:
+    """Every path the call reads or writes, absolute; the workdir if it names none.
+
+    Inputs and outputs both: two calls that write the same caltable or image
+    must not run at once, even when they read different data. A list value
+    (concat's vis, a gaintable list) contributes every entry. run_tool removes
+    duplicates and takes the locks in one fixed order.
+    """
+    paths: list[str] = []
+    for k in LOCK_PARAMS:
         v = params.get(k)
-        if isinstance(v, (list, tuple)):
-            v = next((x for x in v if isinstance(x, str) and x), None)
-        if isinstance(v, str) and v:
-            return v
-    return workdir
+        for x in v if isinstance(v, (list, tuple)) else [v]:
+            if isinstance(x, str) and x:
+                paths.append(os.path.abspath(os.path.expanduser(x)))
+    return paths or [workdir]
 
 
 _JSON_DEFAULT_SNIPPET = '''\

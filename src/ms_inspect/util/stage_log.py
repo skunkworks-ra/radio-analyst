@@ -35,13 +35,49 @@ STAGE_LOG_NAME = "stage_log.jsonl"
 #: than the writer can still read every version below its own; a reader
 #: OLDER than the writer must not guess at fields it does not know about —
 #: see schema_version_of()'s docstring.
-SCHEMA_VERSION = 1
+#: Version 2 adds ``casa_tasks`` (the CASA tasks begun, in order) and
+#: ``severe_lines`` (SEVERE lines CASA logged inside those tasks), both read
+#: from the call's CASA log and omitted when empty. Version 1 lines stay valid.
+SCHEMA_VERSION = 2
 
 #: Embedded verbatim in generated scripts. Call once after each product is
 #: written. Opens, appends one line and closes — never holds a handle, because
 #: a buffered write is lost when a job dies mid-stage, which is precisely the
 #: case the line has to explain.
 RECORD_STAGE_SNIPPET = '''\
+def _casa_task_log(path, offset=0):
+    """(tasks, severe, end) read from a CASA log, from byte ``offset`` on.
+
+    ``tasks`` are the names in the casatasks '##### Begin Task: <name>' lines,
+    in order. ``severe`` are the SEVERE lines logged while a task was running,
+    between its Begin and End markers. A SEVERE line outside every task, such
+    as the casaconfig measures_update notice at import, is not counted. A task
+    that raises posts no End marker, so every later line counts as inside it.
+    ``end`` is the byte offset just past what was read. A missing or unreadable
+    log gives two empty lists and ``offset``.
+    """
+    import re
+
+    tasks, severe, depth = [], [], 0
+    try:
+        with open(path, "rb") as _fh:
+            _fh.seek(offset)
+            data = _fh.read()
+    except OSError:
+        return tasks, severe, offset
+    text = data.decode(errors="replace")
+    for line in text.splitlines():
+        marker = re.search(r"##### (Begin|End) Task: (\\S+)", line)
+        if marker and marker.group(1) == "Begin":
+            tasks.append(marker.group(2))
+            depth += 1
+        elif marker:
+            depth = max(depth - 1, 0)
+        elif depth and "\\tSEVERE\\t" in line:
+            severe.append(line)
+    return tasks, severe, offset + len(data)
+
+
 def _record_stage(workdir, stage, product, measurement=None):
     """Append one line to stage_log.jsonl. Raise if the product is missing.
 
@@ -61,7 +97,7 @@ def _record_stage(workdir, stage, product, measurement=None):
 
     exists = os.path.exists(product)
     entry = {
-        "schema_version": 1,
+        "schema_version": 2,
         "analyst_rev": os.environ.get("ANALYST_REV", "unknown"),
         "stage": stage,
         "product": product,
@@ -71,6 +107,15 @@ def _record_stage(workdir, stage, product, measurement=None):
     casa_log = os.environ.get("_ANALYST_CASA_LOGFILE")
     if casa_log:
         entry["casa_log"] = casa_log
+        # Each line covers the CASA lines since the previous line of this
+        # process (or since the script began): the offset moves on.
+        offset = int(os.environ.get("_ANALYST_CASA_LOGSTART") or 0)
+        tasks, severe, end = _casa_task_log(casa_log, offset)
+        os.environ["_ANALYST_CASA_LOGSTART"] = str(end)
+        if tasks:
+            entry["casa_tasks"] = tasks
+        if severe:
+            entry["severe_lines"] = len(severe)
     if measurement is not None:
         entry["measurement"] = measurement
     if not exists:
@@ -198,3 +243,6 @@ exec(RECORD_STAGE_SNIPPET, _snippet_ns)  # noqa: S102 - our own source, defined 
 #: ``record_stage(workdir, stage, product)`` — identical to what the generated
 #: scripts call, because it IS what they call.
 record_stage = _snippet_ns["_record_stage"]
+#: ``casa_task_log(path, offset=0) -> (tasks, severe, end)`` — the snippet's CASA log
+#: reader, shared with the dispatch parent (util/dispatch.py).
+casa_task_log = _snippet_ns["_casa_task_log"]

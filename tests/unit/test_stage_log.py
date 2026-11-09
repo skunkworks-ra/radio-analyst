@@ -10,6 +10,7 @@ that only asserted on the string would pass while the emitted code was broken.
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -47,7 +48,7 @@ def test_snippet_stamps_schema_version_and_analyst_rev(tmp_path, monkeypatch):
     _load_recorder()(str(tmp_path), "gaincal", str(product))
 
     entries = stage_log.read_stage_log(tmp_path)
-    assert entries[0]["schema_version"] == 1
+    assert entries[0]["schema_version"] == stage_log.SCHEMA_VERSION == 2
     assert entries[0]["analyst_rev"] == "abc1234"
 
 
@@ -61,13 +62,13 @@ def test_snippet_stamps_analyst_rev_unknown_without_the_env_var(tmp_path, monkey
     assert entries[0]["analyst_rev"] == "unknown"
 
 
-def test_schema_version_of_a_current_line_is_one(tmp_path):
+def test_schema_version_of_a_current_line_is_two(tmp_path):
     product = tmp_path / "gain.g"
     product.mkdir()
     _load_recorder()(str(tmp_path), "gaincal", str(product))
 
     entries = stage_log.read_stage_log(tmp_path)
-    assert stage_log.schema_version_of(entries[0]) == 1
+    assert stage_log.schema_version_of(entries[0]) == 2
 
 
 def test_schema_version_of_an_old_shape_line_is_zero_not_a_parse_failure(tmp_path):
@@ -268,3 +269,104 @@ def test_the_in_process_recorder_is_the_same_function_as_the_pasted_one(tmp_path
     theirs = stage_log.read_stage_log(other)[0]
     assert set(mine) == set(theirs)
     assert mine["measurement"] == theirs["measurement"]
+
+
+# --------------------------------------------------------- CASA task log reader
+
+_MEASURES = "t\tSEVERE\t::casa\tmeasures_update: the measures data is not maintained by casaconfig"
+
+
+def _begin(task):
+    return f"t\tINFO\t{task}::::\t##### Begin Task: {task}            #####"
+
+
+def _end(task):
+    return f"t\tINFO\t{task}::::\t##### End Task: {task}              #####"
+
+
+def _sev(text):
+    return f"t\tSEVERE\tx::::\t{text}"
+
+
+def _log(tmp_path, lines, name="casa.log"):
+    path = tmp_path / name
+    path.write_text("\n".join(lines) + "\n")
+    return str(path)
+
+
+def test_casa_task_log_counts_only_severe_inside_a_task(tmp_path):
+    path = _log(
+        tmp_path,
+        [_MEASURES, _begin("gaincal"), _sev("solve failed"), _end("gaincal"), _sev("after")],
+    )
+    tasks, severe, end = stage_log.casa_task_log(path)
+    assert end == os.path.getsize(path)
+    assert tasks == ["gaincal"]
+    assert severe == [_sev("solve failed")]
+
+
+def test_casa_task_log_task_without_end_marker_runs_to_end_of_log(tmp_path):
+    path = _log(tmp_path, [_begin("imhead"), _sev("raised"), _sev("traceback")])
+    assert stage_log.casa_task_log(path)[:2] == (["imhead"], [_sev("raised"), _sev("traceback")])
+
+
+def test_casa_task_log_nested_tasks_and_task_order(tmp_path):
+    lines = [_begin("a"), _begin("b"), _end("b"), _sev("still in a"), _end("a"), _sev("outside")]
+    tasks, severe, _ = stage_log.casa_task_log(_log(tmp_path, lines))
+    assert tasks == ["a", "b"]
+    assert severe == [_sev("still in a")]
+
+
+def test_casa_task_log_reads_from_offset(tmp_path):
+    first = [_begin("a"), _sev("old"), _end("a")]
+    path = _log(tmp_path, first + [_begin("b"), _sev("new"), _end("b")])
+    offset = len(("\n".join(first) + "\n").encode())
+    assert stage_log.casa_task_log(path, offset)[:2] == (["b"], [_sev("new")])
+
+
+def test_casa_task_log_missing_file_is_empty(tmp_path):
+    assert stage_log.casa_task_log(str(tmp_path / "none.log"), 7) == ([], [], 7)
+
+
+def test_record_stage_records_tasks_and_severe_count(tmp_path, monkeypatch):
+    log = _log(tmp_path, [_MEASURES, _begin("gaincal"), _sev("x"), _sev("y"), _end("gaincal")])
+    monkeypatch.setenv("_ANALYST_CASA_LOGFILE", log)
+    monkeypatch.delenv("_ANALYST_CASA_LOGSTART", raising=False)
+    product = tmp_path / "gain.g"
+    product.mkdir()
+    _load_recorder()(str(tmp_path), "gaincal", str(product))
+    entry = stage_log.read_stage_log(tmp_path)[0]
+    assert entry["casa_tasks"] == ["gaincal"]
+    assert entry["severe_lines"] == 2
+
+
+def test_record_stage_omits_empty_fields_and_honours_the_offset(tmp_path, monkeypatch):
+    earlier = [_begin("gaincal"), _sev("earlier run"), _end("gaincal")]
+    log = _log(tmp_path, [*earlier, _MEASURES])
+    monkeypatch.setenv("_ANALYST_CASA_LOGFILE", log)
+    monkeypatch.setenv("_ANALYST_CASA_LOGSTART", str(len(("\n".join(earlier) + "\n").encode())))
+    product = tmp_path / "gain.g"
+    product.mkdir()
+    _load_recorder()(str(tmp_path), "gaincal", str(product))
+    entry = stage_log.read_stage_log(tmp_path)[0]
+    assert "casa_tasks" not in entry and "severe_lines" not in entry
+
+
+def test_each_stage_line_counts_only_lines_since_the_previous_one(tmp_path, monkeypatch):
+    """A multi-step script: step 2's line must not repeat step 1's SEVERE lines."""
+    log = tmp_path / "casa.log"
+    log.write_text("\n".join([_begin("gaincal"), _sev("step 1"), _end("gaincal")]) + "\n")
+    monkeypatch.setenv("_ANALYST_CASA_LOGFILE", str(log))
+    monkeypatch.delenv("_ANALYST_CASA_LOGSTART", raising=False)
+    record = _load_recorder()
+    first, second = tmp_path / "a.g", tmp_path / "b.b"
+    first.mkdir()
+    second.mkdir()
+    record(str(tmp_path), "gaincal", str(first))
+    with open(log, "a") as fh:
+        fh.write("\n".join([_begin("bandpass"), _end("bandpass")]) + "\n")
+    record(str(tmp_path), "bandpass", str(second))
+    one, two = stage_log.read_stage_log(tmp_path)
+    assert (one["casa_tasks"], one["severe_lines"]) == (["gaincal"], 1)
+    assert two["casa_tasks"] == ["bandpass"]
+    assert "severe_lines" not in two

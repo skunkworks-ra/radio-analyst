@@ -53,7 +53,7 @@ from ms_inspect.tools import (
 )
 from ms_inspect.util import casa_task_index as _cti
 from ms_inspect.util import phase_cal_catalog as _pcc
-from ms_inspect.util.dispatch import ToolResult, path_lock, run_tool
+from ms_inspect.util.dispatch import CASA_LOG_NOTE, ToolResult, path_lock, run_tool
 from ms_inspect.util.logs import init_server_logging
 
 # ---------------------------------------------------------------------------
@@ -68,6 +68,7 @@ mcp = FastMCP(
         "Radio interferometric Measurement Set inspector (Phase 1 — Layer 1 & 2). "
         "Tools return structured measurements — no interpretation. "
         "Consult the SKILL.md document for interferometrist reasoning guidance. "
+        f"{CASA_LOG_NOTE}"
         f"Version: {__version__}"
     ),
     host=_mcp_host,

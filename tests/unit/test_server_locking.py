@@ -90,6 +90,88 @@ def test_explicit_lock_path_overrides_first_arg(tmp_path):
     assert dt.max_overlap(str(tmp_path)) == 1
 
 
+def test_list_lock_serializes_calls_sharing_any_path(tmp_path):
+    """Calls whose lock lists share a path serialize, whatever order the lists give.
+
+    Each call lasts 1 s so that two unlocked calls would overlap despite child
+    start-up jitter. The acquisition order is tested in
+    test_list_lock_taken_in_sorted_order_once_each: an uncontended asyncio.Lock
+    is taken without yielding, so two calls cannot interleave here.
+    """
+    rec = str(tmp_path / "rec")
+    os.mkdir(rec)
+
+    async def go():
+        await asyncio.wait_for(
+            asyncio.gather(
+                run_tool(
+                    dt.record_action, "x", "/w", rec, 1.0, _lock_path=["/data/a.ms", "/data/b.ms"]
+                ),
+                run_tool(
+                    dt.record_action, "y", "/w", rec, 1.0, _lock_path=["/data/b.ms", "/data/a.ms"]
+                ),
+            ),
+            timeout=30,
+        )
+
+    asyncio.run(go())
+    assert dt.max_overlap(rec) == 1
+
+
+def test_list_lock_taken_in_sorted_order_once_each(tmp_path, monkeypatch):
+    """One global order for every call (no cross-wait), and one lock per resolved path."""
+    import ms_inspect.util.dispatch as dispatch
+
+    taken: list[str] = []
+    real_path_lock = dispatch.path_lock
+
+    def recording_path_lock(path):
+        taken.append(path)
+        return real_path_lock(path)
+
+    monkeypatch.setattr(dispatch, "path_lock", recording_path_lock)
+    a, b = tmp_path / "a.ms", tmp_path / "b.ms"
+    a.mkdir()
+    b.mkdir()
+    alias_of_a = str(tmp_path / "." / "a.ms")
+    call = run_tool(
+        dt.record_action, "x", "/w", str(tmp_path), 0.0, _lock_path=[str(b), str(a), alias_of_a]
+    )
+    asyncio.run(asyncio.wait_for(call, timeout=30))
+    assert taken == sorted({os.path.realpath(a), os.path.realpath(b)})
+
+
+def test_list_lock_alias_of_same_path_does_not_deadlock(tmp_path):
+    """Two spellings of one MS resolve to one lock; locking it twice would hang.
+
+    The check is the timeout: a second acquire of the same asyncio.Lock never returns.
+    """
+    ms = tmp_path / "a.ms"
+    ms.mkdir()
+    rec = str(tmp_path / "rec")
+    os.mkdir(rec)
+    alias = str(tmp_path / "." / "a.ms")
+
+    async def go():
+        await asyncio.wait_for(
+            run_tool(dt.record_action, "x", "/w", rec, _lock_path=[str(ms), alias]), timeout=30
+        )
+
+    asyncio.run(go())
+    assert dt.max_overlap(rec) == 1
+
+
+def test_empty_lock_list_runs_unlocked(tmp_path):
+    async def go():
+        await asyncio.gather(
+            run_tool(dt.record_action, "x", "/w", str(tmp_path), 1.0, _lock_path=[]),
+            run_tool(dt.record_action, "y", "/w", str(tmp_path), 1.0, _lock_path=[]),
+        )
+
+    asyncio.run(go())
+    assert dt.max_overlap(str(tmp_path)) == 2
+
+
 def test_does_not_block_event_loop():
     """A long tool call must not stall the event loop — other coroutines keep running."""
     ticks = 0

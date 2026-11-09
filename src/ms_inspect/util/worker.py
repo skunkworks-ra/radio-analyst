@@ -14,8 +14,8 @@ reply to the original stdout:
 CASA prints to stdout from C++ and Python alike, so stdout is moved to stderr
 before anything is imported; only the reply goes to the saved descriptor.
 
-The CASA log file is taken from ``_ANALYST_CASA_LOGFILE`` (set by the parent) so
-every call from one server appends to one log, as a single in-process server did.
+The CASA log file is taken from ``_ANALYST_CASA_LOGFILE``: the parent gives each
+call its own log, and reads it back after the call (util/dispatch.py).
 Importing ms_inspect applies it (see util/logs.py); without it CASA is silenced.
 """
 

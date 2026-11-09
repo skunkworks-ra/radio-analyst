@@ -90,3 +90,41 @@ def raise_ms_not_found(path: str) -> dict:
     from ms_inspect.exceptions import MSNotFoundError
 
     raise MSNotFoundError("no such ms", ms_path=path)
+
+
+def write_casa_log(path: str, lines: list[str], completeness: str = "COMPLETE") -> dict:
+    """Append `lines` to this call's CASA log, as CASA would, and return success."""
+    with open(os.environ["_ANALYST_CASA_LOGFILE"], "a") as fh:
+        fh.write("\n".join(lines) + "\n")
+    return {
+        "status": "ok",
+        "tool": "write_casa_log",
+        "ms_path": path,
+        "completeness_summary": completeness,
+        "data": {},
+        "warnings": ["from the tool"],
+    }
+
+
+def casa_task_severe(path: str) -> dict:
+    """Run a real casatasks task on `path` (a directory that is not an image).
+
+    imhead logs SEVERE inside its task block; the tool reports success anyway,
+    as a tool that trusts CASA's return would.
+    """
+    import contextlib
+
+    import casatasks
+
+    with contextlib.suppress(Exception):  # the log, not the exception, is under test
+        casatasks.imhead(imagename=path)
+    return {"status": "ok", "tool": "casa_task_severe", "ms_path": path, "data": {}}
+
+
+def casa_task_severe_then_record(path: str, workdir: str) -> dict:
+    """casa_task_severe, then record_stage in the same process, as a write tool does."""
+    from ms_inspect.util.stage_log import read_stage_log, record_stage
+
+    casa_task_severe(path)
+    record_stage(workdir, "probe", path)
+    return {"status": "ok", "tool": "probe", "ms_path": path, "data": read_stage_log(workdir)[-1]}

@@ -15,7 +15,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-from ms_inspect.util.dispatch import ToolResult, run_tool
+from ms_inspect.util.dispatch import CASA_LOG_NOTE, ToolResult, run_tool
 from ms_inspect.util.logs import init_server_logging
 from ms_modify import (
     __version__,
@@ -46,6 +46,7 @@ mcp = FastMCP(
     instructions=(
         "Radio interferometric Measurement Set modification utilities. "
         "Tools in this server write to the MS — use with care. "
+        f"{CASA_LOG_NOTE}"
         f"Version: {__version__}"
     ),
 )
@@ -2201,14 +2202,14 @@ async def ms_casa_task(params: CasaTaskInput) -> ToolResult:
     """Run (or script) one unwrapped CASA task through the generic guard."""
     from ms_modify import casa_task as _ct
 
-    lock = _ct.lock_path(params.params, params.workdir)
     return await _run_tool(
         _ct.run,
         task=params.task,
         params=params.params,
         workdir=params.workdir,
         execute=params.execute,
-        _lock_path=lock,
+        _lock_path=_ct.lock_paths(params.params, params.workdir),
+        _label=f"ms_casa_task.{params.task}",
     )
 
 

@@ -7,6 +7,7 @@ put through the schema translator.
 from __future__ import annotations
 
 import inspect
+import os
 
 import pytest
 
@@ -189,12 +190,52 @@ def test_rmtables_refused(work):
         run("rmtables", {"tablenames": ["/data/x.ms"]}, str(work))
 
 
-def test_lock_path_prefers_concatvis_and_unpacks_lists():
-    from ms_modify.casa_task import lock_path
+def test_lock_paths_cover_inputs_outputs_and_list_entries(tmp_path, monkeypatch):
+    from ms_modify.casa_task import lock_paths
 
-    assert lock_path({"vis": ["a.ms", "b.ms"], "concatvis": "c.ms"}, "W") == "c.ms"
-    assert lock_path({"vis": ["a.ms", "b.ms"]}, "W") == "a.ms"
-    assert lock_path({}, "W") == "W"
+    monkeypatch.chdir(tmp_path)
+    paths = lock_paths(
+        {
+            "vis": ["a.ms", "b.ms"],
+            "concatvis": "c.ms",
+            "caltable": "~/x.G",
+            "gaintable": ["g1", "g2"],
+            "fitorder": 1,
+            "outputvis": "",
+        },
+        "W",
+    )
+    assert sorted(paths) == sorted(
+        [
+            str(tmp_path / "a.ms"),
+            str(tmp_path / "b.ms"),
+            str(tmp_path / "c.ms"),
+            os.path.expanduser("~/x.G"),
+            str(tmp_path / "g1"),
+            str(tmp_path / "g2"),
+        ]
+    )
+
+
+def test_lock_paths_without_a_path_lock_the_workdir():
+    from ms_modify.casa_task import lock_paths
+
+    assert lock_paths({"fitorder": 1}, "W") == ["W"]
+
+
+def test_two_calls_writing_one_output_share_a_lock(tmp_path):
+    """Different input MSs, same output MS: their lock sets overlap.
+
+    outputvis is an output only (not in INPUT_PARAMS), so this fails if outputs
+    are left out of the lock set.
+    """
+    from ms_modify.casa_task import INPUT_PARAMS, lock_paths
+
+    assert "outputvis" not in INPUT_PARAMS
+    out = str(tmp_path / "out.ms")
+    first = lock_paths({"vis": str(tmp_path / "a.ms"), "outputvis": out}, "W")
+    second = lock_paths({"vis": str(tmp_path / "b.ms"), "outputvis": out}, "W")
+    assert set(first) & set(second) == {out}
 
 
 def test_existing_imagename_prefix_is_an_input(fake_spec, work, monkeypatch):

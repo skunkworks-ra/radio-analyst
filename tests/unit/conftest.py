@@ -369,3 +369,9 @@ def real_caltable_copy(real_caltable, tmp_path) -> str:
     dst = Path(tmp_path) / "gain.G"
     shutil.copytree(real_caltable, dst)
     return str(dst)
+
+
+@pytest.fixture(autouse=True)
+def _restore_casa_log_offset(monkeypatch):
+    """record_stage moves _ANALYST_CASA_LOGSTART on in os.environ; undo it after each test."""
+    monkeypatch.delenv("_ANALYST_CASA_LOGSTART", raising=False)

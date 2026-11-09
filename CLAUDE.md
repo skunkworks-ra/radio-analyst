@@ -444,6 +444,12 @@ On hard failure:
 
 `completeness_summary` in the envelope is the worst-case flag across all fields
 in `data`. Computed automatically by `util/formatting.response_envelope()`.
+The dispatch parent (`util/dispatch.py`) also raises it to at least `SUSPECT`
+when CASA logged a SEVERE line inside a casatasks task during the call (each
+call has its own CASA log under `logs/`); the lines go in `casa_severe` and a
+warning. Some tasks log SEVERE and still succeed, so SUSPECT means "read the
+lines", not "failed". Stage-log lines (schema 2) carry `casa_tasks` and
+`severe_lines` from the same log.
 
 ---
 

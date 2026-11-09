@@ -15,7 +15,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
 from ms_create import __version__, import_asdm, reduction_log, report, sdm_summary
-from ms_inspect.util.dispatch import ToolResult, run_tool
+from ms_inspect.util.dispatch import CASA_LOG_NOTE, ToolResult, run_tool
 from ms_inspect.util.logs import init_server_logging
 
 # ---------------------------------------------------------------------------
@@ -26,6 +26,7 @@ mcp = FastMCP(
     instructions=(
         "Radio interferometric Measurement Set ingestion utilities. "
         "Tools in this server create new files on disk. "
+        f"{CASA_LOG_NOTE}"
         f"Version: {__version__}"
     ),
 )
