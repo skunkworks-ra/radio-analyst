@@ -49,8 +49,18 @@ _DEFAULT_PORT = {"inspect": 8003, "modify": 8004}
 #: Parameters whose value names a table a call reads or writes. A call locks
 #: every one that is set, so a call that writes a caltable, an image or a new
 #: MS is serialized against any other call on the same path, even when the two
-#: read different MSs.
-_LOCK_PARAMS = ("vis", "asdm", "imagename", "caltable", "fluxtable", "outputvis", "concatvis")
+#: read different MSs. A lock is exclusive: two calls that only read the same
+#: gaintable also run one after the other.
+_LOCK_PARAMS = (
+    "vis",
+    "asdm",
+    "imagename",
+    "caltable",
+    "fluxtable",
+    "gaintable",
+    "outputvis",
+    "concatvis",
+)
 
 
 def lock_paths(params: dict) -> list[str]:

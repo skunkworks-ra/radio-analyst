@@ -27,6 +27,7 @@ from casa_tasks.runner import (
     product_path,
     record_stage_line,
     run_task,
+    task_severe_lines,
     to_jsonable,
 )
 from casa_tasks.server import INSTRUCTIONS, build_server, call_log_path, lock_paths
@@ -183,6 +184,10 @@ def test_lock_paths(tmp_path):
     assert lock_paths({"vis": ""}) == []
     assert lock_paths({"vis": []}) == []
     assert lock_paths({"vis": "~/a.ms"}) == [os.path.expanduser("~/a.ms")]
+    assert lock_paths({"vis": ms, "gaintable": ["cal.G", ""], "gainfield": ["3C286"]}) == [
+        ms,
+        os.path.abspath("cal.G"),
+    ]
 
 
 async def test_server_sends_measures_update_note():
@@ -257,6 +262,86 @@ def test_call_log_path_is_a_new_casa_log_next_to_the_server_log(monkeypatch, tmp
     first, second = call_log_path("tclean"), call_log_path("tclean")
     assert first != second
     assert os.path.basename(first).startswith("casa-") and first.endswith("-tclean.log")
+
+
+def _casa_line(priority: str, message: str) -> str:
+    return f"2026-11-09 12:00:00\t{priority}\tgaincal::::casa\t{message}"
+
+
+def test_task_severe_lines_counts_only_after_the_task_marker():
+    lines = [
+        _casa_line("SEVERE", "measures_update: the measures data is not maintained"),
+        _casa_line("SEVERE", "some other import-time notice"),
+        _casa_line("INFO", "##### Begin Task: gaincal            #####"),
+        _casa_line("SEVERE", "Spectral window 0 could not be solved"),
+    ]
+    assert task_severe_lines("gaincal", lines) == [lines[3]]
+
+
+def test_task_severe_lines_marker_must_name_this_task():
+    lines = [
+        _casa_line("INFO", "##### Begin Task: cvel2              #####"),
+        _casa_line("SEVERE", "x"),
+    ]
+    # No 'cvel' marker: fall back to every SEVERE line except measures_update.
+    assert task_severe_lines("cvel", lines) == [lines[1]]
+
+
+def test_task_severe_lines_without_marker_drops_only_measures_update():
+    lines = [
+        _casa_line("SEVERE", "measures_update: the measures data is not maintained"),
+        _casa_line("SEVERE", "real problem"),
+        _casa_line("WARN", "not severe"),
+    ]
+    assert task_severe_lines("gaincal", lines) == [lines[1]]
+
+
+def test_run_task_marks_severe_as_suspect_and_records_count(monkeypatch, tmp_path):
+    pytest.importorskip("casaconfig")
+    log = tmp_path / "casa-call-gaincal.log"
+
+    def gaincal(**kwargs):
+        log.write_text(
+            "\n".join(
+                [
+                    _casa_line("SEVERE", "measures_update: not maintained"),
+                    _casa_line("INFO", "##### Begin Task: gaincal            #####"),
+                    _casa_line("SEVERE", "could not be solved"),
+                ]
+            )
+        )
+        os.mkdir(kwargs["caltable"])
+
+    _stub_casatasks(monkeypatch, gaincal=gaincal)
+    params = {"vis": "a.ms", "caltable": str(tmp_path / "g.G")}
+    env = run_task("gaincal", params, stage="gaincal", workdir=str(tmp_path), log_path=str(log))
+    assert env["status"] == "ok"
+    assert env["completeness_summary"] == "SUSPECT"
+    assert "1 SEVERE line" in env["warnings"][0]
+    (entry,) = read_stage_log(tmp_path)
+    assert entry["severe_lines"] == 1
+    assert completed_stages([entry]) == {"gaincal"}
+
+
+def test_run_task_import_notice_alone_stays_complete(monkeypatch, tmp_path):
+    pytest.importorskip("casaconfig")
+    log = tmp_path / "casa-call-listobs.log"
+
+    def listobs(**kwargs):
+        log.write_text(
+            "\n".join(
+                [
+                    _casa_line("SEVERE", "measures_update: not maintained"),
+                    _casa_line("INFO", "##### Begin Task: listobs            #####"),
+                ]
+            )
+        )
+        return {}
+
+    _stub_casatasks(monkeypatch, listobs=listobs)
+    env = run_task("listobs", {"vis": "a.ms"}, log_path=str(log))
+    assert env["completeness_summary"] == "COMPLETE"
+    assert env["warnings"] == []
 
 
 def test_run_task_stage_without_workdir_warns(monkeypatch):

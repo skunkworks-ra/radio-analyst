@@ -8,6 +8,7 @@ standard envelope with:
 - the task's return value, converted to JSON types (numpy arrays to lists);
 - the CASA log of this call only: WARN and SEVERE lines plus the last lines.
   CASA can return normally from a failed solve and report it only in the log.
+  If the task itself logged a SEVERE line, completeness_summary is SUSPECT.
 - for casa-modify with ``stage`` and ``workdir``: one stage-log line.
 
 A failure to write the stage-log line is a warning in the result, never an
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -60,16 +62,35 @@ def _call_log_path(task: str) -> str | None:
     return str(Path(server_log).with_name(f"casa-{stamp}-{os.getpid()}-{task}.log"))
 
 
-def _read_log(path: str | None) -> dict:
-    """WARN/SEVERE lines and the last lines of the per-call log."""
+def _log_lines(path: str | None) -> list[str]:
+    """Lines of the per-call log; empty if there is none."""
     if path is None:
-        return {"casa_log": None, "log_warnings": [], "log_tail": []}
+        return []
     try:
-        lines = Path(path).read_text(errors="replace").splitlines()
+        return Path(path).read_text(errors="replace").splitlines()
     except OSError:
-        lines = []
+        return []
+
+
+def _log_fields(path: str | None, lines: list[str]) -> dict:
+    """WARN/SEVERE lines and the last lines of the per-call log."""
     warnings = [ln for ln in lines if "\tWARN\t" in ln or "\tSEVERE\t" in ln]
     return {"casa_log": path, "log_warnings": warnings, "log_tail": lines[-LOG_TAIL_LINES:]}
+
+
+def task_severe_lines(task: str, lines: list[str]) -> list[str]:
+    """SEVERE lines the task itself logged, not the notices of the CASA import.
+
+    casatasks writes '##### Begin Task: <task> #####' when the task starts; only
+    lines from there on count. If the marker is absent (a log level above INFO
+    suppresses it), every SEVERE line counts except the casaconfig
+    measures_update notice.
+    """
+    marker = re.compile(rf"Begin Task: {re.escape(task)}\s+#####")
+    start = next((i for i, ln in enumerate(lines) if marker.search(ln)), None)
+    if start is None:
+        return [ln for ln in lines if "\tSEVERE\t" in ln and "measures_update" not in ln]
+    return [ln for ln in lines[start:] if "\tSEVERE\t" in ln]
 
 
 def product_path(task: str, params: dict) -> str | None:
@@ -85,12 +106,18 @@ def product_path(task: str, params: dict) -> str | None:
 
 
 def record_stage_line(
-    workdir: str, stage: str, task: str, params: dict, casa_log: str | None = None
+    workdir: str,
+    stage: str,
+    task: str,
+    params: dict,
+    casa_log: str | None = None,
+    severe_lines: int = 0,
 ) -> str | None:
     """Append one line to <workdir>/stage_log.jsonl. Return a warning, or None.
 
     Never raises. A missing product is recorded with ``exists: false`` (the log
     reader then does not count the stage as complete) and returned as a warning.
+    ``severe_lines`` is recorded when non-zero; it does not change ``exists``.
     """
     product = product_path(task, params)
     exists = product is not None and os.path.exists(product)
@@ -109,6 +136,8 @@ def record_stage_line(
     }
     if casa_log:
         entry["casa_log"] = casa_log
+    if severe_lines:
+        entry["severe_lines"] = severe_lines
     if not exists:
         entry["error"] = "product not found after the step that writes it"
     try:
@@ -157,13 +186,20 @@ def run_task(
             "status": "error",
             "error_type": type(exc).__name__,
             "message": str(exc),
-            "data": {"params": params, **_read_log(log_path)},
+            "data": {"params": params, **_log_fields(log_path, _log_lines(log_path))},
             "provenance": {"casa_calls": [call]},
         }
 
+    lines = _log_lines(log_path)
+    severe = task_severe_lines(task, lines)
     warnings: list[str] = []
+    if severe:
+        warnings.append(
+            f"CASA logged {len(severe)} SEVERE line(s) during {task}; see log_warnings. "
+            "Some tasks log SEVERE and still succeed: read the lines before acting."
+        )
     if stage is not None and workdir:
-        warning = record_stage_line(workdir, stage, task, params, log_path)
+        warning = record_stage_line(workdir, stage, task, params, log_path, len(severe))
         if warning:
             warnings.append(warning)
     elif stage is not None:
@@ -173,12 +209,12 @@ def run_task(
         "tool": task,
         "ms_path": ms_path,
         "status": "ok",
-        "completeness_summary": "COMPLETE",
+        "completeness_summary": "SUSPECT" if severe else "COMPLETE",
         "data": {
             "params": params,
             "return": to_jsonable(result),
             "wall_time_s": round(time.monotonic() - started, 3),
-            **_read_log(log_path),
+            **_log_fields(log_path, lines),
         },
         "warnings": warnings,
         "provenance": {"casa_calls": [call]},
