@@ -13,7 +13,11 @@ Two servers:
   product) is allowed.
 - casa-modify lists every other task.
 
-``use_mcp`` (environment variable ``RADIO_MCP_USE_MCP``, default true):
+casa-inspect always lists every task in ``INSPECT_TASKS`` with every parameter
+except ``GUI_PARAMS``.
+
+``use_mcp`` (environment variable ``RADIO_MCP_USE_MCP``, default true) applies
+to casa-modify only:
 
 - true: only the tasks in ``MCP_TASK_PARAMS``, each with only the listed
   parameters. These are the tasks and parameters the ms_* tools expose.
@@ -42,6 +46,7 @@ INSPECT_TASKS = frozenset(
         "listpartition",
         "listsdm",
         "listvis",
+        "plotweather",
         "slsearch",
         "specflux",
         "uvmodelfit",
@@ -62,7 +67,8 @@ EXCLUDED_TASKS = GUI_TASKS | NON_API_TASKS
 #: Parameters that open a window. Removed from every schema; CASA's default is off.
 GUI_PARAMS = frozenset({"interactive", "display", "showplot", "showgui", "graphics"})
 
-#: use_mcp=True: the tasks the ms_* tools call, with the CASA parameters they expose.
+#: casa-modify with use_mcp=True: the tasks the ms_* tools call, with the CASA
+#: parameters they expose.
 MCP_TASK_PARAMS: dict[str, tuple[str, ...]] = {
     "applycal": (
         "vis", "field", "spw", "gaintable", "gainfield", "interp", "spwmap",
@@ -93,7 +99,6 @@ MCP_TASK_PARAMS: dict[str, tuple[str, ...]] = {
         "asdm", "vis", "ocorr_mode", "asis", "applyflags", "savecmds", "outfile",
         "overwrite", "with_pointing_correction",
     ),
-    "plotweather": ("vis", "doPlot"),
     "polcal": (
         "vis", "caltable", "field", "poltype", "solint", "combine", "refant",
         "gaintable", "gainfield", "interp", "spwmap",
@@ -170,6 +175,10 @@ def check_config(schemas: dict) -> None:
     problems: list[str] = []
     named = INSPECT_TASKS | EXCLUDED_TASKS | set(MCP_TASK_PARAMS) | set(PRODUCT)
     problems += [f"unknown task {t!r}" for t in sorted(named - set(tasks))]
+    problems += [
+        f"{t}: in MCP_TASK_PARAMS but casa-inspect ignores use_mcp"
+        for t in sorted(set(MCP_TASK_PARAMS) & INSPECT_TASKS)
+    ]
     for task, params in MCP_TASK_PARAMS.items():
         known = tasks.get(task, {}).get("params", {})
         problems += [f"{task}: unknown parameter {p!r}" for p in params if p not in known]

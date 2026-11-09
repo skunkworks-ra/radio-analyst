@@ -38,7 +38,8 @@ def use_mcp() -> bool:
 def build_catalog(kind: str, restricted: bool) -> dict[str, dict]:
     """Map task name to its description and input schema for one server.
 
-    ``restricted`` is the use_mcp switch: True keeps only MCP_TASK_PARAMS.
+    ``restricted`` is the use_mcp switch: for casa-modify, True keeps only
+    MCP_TASK_PARAMS. casa-inspect ignores it and lists its full read-only set.
     """
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {KINDS}, not {kind!r}")
@@ -48,7 +49,7 @@ def build_catalog(kind: str, restricted: bool) -> dict[str, dict]:
     for task, spec in schemas["tasks"].items():
         if task in EXCLUDED_TASKS or (task in INSPECT_TASKS) != (kind == "inspect"):
             continue
-        if restricted:
+        if restricted and kind == "modify":
             if task not in MCP_TASK_PARAMS:
                 continue
             params = {p: spec["params"][p] for p in MCP_TASK_PARAMS[task]}

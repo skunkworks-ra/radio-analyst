@@ -90,6 +90,49 @@ def test_explicit_lock_path_overrides_first_arg(tmp_path):
     assert dt.max_overlap(str(tmp_path)) == 1
 
 
+def test_list_lock_serializes_calls_sharing_any_path(tmp_path):
+    """concat-style calls lock every input: [a,b] and [b,c] share b, so they serialize."""
+    rec = str(tmp_path / "rec")
+    os.mkdir(rec)
+
+    async def go():
+        await asyncio.gather(
+            run_tool(dt.record_action, "x", "/w", rec, _lock_path=["/data/a.ms", "/data/b.ms"]),
+            run_tool(dt.record_action, "y", "/w", rec, _lock_path=["/data/c.ms", "/data/b.ms"]),
+        )
+
+    asyncio.run(go())
+    assert dt.max_overlap(rec) == 1
+
+
+def test_list_lock_alias_of_same_path_does_not_deadlock(tmp_path):
+    """Two spellings of one MS resolve to one lock; locking it twice would hang."""
+    ms = tmp_path / "a.ms"
+    ms.mkdir()
+    rec = str(tmp_path / "rec")
+    os.mkdir(rec)
+    alias = str(tmp_path / "." / "a.ms")
+
+    async def go():
+        await asyncio.wait_for(
+            run_tool(dt.record_action, "x", "/w", rec, _lock_path=[str(ms), alias]), timeout=30
+        )
+
+    asyncio.run(go())
+    assert dt.max_overlap(rec) == 1
+
+
+def test_empty_lock_list_runs_unlocked(tmp_path):
+    async def go():
+        await asyncio.gather(
+            run_tool(dt.record_action, "x", "/w", str(tmp_path), 1.0, _lock_path=[]),
+            run_tool(dt.record_action, "y", "/w", str(tmp_path), 1.0, _lock_path=[]),
+        )
+
+    asyncio.run(go())
+    assert dt.max_overlap(str(tmp_path)) == 2
+
+
 def test_does_not_block_event_loop():
     """A long tool call must not stall the event loop — other coroutines keep running."""
     ticks = 0

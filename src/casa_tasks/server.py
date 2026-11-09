@@ -31,6 +31,14 @@ from ms_inspect.util.dispatch import envelope_result, run_tool
 from ms_inspect.util.formatting import error_envelope
 from ms_inspect.util.logs import init_server_logging
 
+#: Sent to the client at connection. Every casatasks import in a child process
+#: logs this notice when the local CASA data is not managed by casaconfig.
+INSTRUCTIONS = (
+    "One tool per CASA task; the tool name is the task name. Ignore the SEVERE "
+    "'measures_update ... not maintained by casaconfig' line in log_warnings: it is a "
+    "notice about the local CASA data setup, not a task failure."
+)
+
 #: HTTP port when RADIO_MCP_PORT is unset; the ms-* servers use 8000-8002.
 _DEFAULT_PORT = {"inspect": 8003, "modify": 8004}
 
@@ -38,15 +46,19 @@ _DEFAULT_PORT = {"inspect": 8003, "modify": 8004}
 _LOCK_PARAMS = ("vis", "imagename", "caltable", "asdm")
 
 
-def lock_path(params: dict) -> str | None:
-    """Absolute path of the resource a call locks on, or None to run unlocked."""
+def lock_paths(params: dict) -> list[str]:
+    """Absolute paths of the resources a call locks on; empty to run unlocked.
+
+    The first of _LOCK_PARAMS that is set names them. A list value (concat's
+    vis) locks every entry.
+    """
     for name in _LOCK_PARAMS:
         value = params.get(name)
-        if isinstance(value, list):
-            value = value[0] if value else None
-        if isinstance(value, str) and value:
-            return os.path.abspath(value)
-    return None
+        values = value if isinstance(value, list) else [value]
+        paths = [os.path.abspath(v) for v in values if isinstance(v, str) and v]
+        if paths:
+            return paths
+    return []
 
 
 def build_server(kind: str, restricted: bool | None = None) -> FastMCP:
@@ -62,7 +74,7 @@ def build_server(kind: str, restricted: bool | None = None) -> FastMCP:
         )
         for task, spec in catalog.items()
     ]
-    mcp = FastMCP(f"casa-{kind}")
+    mcp = FastMCP(f"casa-{kind}", instructions=INSTRUCTIONS)
     low = mcp._mcp_server
 
     @low.list_tools()
@@ -86,7 +98,7 @@ def build_server(kind: str, restricted: bool | None = None) -> FastMCP:
                 params=params,
                 stage=wrapper.get("stage"),
                 workdir=wrapper.get("workdir"),
-                _lock_path=lock_path(params),
+                _lock_path=lock_paths(params),
                 _label=f"casa-{kind}.{name}",
             )
         except Exception as exc:  # noqa: BLE001 - a crashed child is a tool error, not a server error

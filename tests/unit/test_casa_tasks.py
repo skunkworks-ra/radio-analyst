@@ -28,7 +28,7 @@ from casa_tasks.runner import (
     run_task,
     to_jsonable,
 )
-from casa_tasks.server import build_server, lock_path
+from casa_tasks.server import INSTRUCTIONS, build_server, lock_paths
 from ms_inspect.util.logs import LOGFILE_ENV
 from ms_inspect.util.stage_log import SCHEMA_VERSION, completed_stages, read_stage_log
 
@@ -76,9 +76,11 @@ def test_use_mcp_modify_lists_exactly_the_current_tasks_and_params():
         assert _props(catalog, task) == [*params, *WRAPPER_PARAMS]
 
 
-def test_use_mcp_inspect_lists_nothing():
-    # Every task the ms_* tools call can change an MS.
-    assert build_catalog("inspect", restricted=True) == {}
+def test_inspect_lists_full_read_only_set_whatever_use_mcp():
+    restricted = build_catalog("inspect", restricted=True)
+    assert restricted == build_catalog("inspect", restricted=False)
+    assert set(restricted) == INSPECT_TASKS
+    assert "doPlot" in _props(restricted, "plotweather")
 
 
 def test_full_catalog_split_and_gui_exclusion():
@@ -144,13 +146,21 @@ async def test_server_lists_schemas_and_read_only_hint():
     assert tools["listobs"].inputSchema["additionalProperties"] is False
 
 
-def test_lock_path(tmp_path):
+def test_lock_paths(tmp_path):
     ms = str(tmp_path / "a.ms")
-    assert lock_path({"vis": ms, "caltable": "b.G"}) == ms
-    assert lock_path({"vis": [ms, "other.ms"]}) == ms
-    assert lock_path({"imagename": "img"}) == os.path.abspath("img")
-    assert lock_path({"field": "0"}) is None
-    assert lock_path({"vis": ""}) is None
+    assert lock_paths({"vis": ms, "caltable": "b.G"}) == [ms]
+    assert lock_paths({"vis": [ms, "other.ms"]}) == [ms, os.path.abspath("other.ms")]
+    assert lock_paths({"imagename": "img"}) == [os.path.abspath("img")]
+    assert lock_paths({"field": "0"}) == []
+    assert lock_paths({"vis": ""}) == []
+    assert lock_paths({"vis": []}) == []
+
+
+async def test_server_sends_measures_update_note():
+    server = build_server("modify", restricted=True)
+    options = server._mcp_server.create_initialization_options()
+    assert options.instructions == INSTRUCTIONS
+    assert "measures_update" in INSTRUCTIONS
 
 
 # ------------------------------------------------------------------ stage line

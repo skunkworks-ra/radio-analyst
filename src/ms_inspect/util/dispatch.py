@@ -121,7 +121,11 @@ def envelope_result(envelope: dict) -> CallToolResult:
 
 
 async def run_tool(
-    tool_fn, *args, _lock_path: str | None = None, _label: str | None = None, **kwargs
+    tool_fn,
+    *args,
+    _lock_path: str | list[str] | None = None,
+    _label: str | None = None,
+    **kwargs,
 ) -> CallToolResult:
     """
     Execute a tool function in a child process; return the tool result.
@@ -138,6 +142,12 @@ async def run_tool(
 
     Tools with neither a positional argument nor `_lock_path` run unserialized.
 
+    `_lock_path` may be a list for a call that reads several resources (CASA
+    concat). Each distinct resource is locked once, in sorted order of its
+    resolved path, so two calls whose sets overlap take the shared locks in the
+    same order, and an alias of a path already in the set is not locked twice
+    (an asyncio.Lock is not reentrant). An empty list runs unlocked.
+
     `_label` names the call in events.jsonl, for a generic tool function that
     serves many tools (the casa_tasks servers pass the CASA task name).
 
@@ -149,10 +159,16 @@ async def run_tool(
     passed through untouched, so a mistyped MS path still reaches the tool's own
     validation and returns the documented error envelope.
     """
-    lock_key = _lock_path if _lock_path is not None else (str(args[0]) if args else None)
+    if _lock_path is not None:
+        source = "_lock_path"
+        raw_keys = [_lock_path] if isinstance(_lock_path, str) else list(_lock_path)
+    else:
+        source = "first positional argument"
+        raw_keys = [str(args[0])] if args else []
 
-    if lock_key is not None and not _is_plausible_lock_key(lock_key):
-        source = "_lock_path" if _lock_path is not None else "first positional argument"
+    for lock_key in raw_keys:
+        if _is_plausible_lock_key(lock_key):
+            continue
         raise ValueError(
             f"run_tool: lock key from {source} is not a resource path: {lock_key!r} "
             f"(tool {getattr(tool_fn, '__module__', '?')}."
@@ -165,7 +181,7 @@ async def run_tool(
     status, error_type = "crash", None
     try:
         async with contextlib.AsyncExitStack() as stack:
-            if lock_key is not None:
+            for lock_key in sorted({os.path.realpath(k) for k in raw_keys}):
                 await stack.enter_async_context(path_lock(lock_key))
             envelope = json.loads(await _run_in_child(tool_fn, args, kwargs))
         status, error_type = envelope.get("status", "ok"), envelope.get("error_type")
@@ -180,7 +196,7 @@ async def run_tool(
         log_event(
             tool=_label
             or f"{getattr(tool_fn, '__module__', '?')}.{getattr(tool_fn, '__qualname__', '?')}",
-            resource=lock_key,
+            resource=raw_keys[0] if len(raw_keys) == 1 else (raw_keys or None),
             status=status,
             error_type=error_type,
             duration_s=round(time.monotonic() - started, 3),
