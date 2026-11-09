@@ -59,7 +59,9 @@ def lock_paths(params: dict) -> list[str]:
     for name in _LOCK_PARAMS:
         value = params.get(name)
         values = value if isinstance(value, list) else [value]
-        paths += [os.path.abspath(v) for v in values if isinstance(v, str) and v]
+        paths += [
+            os.path.abspath(os.path.expanduser(v)) for v in values if isinstance(v, str) and v
+        ]
     return paths
 
 

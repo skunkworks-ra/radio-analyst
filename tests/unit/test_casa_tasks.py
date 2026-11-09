@@ -167,9 +167,11 @@ def test_lock_paths(tmp_path):
     assert lock_paths({"field": "0"}) == []
     assert lock_paths({"vis": ""}) == []
     assert lock_paths({"vis": []}) == []
+    assert lock_paths({"vis": "~/a.ms"}) == [os.path.expanduser("~/a.ms")]
 
 
 async def test_server_sends_measures_update_note():
+    """The note reaches the server's initialization options (what initialize sends)."""
     server = build_server("modify", restricted=True)
     options = server._mcp_server.create_initialization_options()
     assert options.instructions == INSTRUCTIONS

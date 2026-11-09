@@ -91,21 +91,27 @@ def test_explicit_lock_path_overrides_first_arg(tmp_path):
 
 
 def test_list_lock_serializes_calls_sharing_any_path(tmp_path):
-    """concat-style calls lock every input: [a,b] and [b,c] share b, so they serialize.
+    """Calls whose lock lists share a path serialize, whatever order the lists give.
 
-    Each call lasts 1 s so that two unlocked calls would overlap despite child start-up jitter.
+    [a,b] and [b,a]: taken in list order, each call would hold one lock and wait on
+    the other forever (the timeout fails the test); run_tool's sorted order makes
+    them serialize instead. Each call lasts 1 s so that two unlocked calls would
+    overlap despite child start-up jitter.
     """
     rec = str(tmp_path / "rec")
     os.mkdir(rec)
 
     async def go():
-        await asyncio.gather(
-            run_tool(
-                dt.record_action, "x", "/w", rec, 1.0, _lock_path=["/data/a.ms", "/data/b.ms"]
+        await asyncio.wait_for(
+            asyncio.gather(
+                run_tool(
+                    dt.record_action, "x", "/w", rec, 1.0, _lock_path=["/data/a.ms", "/data/b.ms"]
+                ),
+                run_tool(
+                    dt.record_action, "y", "/w", rec, 1.0, _lock_path=["/data/b.ms", "/data/a.ms"]
+                ),
             ),
-            run_tool(
-                dt.record_action, "y", "/w", rec, 1.0, _lock_path=["/data/c.ms", "/data/b.ms"]
-            ),
+            timeout=30,
         )
 
     asyncio.run(go())
@@ -113,7 +119,10 @@ def test_list_lock_serializes_calls_sharing_any_path(tmp_path):
 
 
 def test_list_lock_alias_of_same_path_does_not_deadlock(tmp_path):
-    """Two spellings of one MS resolve to one lock; locking it twice would hang."""
+    """Two spellings of one MS resolve to one lock; locking it twice would hang.
+
+    The check is the timeout: a second acquire of the same asyncio.Lock never returns.
+    """
     ms = tmp_path / "a.ms"
     ms.mkdir()
     rec = str(tmp_path / "rec")
