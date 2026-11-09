@@ -35,7 +35,10 @@ STAGE_LOG_NAME = "stage_log.jsonl"
 #: than the writer can still read every version below its own; a reader
 #: OLDER than the writer must not guess at fields it does not know about —
 #: see schema_version_of()'s docstring.
-SCHEMA_VERSION = 1
+#: Version 2 adds ``task`` (the casatasks name) and ``params`` (the call's
+#: arguments, or ``{"truncated": <json text>}`` when long), written by the
+#: casa-modify server (casa_tasks/runner.py). Version 1 lines stay valid.
+SCHEMA_VERSION = 2
 
 #: Embedded verbatim in generated scripts. Call once after each product is
 #: written. Opens, appends one line and closes — never holds a handle, because
