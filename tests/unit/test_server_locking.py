@@ -91,14 +91,21 @@ def test_explicit_lock_path_overrides_first_arg(tmp_path):
 
 
 def test_list_lock_serializes_calls_sharing_any_path(tmp_path):
-    """concat-style calls lock every input: [a,b] and [b,c] share b, so they serialize."""
+    """concat-style calls lock every input: [a,b] and [b,c] share b, so they serialize.
+
+    Each call lasts 1 s so that two unlocked calls would overlap despite child start-up jitter.
+    """
     rec = str(tmp_path / "rec")
     os.mkdir(rec)
 
     async def go():
         await asyncio.gather(
-            run_tool(dt.record_action, "x", "/w", rec, _lock_path=["/data/a.ms", "/data/b.ms"]),
-            run_tool(dt.record_action, "y", "/w", rec, _lock_path=["/data/c.ms", "/data/b.ms"]),
+            run_tool(
+                dt.record_action, "x", "/w", rec, 1.0, _lock_path=["/data/a.ms", "/data/b.ms"]
+            ),
+            run_tool(
+                dt.record_action, "y", "/w", rec, 1.0, _lock_path=["/data/c.ms", "/data/b.ms"]
+            ),
         )
 
     asyncio.run(go())
