@@ -13,13 +13,17 @@ Replacing the handlers also hides any ``@mcp.tool`` tools on the same object,
 so these servers hold CASA tasks only.
 
 Calls go through ms_inspect.util.dispatch.run_tool: one child process per call,
-serialized per Measurement Set.
+serialized per table within this server process. Locks are not shared between
+server processes: a casa-inspect read can overlap a casa-modify write.
 """
 
 from __future__ import annotations
 
 import os
 import sys
+import time
+import uuid
+from pathlib import Path
 
 from mcp import types
 from mcp.server.fastmcp import FastMCP
@@ -29,7 +33,7 @@ from casa_tasks.config import WRAPPER_PARAMS
 from casa_tasks.runner import run_task
 from ms_inspect.util.dispatch import envelope_result, run_tool
 from ms_inspect.util.formatting import error_envelope
-from ms_inspect.util.logs import init_server_logging
+from ms_inspect.util.logs import casa_log_path, init_server_logging
 
 #: Sent to the client at connection. Every casatasks import in a child process
 #: logs this notice when the local CASA data is not managed by casaconfig.
@@ -65,6 +69,13 @@ def lock_paths(params: dict) -> list[str]:
     return paths
 
 
+def call_log_path(task: str) -> str:
+    """A new CASA log file for one call, next to this server's CASA log."""
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    name = f"casa-{stamp}-{uuid.uuid4().hex[:8]}-{task}.log"
+    return str(Path(casa_log_path()).with_name(name))
+
+
 def build_server(kind: str, restricted: bool | None = None) -> FastMCP:
     """A FastMCP server listing the CASA tasks of one kind ('inspect' or 'modify')."""
     restricted = use_mcp() if restricted is None else restricted
@@ -74,7 +85,6 @@ def build_server(kind: str, restricted: bool | None = None) -> FastMCP:
             name=task,
             description=spec["description"],
             inputSchema=spec["inputSchema"],
-            annotations=types.ToolAnnotations(readOnlyHint=kind == "inspect"),
         )
         for task, spec in catalog.items()
     ]
@@ -95,6 +105,7 @@ def build_server(kind: str, restricted: bool | None = None) -> FastMCP:
         wrapper = (
             {k: params.pop(k) for k in WRAPPER_PARAMS if k in params} if kind == "modify" else {}
         )
+        log_path = call_log_path(name)
         try:
             return await run_tool(
                 run_task,
@@ -102,12 +113,14 @@ def build_server(kind: str, restricted: bool | None = None) -> FastMCP:
                 params=params,
                 stage=wrapper.get("stage"),
                 workdir=wrapper.get("workdir"),
+                log_path=log_path,
                 _lock_path=lock_paths(params),
                 _label=f"casa-{kind}.{name}",
             )
         except Exception as exc:  # noqa: BLE001 - a crashed child is a tool error, not a server error
             vis = params.get("vis") if isinstance(params.get("vis"), str) else None
-            return envelope_result(error_envelope(name, vis, type(exc).__name__, str(exc)))
+            message = f"{exc} Per-call CASA log: {log_path}"
+            return envelope_result(error_envelope(name, vis, type(exc).__name__, message))
 
     return mcp
 

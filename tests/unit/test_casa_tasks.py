@@ -17,6 +17,7 @@ from casa_tasks.config import (
     GUI_TASKS,
     INSPECT_TASKS,
     MCP_TASK_PARAMS,
+    STAGES,
     USE_MCP_ENV,
     WRAPPER_PARAMS,
     check_config,
@@ -28,7 +29,7 @@ from casa_tasks.runner import (
     run_task,
     to_jsonable,
 )
-from casa_tasks.server import INSTRUCTIONS, build_server, lock_paths
+from casa_tasks.server import INSTRUCTIONS, build_server, call_log_path, lock_paths
 from ms_inspect.util.logs import LOGFILE_ENV
 from ms_inspect.util.stage_log import SCHEMA_VERSION, completed_stages, read_stage_log
 
@@ -54,6 +55,19 @@ def test_schemas_match_installed_casatasks():
         "casa_task_schemas.json is stale for the installed casatasks; "
         "run `pixi run gen-casa-schemas` and review the diff"
     )
+
+
+def test_stage_enum_covers_every_stage_workflow_status_reads():
+    import ms_inspect.tools.workflow_status as ws
+
+    read = {
+        v
+        for k, v in vars(ws).items()
+        if k.startswith("_") and isinstance(v, str) and v.islower() and v.isidentifier()
+    }
+    read |= set(ws._FINAL_SOLVES)
+    assert len(read) >= 11, read  # the probe found the module's stage constants
+    assert read <= set(STAGES), read - set(STAGES)
 
 
 def test_vec_type_accepts_scalar_or_list():
@@ -142,7 +156,8 @@ async def test_server_lists_schemas_and_read_only_hint():
     async with create_connected_server_and_client_session(server._mcp_server) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
     assert set(tools) == INSPECT_TASKS
-    assert tools["listobs"].annotations.readOnlyHint is True
+    # No readOnlyHint: several read-only tasks can overwrite a file they are given.
+    assert tools["listobs"].annotations is None
     assert tools["listobs"].inputSchema["additionalProperties"] is False
 
 
@@ -227,6 +242,21 @@ def test_run_task_exception_is_error_envelope_and_records_nothing(monkeypatch, t
     assert env["error_type"] == "AssertionError"
     assert "must be a path" in env["message"]
     assert read_stage_log(tmp_path) == []
+
+
+def test_run_task_uses_the_log_path_the_server_chose(monkeypatch, tmp_path):
+    pytest.importorskip("casaconfig")
+    _stub_casatasks(monkeypatch, listobs=lambda **kw: {})
+    chosen = str(tmp_path / "casa-x-listobs.log")
+    env = run_task("listobs", {"vis": "a.ms"}, log_path=chosen)
+    assert env["data"]["casa_log"] == chosen
+
+
+def test_call_log_path_is_a_new_casa_log_next_to_the_server_log(monkeypatch, tmp_path):
+    monkeypatch.setenv("RADIO_MCP_DIR", str(tmp_path))
+    first, second = call_log_path("tclean"), call_log_path("tclean")
+    assert first != second
+    assert os.path.basename(first).startswith("casa-") and first.endswith("-tclean.log")
 
 
 def test_run_task_stage_without_workdir_warns(monkeypatch):

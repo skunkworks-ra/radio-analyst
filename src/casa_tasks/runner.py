@@ -80,7 +80,7 @@ def product_path(task: str, params: dict) -> str | None:
         value = value[0] if value else None
     if not isinstance(value, str) or not value:
         return None
-    candidates = [os.path.abspath(value + suffix) for suffix in suffixes]
+    candidates = [os.path.abspath(os.path.expanduser(value + suffix)) for suffix in suffixes]
     return next((c for c in candidates if os.path.exists(c)), candidates[0])
 
 
@@ -131,10 +131,15 @@ def run_task(
     params: dict,
     stage: str | None = None,
     workdir: str | None = None,
+    log_path: str | None = None,
 ) -> dict:
-    """Run casatasks.<task>(**params) and return the standard envelope."""
+    """Run casatasks.<task>(**params) and return the standard envelope.
+
+    ``log_path`` is this call's CASA log. The server chooses it, so it can name
+    the file even when the child dies before it returns.
+    """
     started = time.monotonic()
-    log_path = _call_log_path(task)
+    log_path = log_path or _call_log_path(task)
     if log_path is not None:
         from casaconfig import config
 
