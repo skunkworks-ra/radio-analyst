@@ -4,7 +4,7 @@ debug_mode.py — debug pass-through for the ms_modify write tools.
 A write tool exposes a small set of CASA parameters with chosen defaults. In
 debug mode the caller may pass further parameters of the CASA task(s) the tool
 calls: ``debug=True`` plus ``debug_params={task: {param: value}}``. Each param
-name is checked against the installed casatasks XML (task_spec.py); a value
+name is checked against the CASA task schemas (task_spec.py); a value
 overrides what the tool would have passed.
 
 The tool does not decide when debug is used. The orchestrator passes it on a
@@ -95,7 +95,7 @@ def validate(
         unknown = sorted(set(overrides) - set(known))
         if unknown:
             raise ComputationError(
-                f"{task} has no parameter(s) {unknown} in the installed casatasks XML.",
+                f"{task} has no parameter(s) {unknown} in the CASA task schemas.",
                 ms_path="",
             )
         blocked = sorted(set(overrides) & protected(task))

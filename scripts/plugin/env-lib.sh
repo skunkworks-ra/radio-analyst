@@ -36,6 +36,27 @@ RA_COPY_FILES=("${RA_SOURCE_FILES[@]}" README.md)
 # pixi.toml's `platforms` by tests/unit/test_plugin_env_scripts.py.
 RA_SUPPORTED_PLATFORMS=(Linux-x86_64 Darwin-arm64)
 
+# The CASA version the environment must have. pixi.lock pins it on linux-64;
+# on macOS pixi cannot lock casatools, so it is installed with pip at this
+# version. Kept equal to the task schemas' casatasks_version by
+# tests/unit/test_casa_schemas.py.
+RA_CASA_VERSION=6.7.6.14
+
+# ra_casa_check PYTHON-COMMAND...: exit 0 only when casatools imports and
+# casatools and casatasks are both RA_CASA_VERSION.
+ra_casa_check() {
+    "$@" -c "from casaconfig import config; config.logfile = '/dev/null'
+import sys, casatools
+from importlib.metadata import version
+sys.exit(0 if version('casatools') == version('casatasks') == '$RA_CASA_VERSION' else 1)"
+}
+
+# ra_casa_install PYTHON-COMMAND...: pip install the pinned casatools and
+# casatasks. All output goes to stderr (stdout is the launchers' JSON-RPC stream).
+ra_casa_install() {
+    "$@" -m pip install "casatools==$RA_CASA_VERSION" "casatasks==$RA_CASA_VERSION" --quiet >&2
+}
+
 ra_platform() {
     printf '%s-%s' "$(uname -s)" "$(uname -m)"
 }

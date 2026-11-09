@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Register MCP servers directly against the local pixi environment (user scope).
 # Detects and removes a plugin-managed install first to avoid duplicate server names.
-# Run after: pixi install && pixi run pip install casatools casatasks
+# Run after: pixi install && pixi run pip install "casatools==6.7.6.14" "casatasks==6.7.6.14"
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -10,7 +10,7 @@ SERVERS=(ms-inspect ms-modify ms-create)
 
 if [[ ! -x "$PIXI_ENV/ms-inspect" ]]; then
     echo "error: pixi environment not found." >&2
-    echo "Run: pixi install && pixi run pip install casatools casatasks" >&2
+    echo 'Run: pixi install && pixi run pip install "casatools==6.7.6.14" "casatasks==6.7.6.14"' >&2
     exit 1
 fi
 

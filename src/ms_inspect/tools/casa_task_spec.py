@@ -1,15 +1,15 @@
 """
-casa_task_spec.py — casa_task_spec: the parameters of an installed CASA task.
+casa_task_spec.py — casa_task_spec: the parameters of a CASA task.
 
-Read from the casatasks XML that ships with the installed CASA (util/task_spec.py),
-so the list matches the version that will run. Read-only; no MS is opened.
+Read from the checked-in CASA task schemas (util/task_spec.py), made for the
+pinned CASA version. Read-only; no MS is opened.
 """
 
 from __future__ import annotations
 
 from ms_inspect.exceptions import ComputationError
 from ms_inspect.util.formatting import response_envelope
-from ms_inspect.util.task_spec import task_spec, xml_dir
+from ms_inspect.util.task_spec import schema_version, task_names, task_spec
 
 TOOL_NAME = "ms_casa_task_spec"
 
@@ -19,15 +19,15 @@ def run(task: str) -> dict:
     Parameters of casatasks.<task>: name, type, default, description, and whether
     the XML marks it a sub-parameter or an input path that must exist.
 
-    An empty task name returns the list of installed task names instead.
+    An empty task name returns the list of task names instead.
     """
     if not task.strip():
-        names = sorted(p.stem for p in xml_dir().glob("*.xml"))
+        names = task_names()
         return response_envelope(
             tool_name=TOOL_NAME,
             ms_path="",
             data={"n_tasks": len(names), "tasks": names},
-            casa_calls=[f"glob {xml_dir()}/*.xml"],
+            casa_calls=[f"CASA task schemas (casatasks {schema_version()})"],
         )
     try:
         spec = task_spec(task.strip())
@@ -53,5 +53,5 @@ def run(task: str) -> dict:
             "n_params": len(params),
             "params": params,
         },
-        casa_calls=[f"parse {xml_dir()}/{spec.name}.xml"],
+        casa_calls=[f"CASA task schemas (casatasks {schema_version()}): {spec.name}"],
     )

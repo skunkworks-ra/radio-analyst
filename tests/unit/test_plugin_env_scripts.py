@@ -266,7 +266,10 @@ def _fake_build_tools(tmp_path: Path, casatools_ok: bool) -> Path:
     (prefix / "bin").mkdir(parents=True)
     (prefix / "bin" / "ms-inspect").write_text("#!/bin/sh\n")
     (prefix / "bin" / "ms-inspect").chmod(0o755)
-    (prefix / "bin" / "python").write_text(f"#!/bin/sh\nexit {0 if casatools_ok else 1}\n")
+    (prefix / "bin" / "python").write_text(
+        f'#!/bin/sh\nprintf \'%s\\n\' "$*" >>"{prefix}/python.log"\n'
+        f"exit {0 if casatools_ok else 1}\n"
+    )
     (prefix / "bin" / "python").chmod(0o755)
     return _fake_bin(tmp_path, pixi=f'case "$1" in install) exit 0 ;; run) echo "{prefix}" ;; esac')
 
@@ -292,8 +295,53 @@ def test_build_writes_prefix_and_stamp(tmp_path, plugin_env):
 def test_build_without_casatools_fails_and_writes_no_stamp(tmp_path, plugin_env):
     proc = _build(tmp_path, plugin_env, casatools_ok=False)
     assert proc.returncode != 0
-    assert "casatools still not importable" in proc.stderr
+    assert "CASA 6.7.6.14 still not installed" in proc.stderr
     assert not (_data(plugin_env) / "env.stamp").exists()
+
+
+def _fake_casa_site(tmp_path: Path, tools: str, tasks: str) -> Path:
+    """A site directory with importable stub casaconfig/casatools and the given versions."""
+    site = tmp_path / f"site-{tools}-{tasks}"
+    (site / "casaconfig").mkdir(parents=True)
+    (site / "casaconfig" / "__init__.py").write_text("class config:\n    logfile = None\n")
+    (site / "casatools").mkdir()
+    (site / "casatools" / "__init__.py").write_text("")
+    for name, version in (("casatools", tools), ("casatasks", tasks)):
+        dist = site / f"{name}-{version}.dist-info"
+        dist.mkdir()
+        (dist / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n")
+    return site
+
+
+@pytest.mark.parametrize(
+    ("tools", "tasks", "rc"),
+    [
+        ("PIN", "PIN", 0),
+        ("6.7.0.31", "PIN", 1),
+        ("PIN", "6.7.0.31", 1),
+        ("6.7.0.31", "6.7.0.31", 1),
+    ],
+)
+def test_ra_casa_check_compares_both_versions(tmp_path, plugin_env, tools, tasks, rc):
+    import sys
+
+    from ms_inspect.util.task_spec import schema_version
+
+    pin = schema_version()
+    site = _fake_casa_site(tmp_path, tools.replace("PIN", pin), tasks.replace("PIN", pin))
+    env = dict(plugin_env, PYTHONPATH=str(site))
+    assert _lib(f'ra_casa_check "{sys.executable}"', env).returncode == rc
+
+
+def test_build_checks_and_installs_the_pinned_casa_version(tmp_path, plugin_env):
+    from ms_inspect.util.task_spec import schema_version
+
+    _build(tmp_path, plugin_env, casatools_ok=False)
+    calls = (tmp_path / "env" / "python.log").read_text()
+    pin = schema_version()
+    # The check compares versions, so a reused environment with another CASA is reinstalled.
+    assert f"== '{pin}'" in calls
+    assert f"-m pip install casatools=={pin} casatasks=={pin} --quiet" in calls
 
 
 def test_failed_rebuild_leaves_no_stale_stamp(tmp_path, plugin_env):

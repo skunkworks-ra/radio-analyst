@@ -44,8 +44,8 @@ def _require_casatools() -> Any:
     except ImportError as exc:
         raise CASANotAvailableError(
             "casatools is not installed or cannot be imported.\n"
-            "Install with: pip install casatools casatasks\n"
-            "Or via pixi: pixi install (casatools is in [pypi-dependencies]).\n"
+            "Install the pinned version (pixi.toml): pixi install on Linux; on macOS,\n"
+            "pip install casatools==<pin> casatasks==<pin> into the pixi environment.\n"
             "Requires Python 3.12 on Linux x86_64 or macOS ARM64/x86_64."
         ) from exc
 

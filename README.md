@@ -128,7 +128,8 @@ claude plugin install radio-analyst@radio-analyst
   The plugin does not install pixi for you. CI uses pixi v0.81.0; `pixi.lock`
   is lockfile version 7, so use a pixi that reads it.
 - Linux x86_64 or macOS arm64 (the platforms `pixi.toml` targets). On macOS,
-  casatools isn't in `pixi.lock`, so the environment build installs it with pip.
+  casatools isn't in `pixi.lock`, so the environment build installs the pinned
+  version (6.7.6.14) with pip.
 - Roughly 1 GB of free disk for the Python/CASA environment.
 
 **First run.** Start Claude Code. A `SessionStart` hook starts building the
@@ -243,7 +244,7 @@ Clone the repo and build the environment:
 ```bash
 git clone https://github.com/skunkworks-ra/radio-analyst.git
 cd radio-analyst
-pixi install && pixi run pip install casatools casatasks
+pixi install && pixi run pip install "casatools==6.7.6.14" "casatasks==6.7.6.14"
 ```
 
 **Claude Desktop** launches each server itself and talks to it over stdio.
@@ -288,7 +289,7 @@ environment as above, then start opencode from the repo directory:
 
 ```bash
 cd radio-analyst
-pixi install && pixi run pip install casatools casatasks   # once, before the first start
+pixi install && pixi run pip install "casatools==6.7.6.14" "casatasks==6.7.6.14"   # once, before the first start
 opencode
 ```
 
@@ -328,8 +329,8 @@ of the plugin install.
 git clone https://github.com/skunkworks-ra/radio-analyst.git
 cd radio-analyst
 pixi install
-pixi run pip install casatools casatasks   # first time only
-pixi run install-mcp                       # removes a plugin install first, if any
+pixi run pip install "casatools==6.7.6.14" "casatasks==6.7.6.14"   # first time only
+pixi run install-mcp   # removes a plugin install first, if any
 ```
 
 `install-mcp` (`scripts/dev/install-local.sh`) registers the three servers at

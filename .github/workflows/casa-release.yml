@@ -1,0 +1,38 @@
+name: CASA release check
+
+# CASA is pinned to one version everywhere (pixi.toml, pyproject.toml, ci.yml,
+# scripts/plugin/env-lib.sh), equal to the task schemas' casatasks_version.
+# A pin never fails on its own when NRAO releases, so this job fails when PyPI
+# has a newer casatools or casatasks. To bump: change every pin, install the new
+# version, run `pixi run gen-casa-schemas`, review the diff, run the unit tests.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  latest-casa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compare the pin with the latest release on PyPI
+        run: |
+          python3 - <<'EOF'
+          import json, sys, urllib.request
+          pinned = json.load(open("src/casa_tasks/casa_task_schemas.json"))["casatasks_version"]
+          stale = []
+          for package in ("casatools", "casatasks"):
+              with urllib.request.urlopen(f"https://pypi.org/pypi/{package}/json") as r:
+                  latest = json.load(r)["info"]["version"]
+              print(f"{package}: pinned {pinned}, latest {latest}")
+              if latest != pinned:
+                  stale.append(f"{package} {latest}")
+          if stale:
+              print(f"::error::New CASA release on PyPI ({', '.join(stale)}); pinned {pinned}.")
+              sys.exit(1)
+          EOF

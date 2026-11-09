@@ -111,16 +111,18 @@ run_build() {
     prefix="$(pixi run --manifest-path "$RA_APP/pixi.toml" --frozen \
         python -c 'import sys; print(sys.prefix)')"
 
-    # casatools is locked for linux-64 only; elsewhere install it with pip.
-    # An environment without casatools is a failed build: no stamp is
-    # written, so the next session retries.
+    # casatools is locked for linux-64 only; elsewhere install it with pip at
+    # RA_CASA_VERSION. A reused environment can hold another CASA version, so
+    # the check compares versions, not only the import. An environment without
+    # the pinned CASA is a failed build: no stamp is written, so the next
+    # session retries.
     mkdir -p "$HOME/.casa/data"
-    if ! "$prefix/bin/python" -c "from casaconfig import config; config.logfile = '/dev/null'; import casatools" 2>/dev/null; then
-        echo "casatools not importable; trying pip install casatools casatasks"
-        "$prefix/bin/python" -m pip install casatools casatasks --quiet ||
-            echo "WARNING: pip install of casatools/casatasks failed"
-        "$prefix/bin/python" -c "from casaconfig import config; config.logfile = '/dev/null'; import casatools" ||
-            { echo "ERROR: casatools still not importable; build failed" >&2; exit 1; }
+    if ! ra_casa_check "$prefix/bin/python" 2>/dev/null; then
+        echo "CASA $RA_CASA_VERSION not installed; trying pip install"
+        ra_casa_install "$prefix/bin/python" ||
+            echo "WARNING: pip install of casatools/casatasks $RA_CASA_VERSION failed"
+        ra_casa_check "$prefix/bin/python" ||
+            { echo "ERROR: CASA $RA_CASA_VERSION still not installed; build failed" >&2; exit 1; }
     fi
 
     # Write each file whole, and the stamp last: the stamp marks the

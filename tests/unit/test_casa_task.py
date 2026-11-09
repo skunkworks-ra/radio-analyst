@@ -1,14 +1,24 @@
 """
 Unit tests for casa_task (generic guard for CASA tasks with no dedicated tool)
-and casa_task_spec. No CASA required: the task XML is written by the test.
+and casa_task_spec. No CASA required: the task XML is written by the test and
+put through the schema translator.
 """
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
+from casa_tasks.gen_schemas import _task_schema
 from ms_inspect.exceptions import ComputationError
-from ms_inspect.util.task_spec import parse_task_xml
+from ms_inspect.util.task_spec import spec_from_entry
+
+
+def parse_task_xml(path, signature=None):
+    """TaskSpec for a test XML file, through the real translator (gen_schemas)."""
+    return spec_from_entry(path.stem, _task_schema(path, signature or inspect.Signature()))
+
 
 _XML = """<?xml version="1.0" encoding="UTF-8"?>
 <casaxml xmlns="http://casa.nrao.edu/schema/psetTypes.html">

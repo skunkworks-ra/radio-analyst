@@ -2169,7 +2169,7 @@ class CasaTaskInput(BaseModel):
         default_factory=dict,
         description=(
             "Task parameters by name (ms_casa_task_spec lists them). Checked against the "
-            "installed casatasks XML."
+            "CASA task schemas."
         ),
     )
     workdir: str = Field(

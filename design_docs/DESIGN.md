@@ -926,7 +926,7 @@ On tool error:
 | Tool | What it returns |
 |------|----------------|
 | `ms_casa_task_lookup` | A CASA task's casadocs API page and casa6 source-file URLs from a bundled index (no fetch; the caller fetches). `NOT_FOUND` if the task is not in the index |
-| `ms_casa_task_spec` | Parameters of an installed CASA task, read from the casatasks XML |
+| `ms_casa_task_spec` | Parameters of a CASA task, read from the checked-in task schemas (casatasks XML translated for the pinned CASA version) |
 | `ms_casa_tool_spec` | Methods of an installed casatools class (v1: `table`) by introspection, with the tier `ms_casa_tool` gives each |
 
 **Total `ms_inspect`: 36 tools.**

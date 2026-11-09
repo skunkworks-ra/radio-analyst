@@ -5864,8 +5864,8 @@ packages:
   - pytest>=8.0 ; extra == 'dev'
   - pytest-asyncio>=0.23 ; extra == 'dev'
   - ruff>=0.4 ; extra == 'dev'
-  - casatools>=6.7.0 ; extra == 'casa'
-  - casatasks>=6.7.0 ; extra == 'casa'
+  - casatools==6.7.6.14 ; extra == 'casa'
+  - casatasks==6.7.6.14 ; extra == 'casa'
   requires_python: '>=3.12'
 - pypi: https://files.pythonhosted.org/packages/00/4b/ccc026168948fec4f7555b9164c724cf4125eac006e176541483d2c959be/pydantic_settings-2.13.1-py3-none-any.whl
   name: pydantic-settings

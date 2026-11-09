@@ -1,7 +1,7 @@
 """
 casa_task.py — ms_casa_task: run any CASA task that has no dedicated tool.
 
-The parameter list comes from the installed casatasks XML (task_spec.py), so
+The parameter list comes from the CASA task schemas (task_spec.py), so
 every task CASA ships is reachable without a hand-written wrapper. A task that
 has a dedicated tool is refused here: that tool carries checks of its own (SpW
 coverage, field-ID mapping, CORRECTED_DATA checks, ...), and its debug mode
@@ -10,7 +10,7 @@ passes extra CASA parameters.
 The generic guard. The XML marks inputs that must exist (mustexist) but does
 not mark outputs, so outputs are found by parameter name (OUTPUT_PARAMS, plus
 `vis` where the XML does not require it to exist):
-  - every param name is checked against the task's XML
+  - every param name is checked against the task's schema
   - an output must be inside workdir, must not be the input MS, and must not be
     an existing Measurement Set (pathguard.validate_output_caltable)
   - an existing output caltable is archived to ``.attemptN``; any other
@@ -246,7 +246,7 @@ def run(task: str, params: dict[str, Any], workdir: str, execute: bool = False) 
 
     Args:
         task:     CASA task name, e.g. 'statwt'.
-        params:   Task parameters; names checked against the installed XML.
+        params:   Task parameters; names checked against the task schema.
         workdir:  Existing directory for the script, outputs and result file.
         execute:  If False (default), write the script and return.
 
@@ -270,7 +270,7 @@ def run(task: str, params: dict[str, Any], workdir: str, execute: bool = False) 
     unknown = sorted(set(params) - set(spec.params))
     if unknown:
         raise ComputationError(
-            f"{task} has no parameter(s) {unknown} in the installed casatasks XML.",
+            f"{task} has no parameter(s) {unknown} in the CASA task schemas.",
             ms_path="",
         )
 

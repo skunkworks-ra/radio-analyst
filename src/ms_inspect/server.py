@@ -1979,16 +1979,16 @@ class CasaTaskSpecInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     task: str = Field(
         default="",
-        description="CASA task name, e.g. 'statwt'. Empty returns the installed task names.",
+        description="CASA task name, e.g. 'statwt'. Empty returns the task names.",
     )
 
 
 @mcp.tool(
     name="ms_casa_task_spec",
     description=(
-        "Parameters of an installed CASA task (name, type, default, description, "
-        "sub-parameter, must-exist input), read from the casatasks XML of the CASA "
-        "that runs. Empty task lists the installed tasks."
+        "Parameters of a CASA task (name, type, default, description, sub-parameter, "
+        "must-exist input), from the task schemas made for the pinned CASA version. "
+        "Empty task lists the tasks."
     ),
     annotations={
         "title": "CASA Task Parameters",
@@ -1999,7 +1999,7 @@ class CasaTaskSpecInput(BaseModel):
     },
 )
 async def ms_casa_task_spec(params: CasaTaskSpecInput) -> ToolResult:
-    """Parameters of casatasks.<task>, from the installed XML."""
+    """Parameters of casatasks.<task>, from the CASA task schemas."""
     from ms_inspect.tools import casa_task_spec as _cts
 
     return await _run_tool(_cts.run, task=params.task)

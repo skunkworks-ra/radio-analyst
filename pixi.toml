@@ -27,13 +27,17 @@ ruff       = ">=0.4"
 [pypi-dependencies]
 ms-inspect       = { path = ".", editable = true }   # this package
 mcp              = { version = ">=1.0,<2", extras = ["cli"] }   # 2.x removed mcp.server.fastmcp
-# casatools / casatasks: pinned for linux-64 below via [target.linux-64].
-# On osx-arm64, install manually (uv resolver doesn't handle macosx_15_0 tag).
+# casatools / casatasks: pinned below for linux-64 only (see the comment there).
 pytest-asyncio   = ">=0.23"
 
+# The CASA pin. It must equal casatasks_version in
+# src/casa_tasks/casa_task_schemas.json, the macOS pip pins (ci.yml,
+# scripts/plugin/env-lib.sh) and pyproject.toml; tests/unit/test_casa_schemas.py
+# checks this. osx-arm64 is not locked: pixi assumes macOS 13 and casatools ships
+# arm64 wheels for macOS 14 and later only, so macOS installs the pin with pip.
 [target.linux-64.pypi-dependencies]
-casatools = ">=6.6"
-casatasks = ">=6.6"
+casatools = "==6.7.6.14"
+casatasks = "==6.7.6.14"
 
 # ---------------------------------------------------------------------------
 # Tasks — common developer workflows
@@ -61,6 +65,10 @@ serve-create-http = { cmd = "ms-create", env = { RADIO_MCP_TRANSPORT = "http", R
 # Tests
 test        = { cmd = "pytest tests/ -v" }
 test-unit   = { cmd = "pytest tests/unit/ -v" }
+
+# Regenerate src/casa_tasks/casa_task_schemas.json from the installed casatasks XML.
+# Run after every CASA version bump; the unit tests fail until you do.
+gen-casa-schemas = { cmd = "python -m casa_tasks.gen_schemas" }
 
 # Integration tests — requires a real MS.
 # Usage: RADIO_MCP_TEST_MS=/path/to/your.ms pixi run test-int

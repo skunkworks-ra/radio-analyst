@@ -1,9 +1,9 @@
 """
-Unit tests for task_spec (casatasks XML parsing) and debug_mode (the debug
+Unit tests for task_spec (the CASA task schemas) and debug_mode (the debug
 pass-through on the ms_modify write tools).
 
-No CASA required: the XML is a small file written by the test, and task_spec is
-replaced by that parse where debug_mode looks it up.
+No CASA required: the XML is a small file written by the test, put through the
+schema translator, and task_spec is replaced by that where debug_mode looks it up.
 """
 
 from __future__ import annotations
@@ -12,9 +12,16 @@ import inspect
 
 import pytest
 
+from casa_tasks.gen_schemas import _task_schema
 from ms_inspect.exceptions import ComputationError
-from ms_inspect.util.task_spec import parse_task_xml
+from ms_inspect.util.task_spec import spec_from_entry
 from ms_modify import debug_mode
+
+
+def parse_task_xml(path, signature=None):
+    """TaskSpec for a test XML file, through the real translator (gen_schemas)."""
+    return spec_from_entry(path.stem, _task_schema(path, signature or inspect.Signature()))
+
 
 _XML = """<?xml version="1.0" encoding="UTF-8"?>
 <casaxml xmlns="http://casa.nrao.edu/schema/psetTypes.html">
@@ -36,14 +43,28 @@ _XML = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+def _signature(
+    vis="",
+    caltable="",
+    antenna="",
+    mode="manual",
+    minsnr=3.0,
+    minblperant=4,
+    solnorm=False,
+    interp=[],  # noqa: B006 - a CASA-style signature default
+    smodel=[1.0, 0.0],  # noqa: B006
+):
+    """The Python signature the test task's defaults come from."""
+
+
 @pytest.fixture
 def fake_specs(tmp_path, monkeypatch):
-    """task_spec(name) parses the test XML, with the task named `name`."""
+    """task_spec(name) translates the test XML, with the task named `name`."""
 
     def _spec(name):
         p = tmp_path / f"{name}.xml"
         p.write_text(_XML.format(name=name))
-        return parse_task_xml(p)
+        return parse_task_xml(p, inspect.signature(_signature))
 
     import ms_inspect.util.task_spec as ts
 
@@ -51,7 +72,7 @@ def fake_specs(tmp_path, monkeypatch):
     return _spec
 
 
-class TestParseTaskXml:
+class TestTaskSpecFromSchema:
     def test_params_types_defaults(self, fake_specs):
         spec = fake_specs("gaincal")
         assert spec.name == "gaincal"

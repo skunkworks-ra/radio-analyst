@@ -62,11 +62,12 @@ jobs:
       # needs EVP_md2, which failed to import on Ubuntu when casatools was
       # pip-installed after activation; commit 1146093 fixed the plugin smoke
       # test by resolving it through the lock instead.) osx-arm64 has no
-      # casatools in the lock, so install it with pip, as the plugin's
-      # environment build does on macOS.
+      # casatools in the lock, so install the pinned version with pip, as the
+      # plugin's environment build does on macOS. The pin must equal the task
+      # schemas' casatasks_version (tests/unit/test_casa_schemas.py).
       - name: Install casatools and casatasks (macOS, as the plugin does)
         if: runner.os == 'macOS'
-        run: pixi run pip install casatools casatasks
+        run: pixi run pip install "casatools==6.7.6.14" "casatasks==6.7.6.14"
 
       - name: Import casatools
         # A failure here is a user-facing break, not a test problem: the

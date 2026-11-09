@@ -91,7 +91,7 @@ radio-analyst/
 ├── design_docs/                   ← design documents
 │   ├── DESIGN.md                  ← architecture, failure modes, conventions
 │   └── FLUX_STANDARD_DESIGN.md    ← per-field flux standard resolution
-├── pixi.toml                      ← environment (conda-forge + casatools via PyPI)
+├── pixi.toml                      ← environment (conda-forge + casatools via PyPI; CASA pinned exactly)
 ├── pyproject.toml                 ← build metadata and tooling config
 ├── .mcp.json                      ← MCP servers for a clone (project scope, repo-relative paths)
 ├── .claude-plugin/
@@ -116,6 +116,9 @@ radio-analyst/
 │   ├── dev/                       ← install-local.sh / uninstall-local.sh (pixi run install-mcp)
 │   └── ci/                        ← smoke MS generator, MCP smoke + per-tool probes
 ├── src/
+│   ├── casa_tasks/
+│   │   ├── gen_schemas.py         ← casatasks XML → casa_task_schemas.json (`pixi run gen-casa-schemas`)
+│   │   └── casa_task_schemas.json ← every task's MCP input schema + param metadata, for the pinned CASA
 │   ├── ms_create/
 │   │   ├── __init__.py            ← version string
 │   │   ├── server.py              ← FastMCP entry point (ingestion, port 8002)
@@ -147,7 +150,7 @@ radio-analyst/
 │   │   ├── applycal.py            ← ms_applycal
 │   │   ├── tclean.py              ← ms_tclean
 │   │   ├── pathguard.py           ← output-caltable path validation + safe-delete guard
-│   │   ├── task_spec.py           ← CASA task parameter specs from the installed casatasks XML
+│   │   ├── task_spec.py           ← CASA task parameter specs from src/casa_tasks/casa_task_schemas.json
 │   │   ├── debug_mode.py          ← debug / debug_params pass-through for the write tools
 │   │   └── slurm.py               ← SLURM batch submission utility (not an MCP tool)
 │   └── ms_inspect/
@@ -316,7 +319,7 @@ Environment variable reference:
 | `ms_residual_stats` | `tools/residual_stats.py` | CORRECTED − MODEL amplitude distribution per SPW (pre-rflag threshold guide) |
 | `ms_corrected_stats` | `tools/corrected_stats.py` | Per-field parallel-hand amplitude (median/robust-std/p95) + phase RMS of a data column, **vector-averaged over the channel range** (so faint sources are not noise-biased). Post-applycal calibration sanity check. |
 | `ms_casa_task_lookup` | `util/casa_task_index.py` | Resolve a CASA task name to its casadocs API page and its casa6 source file (raw content). Returns URLs only, no fetch — caller `WebFetch`s the URL. `NOT_FOUND` if the task is not in the bundled index. |
-| `ms_casa_task_spec` | `tools/casa_task_spec.py` | Parameters of an installed CASA task (name, type, default, description, sub-parameter, must-exist) from the casatasks XML; empty task lists the installed tasks |
+| `ms_casa_task_spec` | `tools/casa_task_spec.py` | Parameters of an installed CASA task (name, type, default, description, sub-parameter, must-exist) from the checked-in CASA task schemas; empty task lists the tasks |
 | `ms_casa_tool_spec` | `tools/casa_tool_spec.py` | Methods of an installed casatools class (v1: `table`): signature and docstring by introspection, plus the tier `ms_casa_tool` gives each method (read / copy / edit / never, INFERRED) |
 
 ### Phase 3 — Imaging inspection (1 tool)
@@ -377,8 +380,8 @@ Functions are also callable directly by skills and scripts.
 
 Debug mode: every write tool above that calls a CASA task, except
 `ms_setjy_polcal`, takes `debug` and `debug_params={task: {param: value}}`
-(`ms_modify/debug_mode.py`). Names are checked against the installed casatasks
-XML; data/product paths and flagging safety settings cannot be overridden.
+(`ms_modify/debug_mode.py`). Names are checked against the CASA task
+schemas; data/product paths and flagging safety settings cannot be overridden.
 
 `set_intents` logic:
 1. Read fields + positions via `open_msmd`
