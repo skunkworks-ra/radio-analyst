@@ -58,6 +58,10 @@ serve-create      = { cmd = "ms-create", env = { RADIO_MCP_TRANSPORT = "stdio" }
 # Start the ms-create server — HTTP transport
 serve-create-http = { cmd = "ms-create", env = { RADIO_MCP_TRANSPORT = "http", RADIO_MCP_PORT = "8002" } }
 
+# Regenerate src/casa_tasks/casa_task_schemas.json from the installed casatasks XML.
+# Run after every casatasks upgrade; the unit test fails until you do.
+gen-casa-schemas = { cmd = "python -m casa_tasks.gen_schemas" }
+
 # Tests
 test        = { cmd = "pytest tests/ -v" }
 test-unit   = { cmd = "pytest tests/unit/ -v" }
