@@ -2212,6 +2212,77 @@ async def ms_casa_task(params: CasaTaskInput) -> ToolResult:
     )
 
 
+class CasaToolCall(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    method: str = Field(..., description="casatools method, e.g. 'open', 'getcol'.", min_length=1)
+    args: dict[str, Any] = Field(
+        default_factory=dict, description="Keyword arguments (ms_casa_tool_spec shows them)."
+    )
+
+
+class CasaToolInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tool: str = Field(default="table", description="casatools class. Only 'table' in this version.")
+    calls: list[CasaToolCall] = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Calls run in order on ONE instance, e.g. open, getcol, close. The whole list is "
+            "checked before anything runs."
+        ),
+    )
+    workdir: str = Field(
+        ..., description="Existing directory for results, spilled arrays and copies.", min_length=1
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Default False: read-only methods only, every open is nomodify=True. True allows "
+            "copy-tier methods (make a copy inside workdir) and edit-tier methods on a copy "
+            "made by this tool. The source MS can never be edited."
+        ),
+    )
+    inline_max_elements: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Largest numpy array returned inline. Default 0: every array is written to a "
+            ".npy in workdir and returned as path, shape and dtype."
+        ),
+    )
+
+
+@mcp.tool(
+    name="ms_casa_tool",
+    description=(
+        "Call casatools methods (v1: table) on one instance, for debugging: open, read, "
+        "close. Read-only by default. With allow_write=True, make a deep copy inside workdir "
+        "and edit that copy; the source MS cannot be edited. The instance is closed even on "
+        "error. The call list is checked first; results go to casa_tool_<n>.json."
+    ),
+    annotations={
+        "title": "Direct casatools Call",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def ms_casa_tool(params: CasaToolInput) -> ToolResult:
+    """Run a checked sequence of casatools calls."""
+    from ms_modify import casa_tool as _ctl
+
+    return await _run_tool(
+        _ctl.run,
+        tool=params.tool,
+        calls=[c.model_dump() for c in params.calls],
+        workdir=params.workdir,
+        allow_write=params.allow_write,
+        inline_max_elements=params.inline_max_elements,
+        _lock_path=params.workdir,
+    )
+
+
 def main() -> None:
     init_server_logging("ms-modify")
     transport = os.environ.get("RADIO_MCP_TRANSPORT", "stdio").lower()

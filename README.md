@@ -8,7 +8,7 @@
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 A Claude Code plugin for reducing radio interferometric data with CASA. It
-gives Claude 57 tools across three MCP servers, the reasoning of an
+gives Claude 59 tools across three MCP servers, the reasoning of an
 experienced interferometrist (skills), and step-by-step workflows (slash
 commands) for VLA/JVLA/EVLA, MeerKAT, and uGMRT Measurement Sets, from a raw
 ASDM to a first image.
@@ -106,8 +106,8 @@ the read-only tools.
 
 **Three servers, by what they can touch:**
 
-- **ms-inspect**: read-only inspection and diagnostics (35 tools).
-- **ms-modify**: flagging, calibration, imaging (18 tools, script-first).
+- **ms-inspect**: read-only inspection and diagnostics (36 tools).
+- **ms-modify**: flagging, calibration, imaging (19 tools, script-first).
 - **ms-create**: ASDM inspection and import, the reduction log and the report (4 tools).
 
 ---

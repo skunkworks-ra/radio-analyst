@@ -2005,6 +2005,41 @@ async def ms_casa_task_spec(params: CasaTaskSpecInput) -> ToolResult:
     return await _run_tool(_cts.run, task=params.task)
 
 
+class CasaToolSpecInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tool: str = Field(
+        default="",
+        description="casatools class, e.g. 'table'. Empty returns the classes ms_casa_tool serves.",
+    )
+    method: str = Field(
+        default="",
+        description="Method name, e.g. 'getcol'. Empty lists the class's methods with their tier.",
+    )
+
+
+@mcp.tool(
+    name="ms_casa_tool_spec",
+    description=(
+        "Methods of an installed casatools class (v1: table): signature and docstring "
+        "from the installed casatools, and the tier ms_casa_tool gives each method "
+        "(read / copy / edit / never). Empty tool lists the served classes; empty "
+        "method lists the class's methods."
+    ),
+    annotations={
+        "title": "CASA Tool Methods",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_casa_tool_spec(params: CasaToolSpecInput) -> ToolResult:
+    """Methods of casatools.<tool>, from the installed class."""
+    from ms_inspect.tools import casa_tool_spec as _cts
+
+    return await _run_tool(_cts.run, tool=params.tool, method=params.method)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
