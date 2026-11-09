@@ -42,23 +42,25 @@ INSTRUCTIONS = (
 #: HTTP port when RADIO_MCP_PORT is unset; the ms-* servers use 8000-8002.
 _DEFAULT_PORT = {"inspect": 8003, "modify": 8004}
 
-#: Parameters whose value names the resource a call is serialized on, in order.
-_LOCK_PARAMS = ("vis", "imagename", "caltable", "asdm")
+#: Parameters whose value names a table a call reads or writes. A call locks
+#: every one that is set, so a call that writes a caltable, an image or a new
+#: MS is serialized against any other call on the same path, even when the two
+#: read different MSs.
+_LOCK_PARAMS = ("vis", "asdm", "imagename", "caltable", "fluxtable", "outputvis", "concatvis")
 
 
 def lock_paths(params: dict) -> list[str]:
-    """Absolute paths of the resources a call locks on; empty to run unlocked.
+    """Absolute paths of the tables a call locks on; empty to run unlocked.
 
-    The first of _LOCK_PARAMS that is set names them. A list value (concat's
-    vis) locks every entry.
+    Every set parameter in _LOCK_PARAMS contributes; a list value (concat's
+    vis) contributes every entry. run_tool removes duplicates and orders them.
     """
+    paths: list[str] = []
     for name in _LOCK_PARAMS:
         value = params.get(name)
         values = value if isinstance(value, list) else [value]
-        paths = [os.path.abspath(v) for v in values if isinstance(v, str) and v]
-        if paths:
-            return paths
-    return []
+        paths += [os.path.abspath(v) for v in values if isinstance(v, str) and v]
+    return paths
 
 
 def build_server(kind: str, restricted: bool | None = None) -> FastMCP:

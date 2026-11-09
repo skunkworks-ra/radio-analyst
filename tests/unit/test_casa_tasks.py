@@ -148,8 +148,21 @@ async def test_server_lists_schemas_and_read_only_hint():
 
 def test_lock_paths(tmp_path):
     ms = str(tmp_path / "a.ms")
-    assert lock_paths({"vis": ms, "caltable": "b.G"}) == [ms]
-    assert lock_paths({"vis": [ms, "other.ms"]}) == [ms, os.path.abspath("other.ms")]
+    assert lock_paths({"vis": ms, "caltable": "b.G"}) == [ms, os.path.abspath("b.G")]
+    assert lock_paths({"vis": [ms, "other.ms"], "concatvis": "c.ms"}) == [
+        ms,
+        os.path.abspath("other.ms"),
+        os.path.abspath("c.ms"),
+    ]
+    assert lock_paths({"vis": ms, "outputvis": "cal.ms", "field": "0"}) == [
+        ms,
+        os.path.abspath("cal.ms"),
+    ]
+    assert lock_paths({"vis": ms, "caltable": "g.G", "fluxtable": "f.G"}) == [
+        ms,
+        os.path.abspath("g.G"),
+        os.path.abspath("f.G"),
+    ]
     assert lock_paths({"imagename": "img"}) == [os.path.abspath("img")]
     assert lock_paths({"field": "0"}) == []
     assert lock_paths({"vis": ""}) == []
