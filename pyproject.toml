@@ -38,6 +38,8 @@ casa = [
 ms-inspect = "ms_inspect.server:main"
 ms-modify = "ms_modify.server:main"
 ms-create = "ms_create.server:main"
+casa-inspect = "casa_tasks.server:main_inspect"
+casa-modify = "casa_tasks.server:main_modify"
 
 # ---------------------------------------------------------------------------
 # Hatch — source layout

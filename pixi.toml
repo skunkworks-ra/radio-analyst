@@ -58,6 +58,11 @@ serve-create      = { cmd = "ms-create", env = { RADIO_MCP_TRANSPORT = "stdio" }
 # Start the ms-create server — HTTP transport
 serve-create-http = { cmd = "ms-create", env = { RADIO_MCP_TRANSPORT = "http", RADIO_MCP_PORT = "8002" } }
 
+# casa-inspect / casa-modify: thin servers over casatasks, stdio transport.
+# RADIO_MCP_USE_MCP=false lists every task and parameter (see src/casa_tasks/config.py).
+serve-casa-inspect = { cmd = "casa-inspect", env = { RADIO_MCP_TRANSPORT = "stdio" } }
+serve-casa-modify  = { cmd = "casa-modify", env = { RADIO_MCP_TRANSPORT = "stdio" } }
+
 # Regenerate src/casa_tasks/casa_task_schemas.json from the installed casatasks XML.
 # Run after every casatasks upgrade; the unit test fails until you do.
 gen-casa-schemas = { cmd = "python -m casa_tasks.gen_schemas" }
