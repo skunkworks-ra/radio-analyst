@@ -26,6 +26,10 @@ export _ANALYST_CASA_LOGFILE="${_ANALYST_CASA_LOGFILE:-/dev/null}"
 # shellcheck source=scripts/plugin/env-lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/env-lib.sh"
 
+# ms_casa_task_spec finds the casa-docs skill under this root. Under a plugin
+# install the server runs from a copy of src/ with no .claude/ next to it.
+export RADIO_ANALYST_ROOT="$RA_ROOT"
+
 need_pixi() {
     command -v pixi >/dev/null 2>&1 && return 0
     cat >&2 <<EOF

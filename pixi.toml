@@ -70,6 +70,10 @@ test-unit   = { cmd = "pytest tests/unit/ -v" }
 # Run after every CASA version bump; the unit tests fail until you do.
 gen-casa-schemas = { cmd = "python -m casa_tasks.gen_schemas" }
 
+# Copy the CASA Docs task pages into .claude/skills/casa-docs/ (network; git).
+# Run after every CASA version bump, after gen-casa-schemas; review the diff.
+refresh-casadocs = { cmd = "python -m casa_tasks.refresh_casadocs" }
+
 # Integration tests — requires a real MS.
 # Usage: RADIO_MCP_TEST_MS=/path/to/your.ms pixi run test-int
 test-int    = { cmd = "pytest tests/integration/ -v" }

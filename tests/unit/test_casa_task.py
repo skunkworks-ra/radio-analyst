@@ -169,6 +169,18 @@ def test_casa_task_spec_lists_params(tmp_path, monkeypatch):
     names = [p["name"] for p in out["data"]["params"]]
     assert names == ["vis", "caltable", "outputvis", "fitorder"]
     assert out["data"]["params"][0]["mustexist"] is True
+    assert "docs_path" in out["data"]
+
+
+def test_docs_path_uses_env_root(tmp_path, monkeypatch):
+    import ms_inspect.tools.casa_task_spec as cts
+
+    page = tmp_path / ".claude" / "skills" / "casa-docs" / "tasks" / "statwt.rst"
+    page.parent.mkdir(parents=True)
+    page.write_text("statwt page\n")
+    monkeypatch.setenv("RADIO_ANALYST_ROOT", str(tmp_path))
+    assert cts.docs_path("statwt") == str(page)
+    assert cts.docs_path("nosuch") is None
 
 
 def test_servers_register_the_two_tools():

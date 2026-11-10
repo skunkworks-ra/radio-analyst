@@ -118,6 +118,7 @@ radio-analyst/
 ├── src/
 │   ├── casa_tasks/
 │   │   ├── gen_schemas.py         ← casatasks XML → casa_task_schemas.json (`pixi run gen-casa-schemas`)
+│   │   ├── refresh_casadocs.py    ← casadocs task pages → .claude/skills/casa-docs/tasks/ (`pixi run refresh-casadocs`)
 │   │   └── casa_task_schemas.json ← every task's MCP input schema + param metadata, for the pinned CASA
 │   ├── ms_create/
 │   │   ├── __init__.py            ← version string
@@ -319,7 +320,7 @@ Environment variable reference:
 | `ms_residual_stats` | `tools/residual_stats.py` | CORRECTED − MODEL amplitude distribution per SPW (pre-rflag threshold guide) |
 | `ms_corrected_stats` | `tools/corrected_stats.py` | Per-field parallel-hand amplitude (median/robust-std/p95) + phase RMS of a data column, **vector-averaged over the channel range** (so faint sources are not noise-biased). Post-applycal calibration sanity check. |
 | `ms_casa_task_lookup` | `util/casa_task_index.py` | Resolve a CASA task name to its casadocs API page and its casa6 source file (raw content). Returns URLs only, no fetch — caller `WebFetch`s the URL. `NOT_FOUND` if the task is not in the bundled index. |
-| `ms_casa_task_spec` | `tools/casa_task_spec.py` | Parameters of an installed CASA task (name, type, default, description, sub-parameter, must-exist) from the checked-in CASA task schemas; empty task lists the tasks |
+| `ms_casa_task_spec` | `tools/casa_task_spec.py` | Parameters of an installed CASA task (name, type, default, description, sub-parameter, must-exist) from the checked-in CASA task schemas; empty task lists the tasks; `docs_path` = the task's CASA Docs page in the casa-docs skill (null if not copied) |
 | `ms_casa_tool_spec` | `tools/casa_tool_spec.py` | Methods of an installed casatools class (v1: `table`): signature and docstring by introspection, plus the tier `ms_casa_tool` gives each method (read / copy / edit / never, INFERRED) |
 
 ### Phase 3 — Imaging inspection (1 tool)
@@ -583,11 +584,21 @@ or create visibility data.
 
 ### CASA documentation lookup
 
-Resolves a CASA task name to its casadocs page and casa6 source file, then
-fetches whichever answers the question — docs by default, source when docs
-are silent or may be stale. Auto-invoked on a direct CASA task/parameter
-question, or when `radio-interferometry` hits a question its own reference
-files don't answer.
+Parameters come from `ms_casa_task_spec` (installed CASA); prose and examples
+come from a local copy of the CASA Docs task pages in
+`.claude/skills/casa-docs/tasks/`, found through `docs_path` in the same
+result. Auto-invoked on a direct CASA task/parameter question, or when a skill
+names a CASA Docs page.
+
+The copy is generated; never hand-edit it. `pixi run refresh-casadocs`
+(`src/casa_tasks/refresh_casadocs.py`) takes the highest casangi/casadocs tag
+`v<major>.<minor>.<patch>-N` for the installed casatasks, leaves out GUI tasks,
+reduces links to casadocs pages to their text, and writes pages of at most 4000
+tokens whole. A larger page is cut at Returns/Description/Examples/Development
+and top-level `.. rubric::` lines, merged back up to 2000 tokens per piece, and
+replaced by an index of its pieces; a piece still above 4000 tokens stops the
+run. `NOTICE` holds the tag and the Apache-2.0 licence of CASA Docs.
+`tests/unit/test_casadocs.py` checks the copy against the task schemas.
 
 @.claude/skills/casa-docs/SKILL.md
 

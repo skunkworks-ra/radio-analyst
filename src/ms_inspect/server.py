@@ -1999,7 +1999,8 @@ class CasaTaskSpecInput(BaseModel):
     description=(
         "Parameters of a CASA task (name, type, default, description, sub-parameter, "
         "must-exist input), from the task schemas made for the pinned CASA version. "
-        "Empty task lists the tasks."
+        "Empty task lists the tasks. docs_path is the task's CASA Docs page (prose and "
+        "examples); for a large page it is an index of pieces — Read only the piece you need."
     ),
     annotations={
         "title": "CASA Task Parameters",

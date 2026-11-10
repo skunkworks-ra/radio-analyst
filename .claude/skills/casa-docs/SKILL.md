@@ -1,54 +1,35 @@
 ---
 description: >
-  Look up CASA task documentation and source code. Auto-invoked when a user
-  asks a CASA task/parameter question directly, or when the radio-interferometry
-  skill hits a question its own reference files do not answer.
-allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_casa_task_lookup,
+  Look up CASA task documentation. Auto-invoked when a user asks a CASA
+  task/parameter question directly, or when a skill names a CASA Docs page.
+allowed-tools: Read,
+               mcp__plugin_radio-analyst_ms-inspect__ms_casa_task_spec,
+               mcp__plugin_radio-analyst_ms-inspect__ms_casa_task_lookup,
                WebFetch
 ---
 
 # CASA Documentation Lookup
 
-You use `ms_casa_task_lookup` and `WebFetch` as your instruments — the tool
-resolves a task name to its URLs, you fetch and read the actual content.
-Never answer a CASA task/parameter question from training memory and present
-it as documentation or source-verified — always fetch first.
+Two sources, each for one thing:
+
+- **Parameters** (name, type, default, sub-parameter): `ms_casa_task_spec(task)`.
+  It reads the installed CASA. Its defaults win over any default in prose.
+- **Prose and examples**: the task's CASA Docs page, `docs_path` in the same
+  result. The copy is in `tasks/` next to this file; NOTICE names the CASA Docs tag.
+
+Never answer a CASA task question from memory and present it as documentation.
 
 ## Procedure
 
-1. Call `ms_casa_task_lookup(task_name)`. It returns `docs_url` and
-   `source_url` for the task, or `status=NOT_FOUND` if the task is not in
-   the bundled index (check spelling; it may be a task added to CASA since
-   the index was built).
-2. Decide docs vs. source (see below).
-3. `WebFetch` the chosen URL. Quote the fetched text for any parameter
-   default, mode description, or behavior claim. Do not paraphrase from
-   memory.
-4. State which source you used (docs page or source file) and, if the docs
-   page shows one, the CASA version it describes — defaults can change
-   between releases.
+1. Call `ms_casa_task_spec(task)`.
+2. Read `docs_path`. A large page is an index: one line per piece, with its
+   size and the headings it covers. Read only the piece you need. Examples
+   holds call patterns; Description holds parameter and mode prose.
+3. Quote the text you rely on, and name the task and piece.
 
-## Docs vs. source — which one to read
+## Not copied
 
-**Default to docs** (`docs_url`) for anything about *intended behavior*:
-what a parameter does, what a mode means, expected inputs/outputs, the
-documented default value.
-
-**Go to source** (`source_url`) only when docs do not resolve the question:
-
-- the docstring is silent or ambiguous on the point you need,
-- you need the *actual current* default (docs can lag a code change),
-- the question is about an edge case, internal algorithm choice, or
-  parameter interaction docs do not cover.
-
-**If docs and source disagree**, source wins for describing current
-behavior — but say so explicitly in the answer and flag the docs page as
-stale. Do not silently pick one and hide the conflict.
-
-## Failure modes
-
-- `status=NOT_FOUND` from the lookup tool: do not guess a URL. Say the task
-  is not in the bundled index and ask the user to confirm the task name.
-- `WebFetch` 404s on a URL the tool returned: the docs site or the casa6
-  repo layout has likely moved since the index was built. Say so; do not
-  retry with a guessed alternate URL.
+GUI tasks (plotms, plotcal, imview, msview) and testconcat have no page:
+`docs_path` is null. Then call `ms_casa_task_lookup(task)` and WebFetch its
+`docs_url`. If that fails too, say the documentation is not available; do
+not guess a URL.

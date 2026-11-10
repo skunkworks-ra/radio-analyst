@@ -361,6 +361,10 @@ Debug is allowed only on a retry, and only when the change is a CASA
 parameter the stage tool does not expose (its own parameters come first).
 `ms_casa_task_spec(task)` lists a task's parameters. Never debug on attempt 1.
 
+To choose a value that no skill or stage command gives, call
+`ms_casa_task_spec(task)`, Read its `docs_path`, then Read only the one piece
+you need.
+
 ## End
 
 After the last stage (or a stop), build the report with
