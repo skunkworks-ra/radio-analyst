@@ -19,6 +19,14 @@ Two kinds of fact, kept apart on purpose:
 A workdir with no stage log reads as nothing done. That is deliberate: the
 system assumes the reduction is driven end to end by these tools. It does mean
 a workdir created before the stage log existed cannot be resumed here.
+
+With stokes='IQUV' the chain gains two steps between the target applycal and
+the first image, by the same presence rule: 'polcal' until a cross-hand delay
+(gaincal, gaintype KCROSS) and a leakage solve (polcal, poltype Df*) are
+recorded, then 'applycal_pol_target' until an applycal on the target MS records
+both kinds of table in pol_types. The solve kind comes from the keys the tools
+record, never from a filename. The position-angle solve (Xf) is reported when
+present but is not required.
 """
 
 from __future__ import annotations
@@ -45,6 +53,63 @@ _TCLEAN = "tclean"
 #: all three have recorded a product — by stage, never by filename.
 _FINAL_SOLVES = ("gaincal", "bandpass", "fluxscale")
 
+#: Polarisation steps, by the kind each recorded line names.
+_POL_KCROSS = "Kcross"
+_POL_DTERMS = "Df"
+_POL_XF = "Xf"
+_POLCAL = "polcal"
+_GAINCAL = "gaincal"
+
+
+def _measurement(entry: dict) -> dict:
+    m = entry.get("measurement")
+    return m if isinstance(m, dict) else {}
+
+
+def _pol_state(entries: list[dict], target: Path) -> tuple[list[str], bool, int]:
+    """(pol solves completed, pol apply on the target recorded, lines without keys).
+
+    A gaincal, polcal or applycal line written before these tools recorded the
+    solve kind has no key to read. It does not count, and it is counted so the
+    caller can say so.
+    """
+    solves: set[str] = set()
+    applied = False
+    unkeyed = 0
+    for e in entries:
+        if e.get("exists") is not True:
+            continue
+        stage, m = e.get("stage"), _measurement(e)
+        if stage == _GAINCAL:
+            if "gaintype" not in m:
+                unkeyed += 1
+            elif str(m["gaintype"]).upper() == "KCROSS":
+                solves.add(_POL_KCROSS)
+        elif stage == _POLCAL:
+            poltype = str(m.get("poltype", ""))
+            if "poltype" not in m:
+                unkeyed += 1
+            elif poltype.lower().startswith("df"):
+                solves.add(_POL_DTERMS)
+            elif poltype.upper().startswith("X"):
+                solves.add(_POL_XF)
+        elif stage == _APPLYCAL:
+            if "pol_types" not in m:
+                unkeyed += 1
+                continue
+            product = e.get("product")
+            if not isinstance(product, str):
+                continue
+            if Path(product).expanduser().resolve() != target:
+                continue
+            kinds = [str(k).lower() for k in m.get("pol_types") or []]
+            if any(k.startswith("kcross") for k in kinds) and any(
+                k.startswith("df") for k in kinds
+            ):
+                applied = True
+    order = (_POL_KCROSS, _POL_DTERMS, _POL_XF)
+    return [k for k in order if k in solves], applied, unkeyed
+
 
 def _probe_corrected(ms_str: str) -> tuple[bool | None, str | None]:
     """Is CORRECTED_DATA present. None (with a reason) if the probe failed.
@@ -60,7 +125,7 @@ def _probe_corrected(ms_str: str) -> tuple[bool | None, str | None]:
         return None, f"{type(exc).__name__}: {exc}"
 
 
-def run(ms_path: str, workdir: str) -> dict:
+def run(ms_path: str, workdir: str, stokes: str = "I") -> dict:
     # 1. MS valid.
     #
     # Probed, not validated — an absent path is the import_asdm stage, not an
@@ -70,6 +135,11 @@ def run(ms_path: str, workdir: str) -> dict:
     wd = Path(workdir)
     casa_calls: list[str] = []
     warnings: list[str] = []
+    if stokes not in ("I", "IQUV"):
+        from ms_inspect.exceptions import ComputationError
+
+        raise ComputationError(f"stokes must be 'I' or 'IQUV', not {stokes!r}", ms_path=ms_path)
+    pol = stokes == "IQUV"
 
     ms_valid = (p / "table.info").exists()
     if not ms_valid:
@@ -128,6 +198,8 @@ def run(ms_path: str, workdir: str) -> dict:
     # A failed probe stops the derivation there rather than falling through:
     # below a failed probe every later answer would be inferred from an unknown.
     final_solves_done = [s for s in _FINAL_SOLVES if s in done]
+    pol_solves_done, pol_applied_target, unkeyed = _pol_state(entries, p)
+    pol_solved = _POL_KCROSS in pol_solves_done and _POL_DTERMS in pol_solves_done
 
     if _IMPORT not in done and not ms_valid:
         next_step = _IMPORT
@@ -151,6 +223,10 @@ def run(ms_path: str, workdir: str) -> dict:
         next_step = "probe_failed_corrected_target"
     elif _APPLYCAL not in done or not corrected_target:
         next_step = "applycal_target"
+    elif pol and not pol_solved:
+        next_step = "polcal"
+    elif pol and not pol_applied_target:
+        next_step = "applycal_pol_target"
     elif _TCLEAN not in done:
         next_step = "first_image"
     else:
@@ -163,6 +239,13 @@ def run(ms_path: str, workdir: str) -> dict:
     if corrected_calibrators_error is not None:
         warnings.append(
             f"calibrators.ms MAIN table could not be read: {corrected_calibrators_error}"
+        )
+
+    if pol and unkeyed:
+        warnings.append(
+            f"{unkeyed} gaincal/polcal/applycal line(s) in {STAGE_LOG_NAME} do not record"
+            " the solve kind (gaintype, poltype, pol_types). They were written by an older"
+            " tool and do not count toward the polarisation steps."
         )
 
     # The log is history and the MS is now. Where they disagree, say so rather
@@ -200,9 +283,13 @@ def run(ms_path: str, workdir: str) -> dict:
             else field(corrected_calibrators)
         ),
         "final_solves_completed": final_solves_done,
+        "stokes": stokes,
         "workdir": str(wd),
         "next_recommended_step": next_step,
     }
+    if pol:
+        data["polcal_solves_completed"] = pol_solves_done
+        data["pol_applied_target"] = field(pol_applied_target)
     return response_envelope(
         tool_name=TOOL_NAME,
         ms_path=ms_path,

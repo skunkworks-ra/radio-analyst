@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
@@ -377,6 +378,13 @@ class WorkflowStatusInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     ms_path: str = Field(..., description="Path to the MS.", min_length=1)
     workdir: str = Field(..., description="Workdir where caltables/images live.", min_length=1)
+    stokes: Literal["I", "IQUV"] = Field(
+        default="I",
+        description=(
+            "'I' (default): the Stokes I chain. 'IQUV': adds 'polcal' and "
+            "'applycal_pol_target' between the target applycal and the first image."
+        ),
+    )
 
 
 class GaincalSnrPredictInput(BaseModel):
@@ -1475,8 +1483,9 @@ async def ms_residual_stats(params: ResidualStatsInput) -> ToolResult:
 @mcp.tool(
     name="ms_calsol_stats",
     description=(
-        "Caltable (G/B/K) per-(antenna, SpW, field) SNR, amplitude, phase, flagged fraction. "
-        "Emits outliers block (low_snr + amp_outliers) for go/no-go gates."
+        "Caltable (G/B/K/Kcross/Df/Xf) per-(antenna, SpW, field) SNR, amplitude, phase, "
+        "flagged fraction. Emits outliers block (low_snr + amp_outliers) for go/no-go gates, "
+        "plus table-wide amp_median (complex tables) and delay_abs_max_ns (delay tables)."
     ),
     annotations={
         "title": "Calibration Solution Statistics",
@@ -1670,8 +1679,9 @@ async def ms_verify_import(params: VerifyImportInput) -> ToolResult:
         "ms_valid, stage_log_present, stages_completed, products_recorded, "
         "intents_populated, calibrators_ms_present, final_solves_completed, "
         "corrected_populated_target and corrected_populated_calibrators "
-        "(reported separately — calibration runs on calibrators.ms), and "
-        "next_recommended_step (categorical label)."
+        "(reported separately — calibration runs on calibrators.ms), stokes, and "
+        "next_recommended_step (categorical label). With stokes='IQUV' it also "
+        "returns polcal_solves_completed and pol_applied_target."
     ),
     annotations={
         "title": "Workflow Status",
@@ -1683,7 +1693,7 @@ async def ms_verify_import(params: VerifyImportInput) -> ToolResult:
 )
 async def ms_workflow_status(params: WorkflowStatusInput) -> ToolResult:
     """State probe over MS + workdir for pipeline resumption."""
-    return await _run_tool(workflow_status.run, params.ms_path, params.workdir)
+    return await _run_tool(workflow_status.run, params.ms_path, params.workdir, params.stokes)
 
 
 @mcp.tool(

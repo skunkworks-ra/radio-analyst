@@ -34,8 +34,10 @@ Prerequisite: CORRECTED_DATA populated on the target field(s) — run
    `<name>` below is the `imagename:` given, else the target name. `passes: 1`:
    the first pass only, with `savemodel='none'` so the field's MODEL_DATA is not
    overwritten; t_on_source and the radiometer estimate are for the field imaged. Otherwise: the run's named
-   targets (else all target fields, a mosaic for pointings of one source);
-   Stokes='IQUV' if polcal ran, else 'I'. State both in the report.
+   targets (else all target fields, a mosaic for pointings of one source).
+   Stokes: `stokes: I` from the arguments runs steps 3-7 for Stokes I.
+   `stokes: IQUV` from the arguments runs steps 3, 4 and 8. With no `stokes:`, run
+   steps 3-7 for Stokes I, then step 8 if polcal ran. State both in the report.
 
 3. Gather placeholders from tool outputs (no hand math):
    - `ms_observation_info(ms_path)` → telescope, center_freq_hz
@@ -82,6 +84,20 @@ Prerequisite: CORRECTED_DATA populated on the target field(s) — run
    - residual_dynamic_range thresholds per field type
    - beam_major_arcsec vs. expected_beam_major_arcsec (20% tolerance)
    - peak_jy sanity check
+
+8. **IQUV cube** per 11-imaging.md §Polarization frequency cubes, one pass:
+   `ms_tclean(ms_path, imagename=<name>_iquv, field, stokes='IQUV',
+   specmode='cube', deconvolver='hogbom', nchan, start, width, outframe='LSRK',
+   gridder, wprojplanes, cell, imsize, weighting='briggs', robust=0.5,
+   niter=50000, threshold, savemodel='none', workdir, execute=False)` → run.
+   `savemodel='none'` keeps the Stokes I model in MODEL_DATA for selfcal.
+   Gridder and wprojplanes from step 4. `nchan`, `start`, `width` from
+   `ms_spectral_window_list(ms_path)` per §Channelization (one plane per SpW by
+   default); cell and imsize at the highest frequency in the band; threshold
+   per §7 with the plane width as the bandwidth.
+   Then `ms_image_stats(<name>_iquv.image.pbcor, psf_path=<name>_iquv.psf,
+   pb_level=abs(pblimit), png_path=<name>_iquv.png)` and report its `planes`
+   against §Quality gates (per-plane) in place of step 7.
 
 If `residual_rms_jy > 3 ×` radiometer estimate, escalate — the problem is calibration,
 not imaging. `ms_residual_stats` on the target's CORRECTED column before

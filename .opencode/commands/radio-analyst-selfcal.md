@@ -40,6 +40,10 @@ One pass only; do not iterate (12 Step 5).
    here and report (no phase error to correct).
 4. Step 2: `ms_applycal` on the target with the full stack plus `pcal1.g`, as
    12 Step 2 gives it → run.
+   If the arguments give `pol_tables:`, append those tables to the stack in
+   steps 3 and 4, before `pcal1.g`, with `gainfield=''` and `interp='nearest'`
+   (12 Steps 1 and 2). Without them this apply removes the polarisation
+   calibration from CORRECTED.
 5. Step 3: Read the script of the image to improve,
    `workdir/tclean_<prefix basename, '.' as '_'>.py`, and call `ms_tclean` with
    every parameter it used, `imagename=<prefix>_sc1` → run.

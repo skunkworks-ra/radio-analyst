@@ -50,7 +50,7 @@ report when a check fails. The commands are namespaced by the plugin:
 
 | Command | Takes you from → to |
 |---|---|
-| `/radio-analyst:orchestrate <ms> workdir=<dir> online_flags=<path>\|none` | Raw MS → first Stokes I image: a driver runs each stage (inspect, precal, calibrate, image, then post-cal flagging or selfcal when its checks call for them) in its own stage agent, checks every stage with read-only tools before the next starts, and writes the report. |
+| `/radio-analyst:orchestrate <ms> workdir=<dir> online_flags=<path>\|none [stokes=I\|IQUV]` | Raw MS → first Stokes I image: a driver runs each stage (inspect, precal, calibrate, image, then post-cal flagging or selfcal when its checks call for them) in its own stage agent, checks every stage with read-only tools before the next starts, and writes the report. `stokes=IQUV` adds polarisation calibration after calibrate and an IQUV cube at the end. |
 | `/radio-analyst:inspect <ms>` | A new MS → a data-quality report with a go/no-go for calibration (orientation + instrument sanity, 12 tools, nothing written). |
 | `/radio-analyst:precal <ms>` | Imported MS → pre-calibrated calibrators: online flags, deterministic preflag, prior caltables (gain curves, opacity, requantizer, antenna positions), flux models, reference antenna, initial bandpass, residual RFI flagging. |
 | `/radio-analyst:calibrate <ms>` | Pre-calibrated MS → calibrated target: initial phase → delay → bandpass → gain → fluxscale → applycal, with solution statistics checked after every solve. |

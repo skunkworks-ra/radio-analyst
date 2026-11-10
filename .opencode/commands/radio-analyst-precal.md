@@ -75,6 +75,9 @@ Every "→ run" below: run the script detached and poll it, as the skill's
    `ms_setjy_polcal` on it and `ms_verify_model(polcal_fields=...)`), all
    before step 8. Otherwise `ms_setjy(calibrators.ms, workdir, usescratch=True,
    execute=False)` → run. Check its warnings field.
+   Record the result for the output: `pol_scope: on` with the angle cal's field
+   name, or `pol_scope: off` with the reason (asked off, or the condition that
+   failed, with its tool value).
 
 7. `ms_refant(calibrators.ms, field=bp_field)`, one call. The initial bandpass
    solves on bp_field alone; /calibrate re-scores the refant on every calibrator.
@@ -92,4 +95,9 @@ Every "→ run" below: run the script detached and poll it, as the skill's
 
 **Output:** a structured report of each stage's outcome, flagged warnings,
 and `workdir` for `/calibrate` (calibrate re-derives refant, priorcals and
-bp_field itself).
+bp_field itself). End with these two lines, from step 6:
+
+```
+pol_scope: <on | off (reason)>
+angle_cal: <field name | none>
+```

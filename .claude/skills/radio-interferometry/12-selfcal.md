@@ -147,6 +147,8 @@ scans indicate the solution is fitting noise — consider longer `solint`.
 ms_applycal(
     ms_path    = {VIS},
     field      = {TARGET_FIELD},
+    # When 09 Step 5 applied the polarisation tables, insert kcross.K,
+    # dterms.D (and polangle.X) before pcal1.g, gainfield '' and interp 'nearest'.
     gaintable  = {PRIORCALS} + [delay.K, bandpass.B, gain.fluxscaled, f"{WORKDIR}/pcal1.g"],
     gainfield  = [''] * len(PRIORCALS) + ['', '', {PHASE_FIELD}, ''],
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'linear', 'nearest'],

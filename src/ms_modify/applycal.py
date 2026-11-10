@@ -30,7 +30,7 @@ from ms_inspect.util.casa_context import (
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, response_envelope
 from ms_inspect.util.logs import write_script
-from ms_inspect.util.stage_log import record_stage
+from ms_inspect.util.stage_log import pol_types, record_stage
 from ms_modify import debug_mode
 from ms_modify.exceptions import ApplycalFailedError
 
@@ -74,6 +74,7 @@ def _build_script(
 ) -> str:
     # spwmap is omitted entirely when not supplied → CASA default (identity).
     spwmap_line = f"    spwmap={spwmap!r},\n" if spwmap is not None else ""
+    from ms_inspect.util.stage_log import POL_TYPES_SNIPPET as pol
     from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
     from ms_inspect.util.stage_log import TABLE_PROBE_SNIPPET as probe
 
@@ -87,6 +88,7 @@ from casatasks import applycal
 
 {record}
 {probe}
+{pol}
 
 applycal(
     vis={ms_str!r},
@@ -102,11 +104,13 @@ applycal(
 # applycal returns None, so completion has to be measured rather than read
 # off a return value: the column it exists to populate is either there or not.
 _corrected = "CORRECTED_DATA" in _table_colnames({ms_str!r})
+# The polarisation tables are named by their VisCal type, never by filename.
+_pol = _pol_types({gaintable!r})
 _record_stage(
     {workdir!r},
     "applycal",
     {ms_str!r},
-    {{"field": {field!r}, "corrected_data": _corrected}},
+    {{"field": {field!r}, "corrected_data": _corrected, "parang": {parang}, "pol_types": _pol}},
 )
 if not _corrected:
     raise RuntimeError(
@@ -323,7 +327,12 @@ def run(
         str(workdir_path),
         "applycal",
         ms_str,
-        {"field": field, "corrected_data": corrected_written},
+        {
+            "field": field,
+            "corrected_data": corrected_written,
+            "parang": parang,
+            "pol_types": pol_types(gaintable),
+        },
     )
     if not corrected_written:
         raise ApplycalFailedError(

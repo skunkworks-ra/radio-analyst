@@ -674,3 +674,64 @@ class TestRunKSnr:
         assert result["data"]["snr_mean"]["flag"] == "UNAVAILABLE"
         npz = np.load(str(tbl) + ".calsol_stats.npz")
         assert "snr_mean" not in npz.files
+
+
+# ---------------------------------------------------------------------------
+# Table-wide scalars: amp_median and delay_abs_max_ns
+# ---------------------------------------------------------------------------
+
+
+class TestTableScalars:
+    def _cparam(self):
+        # Antenna 0 at 1.0 throughout; antennas 1 and 2 at 0.1, 0.1, 10.
+        # Median over every solution is 1.0; median of the per-antenna means is 3.4.
+        rows = [1.0, 1.0, 1.0, 0.1, 0.1, 10.0, 0.1, 0.1, 10.0]
+        return np.array([[rows], [rows]], dtype=complex)
+
+    def _run(self, tmp_path, verbosity):
+        tbl = tmp_path / "leak.d"
+        tbl.mkdir()
+        ant1, _, flag, snr = _g_table_data()
+        sub = _make_subtable(nrows=_N_ANT * 3, ant1=ant1, cparam=self._cparam(), flag=flag, snr=snr)
+        base = _patch_all_for_g(tbl)
+
+        def _open_table(path, **kwargs):
+            got = base(path, **kwargs)
+            got.query.return_value = sub
+            return got
+
+        with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=_open_table):
+            return calsol_stats.run(str(tbl), verbosity=verbosity)
+
+    def test_amp_median_is_over_every_solution_not_the_antenna_means(self, tmp_path):
+        d = self._run(tmp_path, "full")["data"]
+        # the custom solutions were read: antenna 1's mean is 3.4, not 1.0
+        assert d["amp_mean"]["value"][1][0][0] == pytest.approx(3.4)
+        assert d["amp_median"]["value"] == pytest.approx(1.0)
+
+    def test_default_compact_call_returns_amp_median(self, tmp_path):
+        tbl = tmp_path / "gain.g"
+        tbl.mkdir()
+        with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=_patch_all_for_g(tbl)):
+            d = calsol_stats.run(str(tbl))["data"]
+        assert d["amp_median"] == pytest.approx(1.0)
+
+    def test_delay_abs_max_in_full_and_compact(self, tmp_path):
+        tbl = tmp_path / "delay.k"
+        tbl.mkdir()
+        for verbosity in ("full", "compact"):
+            with patch(
+                "ms_inspect.tools.calsol_stats.open_table", side_effect=_patch_all_for_k(tbl)
+            ):
+                d = calsol_stats.run(str(tbl), verbosity=verbosity)["data"]
+            got = d["delay_abs_max_ns"]
+            got = got["value"] if isinstance(got, dict) else got
+            assert got == pytest.approx(3.1)
+            assert "amp_median" not in d
+
+    def test_g_table_has_no_delay_abs_max(self, tmp_path):
+        tbl = tmp_path / "gain.g"
+        tbl.mkdir()
+        with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=_patch_all_for_g(tbl)):
+            d = calsol_stats.run(str(tbl), verbosity="full")["data"]
+        assert "delay_abs_max_ns" not in d

@@ -1,9 +1,10 @@
 ---
 name: orchestrate
 description: >
-  Orchestrate a Stokes I continuum reduction of one CASA Measurement Set:
-  inspect, precal, calibrate, image, each run by its own stage agent, each
-  checked here before the next starts. Invoke when asked to orchestrate a
+  Orchestrate a continuum reduction of one CASA Measurement Set, Stokes I by
+  default or IQUV on request: inspect, precal, calibrate, polcal (IQUV only),
+  image, each run by its own stage agent, each checked here before the next
+  starts. Invoke when asked to orchestrate a
   reduction, or to run the stages with stage agents.
 allowed-tools: Agent,
                Read,
@@ -21,14 +22,17 @@ allowed-tools: Agent,
                mcp__plugin_radio-analyst_ms-inspect__ms_casa_task_spec,
                mcp__plugin_radio-analyst_ms-inspect__ms_residual_stats,
                mcp__plugin_radio-analyst_ms-inspect__ms_spw_amp_severity,
+               mcp__plugin_radio-analyst_ms-inspect__ms_pol_cal_conditions,
                mcp__plugin_radio-analyst_ms-modify__ms_casa_task,
                mcp__plugin_radio-analyst_ms-create__ms_report
 ---
 
 # Orchestrate: one MS, four stages, each checked
 
-Arguments: the MS path, `workdir=<dir>`, `online_flags=<path>|none`. If one is
-missing, stop and ask for it.
+Arguments: the MS path, `workdir=<dir>`, `online_flags=<path>|none`, and
+optionally `stokes=I|IQUV`. If one of the first three is missing, stop and ask
+for it. `stokes` defaults to `I`. `IQUV` adds the polcal stage and an IQUV cube;
+every Stokes I stage and check runs as for `I`.
 
 You do not run CASA and you do not write to the MS. Two write tools are
 granted for narrow uses: `ms_casa_task` only for `visstat` (read-only), and
@@ -81,9 +85,8 @@ run; `agent_usage` here is what you saw.
 
 Call each stage agent with the Agent tool, `subagent_type` as named. Give it a
 prompt with the stage's arguments first (the stage command's own argument
-line), then the values you hand it, one per line as `name: value`. This is a
-Stokes I continuum reduction: scope values are fixed here, not left to the
-stage.
+line), then the values you hand it, one per line as `name: value`. Scope values
+are fixed here from `stokes`, not left to the stage.
 
 Every stage prompt also carries `python: <path>`: the interpreter that runs the
 generated scripts (the one this session's context names, or `pixi run python`
@@ -92,11 +95,13 @@ in a clone). Find it once; the stages do not search for it.
 | # | Stage | Agent | Arguments |
 |---|---|---|---|
 | 1 | inspect | `radio-analyst:inspect-stage` | `<ms_path>` |
-| 2 | precal | `radio-analyst:precal-stage` | `<ms_path> workdir=<workdir> online_flags=<...>`, the INSPECT HANDOFF lines, `pol_scope: off` |
+| 2 | precal | `radio-analyst:precal-stage` | `<ms_path> workdir=<workdir> online_flags=<...>`, the INSPECT HANDOFF lines, `pol_scope: off` when `stokes=I`; no `pol_scope` line when `stokes=IQUV`, so precal decides |
 | 3 | calibrate | `radio-analyst:calibrate-stage` | `<ms_path> workdir=<workdir>` |
+| 3b | polcal (`stokes=IQUV` only) | `radio-analyst:polcal-stage` | `<ms_path> workdir=<workdir>`, `angle_cal: <the precal handoff's angle_cal>` |
 | 4 | image | `radio-analyst:image-stage` | `<ms_path> workdir=<workdir>`, `stokes: I` |
 | 4b | postcal (when section 4 B or C finds outliers) | `radio-analyst:postcal-stage` | `<ms_path> workdir=<workdir>`, `field: <target fields>` |
-| 5 | selfcal (when section 4 says so) | `radio-analyst:selfcal-stage` | `<ms_path> workdir=<workdir> imagename=<prefix of the image to improve>` |
+| 5 | selfcal (when section 4 says so) | `radio-analyst:selfcal-stage` | `<ms_path> workdir=<workdir> imagename=<prefix of the image to improve>`; with `stokes=IQUV`, `pol_tables: <kcross.K, dterms.D, and polangle.X if solved, full paths>` |
+| 6 | image, IQUV cube (`stokes=IQUV` only, last) | `radio-analyst:image-stage` | `<ms_path> workdir=<workdir>`, `stokes: IQUV`, `imagename: <prefix of the last target image>` |
 
 ## Skill excerpts: the stage gets only the lines it needs
 
@@ -118,13 +123,15 @@ the excerpt files yourself.
 | Stage | File | Headings |
 |---|---|---|
 | precal | `10-precal-workflow.md` | `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 5 —`, `## Step 6 —`, `## Step 8 —`, `## Decision gate` |
-| precal, calibrate | `ledger.md` | the whole file (`cat`) |
+| precal, calibrate, polcal | `ledger.md` | the whole file (`cat`) |
 | calibrate | `07b-gaincal-recovery.md` | the whole file (`cat`; Step 4b sends the stage there) |
 | calibrate | `07-calibration-execution.md` | `## Execution protocol`, `## Placeholder reference`, `## Field selection`, `## solint guidance`, `## Calibration table naming`, `## Caltable solution flagging`, `## Drilling into`, `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 4b —`, `## Step 5 —`, `## Step 6 —`, `## Decision gate`, `## Antenna-set consistency`, `## Step 7 —`, `## Post-applycal assessment`, `## parang parameter` |
+| polcal | `09-polcal-execution.md` | `## Purpose`, `## Reading the conditions`, `## Tool API reference`, `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 5 —`, `## Calibration table naming convention`, `## Placeholder reference`, `## Decision summary` |
 | image | `11-imaging.md` | `## Placeholder reference`, `## Step 0 —`, `## Step 0.5 —`, `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 5 —`, `## Step 6 —`, `## Step 7 —`, `## Step 8 —`, `## Step 9 —` |
+| image, IQUV cube | `11-imaging.md` | `## Placeholder reference`, `## Step 0 —`, `## Step 3 —`, `## Step 4 —`, `## Step 5 —`, `## Step 6 —`, `## Step 7 —`, `## Polarization frequency cubes` |
 | selfcal | `12-selfcal.md` | `## Prerequisites`, `## Step 0 —`, `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 5 —` |
 | selfcal, postcal | `ledger.md` | the whole file (`cat`) |
-| precal, calibrate, image, selfcal, postcal | `SKILL.md` | `## Running generated scripts` |
+| precal, calibrate, polcal, image, selfcal, postcal | `SKILL.md` | `## Running generated scripts` |
 
 Put one line per file at the end of the stage prompt, after the arguments and
 values:
@@ -162,8 +169,9 @@ re-run on the same MS without undoing its flags, so a failed precal check stops.
 | `gain_curves.gc` valid (10:317) | `ms_verify_priorcals({cal}, workdir)` `tables[].valid` | true | stop |
 | `opacities.opac` valid when `bp_field_centre_ghz` >= 18 (10:318, :122) | same | true | stop |
 | Initial bandpass caltables present (10:319) | `ms_verify_caltables({cal}, init_gain_table={workdir}/init_gain.g, bp_table={workdir}/BP0.b)` `caltables_valid` | true | stop |
-| Bandpass model not the 1 Jy default (10:320) | `ms_verify_model({cal}, field=bp_field)` `per_field[].status` and `note` | not default | stop |
+| Bandpass model not the 1 Jy default (10:320) | `ms_verify_model({cal}, field=bp_field)` `per_field[].status` and `note`; with `pol_scope: on`, `field=<bp_field>,<angle_cal>` and `polcal_fields=<angle_cal>` | not default; the angle cal's cross-hands present | stop |
 | Pre-calibration complete (commands/calibrate.md step 1) | `ms_workflow_status({ms}, workdir)` `next_recommended_step` | `delay_bandpass_gain` | stop |
+| Polarisation scope (`stokes=IQUV` only; commands/precal.md step 6) | handoff `pol_scope:` and `angle_cal:` lines | `pol_scope: on` with an `angle_cal` | line missing: stop. `off`: stop and ask the user whether a Stokes I only reduction is acceptable, with the reason from the line. On yes, continue with `stokes=I`; record the user's answer in `reason` |
 
 ### 3. calibrate (07-calibration-execution.md:646-663, decision gate; 11-imaging.md:54-68, coherence gate)
 
@@ -194,6 +202,22 @@ Record as `not_checked` with the reason: 07:655 (lost antennas flagged on both
 MSs: no read-only tool measures it) and 07:656 (fluxscale flux vs
 `flux_estimate`: copy the stage's value from the handoff into `value` and say
 it is the stage's).
+
+### 3b. polcal (09-polcal-execution.md, "Decision summary")
+
+`stokes=IQUV` only. Rows cite the skill heading, not a line.
+
+| Check | Tool, field | Pass | On fail |
+|---|---|---|---|
+| Pol solves and the pol apply on the target recorded (commands/polcal.md steps 4-7) | `ms_workflow_status({ms}, workdir, stokes='IQUV')` `next_recommended_step` | `first_image` | retry |
+| Kcross amplitude (09 "Decision summary") | `ms_calsol_stats({workdir}/kcross.K)` `delay_abs_max_ns` | < 2 | pass, and put it in the caveats ("Flag in summary") |
+| D-term median amplitude (09 "Decision summary") | `ms_calsol_stats({workdir}/dterms.D)` `amp_median` | < 0.05 | 0.05 to 0.10: pass, and put it in the caveats. Over 0.10: stop and ask; 09 names no action there, so this stop is our rule: say so |
+| D-term outlier antennas (09 "Decision summary") | same, `outliers.amp_outliers_n_antennas` and `amp_outliers_by_antenna` | report it | none |
+| PA coverage of the leakage cal (09 "PA coverage for a `Df+QU` solve") | `ms_pol_cal_conditions({cal})` `leakage_calibrator.pa_spread_deg` | report it | none |
+| Xf solved | same `ms_workflow_status` call, `polcal_solves_completed` | report whether it holds `Xf` | none |
+
+Record as `not_checked`, with the reason that no tool measures them: the Xf PA
+residual and the `Df+QU` recovered Q/U (09 "Decision summary").
 
 ### 4. image (11-imaging.md:324-362, quality gates)
 
@@ -292,7 +316,27 @@ remaining gap is the imaging. Work down this order, one step per attempt:
 | Selfcal image measures | `ms_image_stats(<prefix>_sc1.image.pbcor, psf_path, pb_level)` | status ok | retry |
 | `dynamic_range` change vs the image before (12:217-222) | `ms_image_stats`, both images | report it | < 10%: did not help, end; 10% or more: end and recommend more rounds to the user (12:235-246, one pass only); decreased: diverged, end and point at the `pcal1.g` solutions |
 
+With `stokes=IQUV`, one more row: selfcal's applycal rebuilds CORRECTED on the
+target, so it must carry the polarisation tables again.
+
+| Check | Tool, field | Pass | On fail |
+|---|---|---|---|
+| Pol tables in selfcal's apply (12 Step 2) | the last `applycal` line for `{ms}` in `{workdir}/stage_log.jsonl` (Read it), `measurement.pol_types` | holds `Kcross` and `Df` | retry, with the `pol_tables:` line |
+
 Read `<prefix>_sc1.png` and record `png_reviewed` as in section 4.
+
+### 6. image, IQUV cube (11-imaging.md, "Polarization frequency cubes")
+
+`stokes=IQUV` only, after every Stokes I stage. The cube is one hogbom pass with
+`savemodel='none'`, so the Stokes I model in MODEL_DATA stays as it was.
+
+| Check | Tool, field | Pass | On fail |
+|---|---|---|---|
+| Cube measures | `ms_image_stats(<prefix>_iquv.image.pbcor, psf_path, pb_level)` | status ok, `planes` present | retry |
+| Stokes V near the noise (11 "Quality gates (per-plane)") | same, `planes`: V `peak_jy` / `rms_jy` per plane | report it | V over 5 times its rms in every plane: stop and ask. 11 gives no number, so 5 is our rule: say so |
+| Q and U present (same table) | same, Q and U `peak_jy` per plane | report it | none |
+
+Read `<prefix>_iquv.png` and record `png_reviewed` as in section 4.
 
 ## Retries and debug mode
 

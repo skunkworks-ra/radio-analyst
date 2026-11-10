@@ -382,7 +382,9 @@ def test_applycal_measures_the_column_it_exists_to_populate(ms_and_workdir, tmp_
             workdir=str(wd),
         )
     )
-    assert _measurements(script) == [{"field": "0", "corrected_data": "_corrected"}]
+    assert _measurements(script) == [
+        {"field": "0", "corrected_data": "_corrected", "parang": True, "pol_types": "_pol"}
+    ]
     assert _module_level_index(script, "applycal") < _module_level_index(script, "_record_stage")
 
 
@@ -498,7 +500,12 @@ def test_applycal_emitted_code_runs_records_and_raises(tmp_path):
     # The distinction the whole design rests on: the path check passes and says
     # nothing, the measurement is what reports the stage did not do its job.
     assert entry["exists"] is True
-    assert entry["measurement"] == {"field": "0", "corrected_data": False}
+    assert entry["measurement"] == {
+        "field": "0",
+        "corrected_data": False,
+        "parang": True,
+        "pol_types": [],  # '/x' cannot be opened, so it is not a pol table
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -543,6 +550,38 @@ def test_polcal_records_its_caltable(ms_and_workdir):
         )
     )
     assert _recorded(script) == [("polcal", caltable)]
+    assert _measurements(script) == [{"poltype": "Df"}]
+
+
+def test_gaincal_records_its_gaintype(ms_and_workdir):
+    """One stage name covers delay, gain and cross-hand delay solves; the
+    gaintype is what tells ms_workflow_status a KCROSS solve happened."""
+    from ms_modify.gaincal import run
+
+    ms, wd = ms_and_workdir
+    caltable = str(wd / "kcross.K")
+    script = _script_from(
+        run(
+            ms_path=str(ms),
+            field="0",
+            spw="",
+            caltable=caltable,
+            workdir=str(wd),
+            gaintype="KCROSS",
+            refant="ea01",
+        )
+    )
+    assert _recorded(script) == [("gaincal", caltable)]
+    assert _measurements(script) == [{"gaintype": "KCROSS"}]
+
+
+def test_pol_types_snippet_matches_the_reader_prefixes():
+    """The snippet must stay self-contained, so it repeats the prefixes;
+    the reader's constant and the snippet must not drift apart."""
+    from ms_inspect.util import stage_log
+
+    literal = "(" + ", ".join(f'"{x}"' for x in stage_log.POL_VISCAL_PREFIXES) + ")"
+    assert f"startswith({literal})" in stage_log.POL_TYPES_SNIPPET
 
 
 def test_initial_rflag_measures_the_flagged_fraction(ms_and_workdir, monkeypatch):
@@ -646,3 +685,39 @@ def test_every_wired_generator_emits_the_recorder(ms_and_workdir, tmp_path, monk
         if "_record_stage" not in defined or not _record_calls(ast.parse(script)):
             missing.append(name)
     assert missing == []
+
+
+def test_pol_types_reads_the_viscal_type_not_the_filename(tmp_path):
+    """A table named delay.K that is really Kcross counts; a plain K, a G and a
+    path that does not open do not."""
+    from casatools import table
+
+    from ms_inspect.util.stage_log import pol_types
+
+    desc = {
+        "c": {
+            "valueType": "int",
+            "dataManagerType": "StandardStMan",
+            "dataManagerGroup": "StandardStMan",
+            "option": 0,
+            "maxlen": 0,
+            "comment": "",
+        }
+    }
+
+    def make(name, viscal):
+        tb = table()
+        tb.create(str(tmp_path / name), desc)
+        tb.putkeyword("VisCal", viscal)
+        tb.close()
+        return str(tmp_path / name)
+
+    tables = [
+        make("delay.K", "Kcross Jones"),
+        make("plain.K", "K Jones"),
+        make("gain.G", "G Jones"),
+        make("leak.D", "Df Jones"),
+        make("angle.X", "Xf Jones"),
+        str(tmp_path / "absent.D"),
+    ]
+    assert pol_types(tables) == ["Kcross", "Df", "Xf"]

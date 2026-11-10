@@ -93,7 +93,7 @@ gaincal(
 {gainfield_line}    interp={interp!r},
 {spwmap_line}    parang={parang},
 )
-_record_stage({workdir!r}, "gaincal", {caltable!r})
+_record_stage({workdir!r}, "gaincal", {caltable!r}, {{"gaintype": {gaintype!r}}})
 print("Done. Caltable written to: {caltable}")
 """
 
@@ -331,7 +331,7 @@ def run(
     # way; the domain error is re-raised over it so the caller keeps the
     # diagnostic message rather than a bare RuntimeError.
     try:
-        record_stage(str(workdir_path), "gaincal", caltable)
+        record_stage(str(workdir_path), "gaincal", caltable, {"gaintype": gaintype})
     except RuntimeError as exc:
         raise GaincalFailedError(
             f"gaincal did not produce caltable at {caltable!r}. "

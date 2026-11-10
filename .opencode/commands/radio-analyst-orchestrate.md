@@ -1,5 +1,5 @@
 ---
-description: "Orchestrate a Stokes I continuum reduction of one MS with stage subagents, each stage checked before the next. Same as /radio-analyst:orchestrate in Claude Code."
+description: "Orchestrate a continuum reduction of one MS (Stokes I, or IQUV on request) with stage subagents, each stage checked before the next. Same as /radio-analyst:orchestrate in Claude Code."
 ---
 @.claude/skills/orchestrate/SKILL.md
 

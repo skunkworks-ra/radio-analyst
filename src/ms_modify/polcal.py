@@ -78,7 +78,7 @@ polcal(
     gaintable={gaintable!r},
 {gainfield_line}    interp={interp!r},
 {spwmap_line})
-_record_stage({workdir!r}, "polcal", {caltable!r})
+_record_stage({workdir!r}, "polcal", {caltable!r}, {{"poltype": {poltype!r}}})
 print("Done. Caltable written to: {caltable}")
 """
 
@@ -299,7 +299,7 @@ def run(
     # way; the domain error is re-raised over it so the caller keeps the
     # diagnostic message rather than a bare RuntimeError.
     try:
-        record_stage(str(workdir_path), "polcal", caltable)
+        record_stage(str(workdir_path), "polcal", caltable, {"poltype": poltype})
     except RuntimeError as exc:
         raise PolcalFailedError(
             f"polcal did not produce caltable at {caltable!r}. "

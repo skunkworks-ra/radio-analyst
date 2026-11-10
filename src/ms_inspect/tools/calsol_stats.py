@@ -234,6 +234,7 @@ def _process_slice(
             phase_flat = phase.ravel()
 
             entry["amp_mean"] = _safe_mean(amp_flat)
+            entry["amp_values"] = amp_flat[np.isfinite(amp_flat)]
             entry["amp_std"] = _safe_std(amp_flat)
             entry["phase_mean_deg"] = _phase_mean_deg(phase_flat)
             per_corr, axes = _phase_scatter_deg(phase)
@@ -575,6 +576,8 @@ def run(
     # phase scatter per correlation, same lazy allocation
     phase_rms_corr_arr: np.ndarray | None = None
     phase_rms_axes: set[str] = set()
+    # every unflagged |CPARAM|, for one median over the whole table
+    amp_values: list[np.ndarray] = []
 
     # --- iterate (spw, field) slices ---
     for spw in spw_ids:
@@ -593,6 +596,7 @@ def run(
 
                 if _complex:
                     amp_mean_arr[a_idx, si, fi] = entry["amp_mean"]
+                    amp_values.append(entry["amp_values"])
                     amp_std_arr[a_idx, si, fi] = entry["amp_std"]
                     phase_mean_arr[a_idx, si, fi] = entry["phase_mean_deg"]
                     phase_rms_arr[a_idx, si, fi] = entry["phase_rms_deg"]
@@ -622,6 +626,19 @@ def run(
         # RMS across antennas per (spw, field) → [n_spw, n_field]
         delay_rms_ns = np.sqrt(np.nanmean(delay_arr**2, axis=(0, 3))).tolist()  # [n_spw, n_field]
 
+    # Table-wide scalars, so a check copies one number instead of reducing an
+    # array by hand. amp_median is over every unflagged solution, not over the
+    # per-antenna means. delay_abs_max_ns is the largest |delay|: a KCROSS
+    # table holds its one cross-hand delay on every antenna row in the first
+    # correlation and 0 in the second, so an RMS would understate it.
+    amp_median = None
+    if _complex and amp_values:
+        all_amp = np.concatenate(amp_values)
+        amp_median = float(np.median(all_amp)) if all_amp.size else None
+    delay_abs_max_ns = None
+    if delay_arr is not None and np.any(np.isfinite(delay_arr)):
+        delay_abs_max_ns = float(np.nanmax(np.abs(delay_arr)))
+
     # --- build response data ---
     def _flag(arr: np.ndarray | None) -> str:
         if arr is None:
@@ -647,6 +664,11 @@ def run(
     }
 
     if _complex:
+        data["amp_median"] = (
+            fmt_field(amp_median, note="Median of every unflagged |CPARAM| in the table.")
+            if amp_median is not None
+            else fmt_field(None, flag="UNAVAILABLE", note="No unflagged solutions.")
+        )
         data["amp_mean"] = fmt_field(amp_mean_arr.tolist(), flag=_flag(amp_mean_arr))
         data["amp_std"] = fmt_field(amp_std_arr.tolist(), flag=_flag(amp_std_arr))
         data["phase_mean_deg"] = fmt_field(phase_mean_arr.tolist(), flag=_flag(phase_mean_arr))
@@ -688,9 +710,17 @@ def run(
                 flag="COMPLETE",
                 note=f"Shape [n_spw={n_spw}, n_field={n_field}]. RMS across antennas per SPW/field.",
             )
+            data["delay_abs_max_ns"] = (
+                fmt_field(
+                    delay_abs_max_ns, note="Largest |delay| over every antenna/SPW/field/corr."
+                )
+                if delay_abs_max_ns is not None
+                else fmt_field(None, flag="UNAVAILABLE", note="No unflagged delays.")
+            )
         else:
             data["delay_ns"] = fmt_field(None, flag="UNAVAILABLE", note="No delay solutions found.")
             data["delay_rms_ns"] = fmt_field(None, flag="UNAVAILABLE")
+            data["delay_abs_max_ns"] = fmt_field(None, flag="UNAVAILABLE")
 
     # --- outliers block (always present) ---
     # CASA leaves the SNR column of a delay table at 0, so its SNR is no
@@ -780,6 +810,7 @@ def run(
             "npz_path": npz_path,
         }
         if _complex:
+            compact_data["amp_median"] = round(amp_median, 5) if amp_median is not None else None
             compact_data["amp_mean"] = _per_ant(amp_mean_arr)
             compact_data["amp_std"] = _per_ant(amp_std_arr)
             compact_data["phase_rms_deg"] = _per_ant(phase_rms_arr)
@@ -799,6 +830,9 @@ def run(
             da = np.nanmean(delay_arr, axis=(1, 2, 3))  # [n_ant]
             compact_data["delay_ns"] = [round(float(x), 3) if np.isfinite(x) else None for x in da]
             compact_data["delay_rms_ns"] = delay_rms_ns
+            compact_data["delay_abs_max_ns"] = (
+                round(delay_abs_max_ns, 4) if delay_abs_max_ns is not None else None
+            )
         data = compact_data
 
     return response_envelope(

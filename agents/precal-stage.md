@@ -33,4 +33,6 @@ products: <each caltable, MS or image the stage wrote>
 values: <each number the command's report asks for, as `name = value (tool, field)`>
 warnings: <tool warnings, verbatim>
 debug_used: <the debug_params you passed, or none>
+pol_scope: <on | off (reason)>, as the command's last lines give it
+angle_cal: <field name | none>
 ```

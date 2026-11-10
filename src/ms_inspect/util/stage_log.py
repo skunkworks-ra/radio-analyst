@@ -89,7 +89,8 @@ def _record_stage(workdir, stage, product, measurement=None):
     existence check is vacuous — the MS was there before the tool ran — so the
     measurement is the only real content of the line. Those scripts raise on
     their own after recording, because what counts as failure is the
-    measurement, not the path.
+    measurement, not the path. A solve tool also records here which kind of
+    solve it ran (gaintype, poltype), because one stage name covers several.
     """
     import json
     import os
@@ -170,6 +171,41 @@ def _table_rows(path):
 '''
 
 
+#: VisCal types (' Jones' stripped, lower case) that mark a polarisation
+#: table. A plain delay table is 'K' and does not match 'kcross'. Df and Df+QU
+#: solves both write 'Df Jones'.
+POL_VISCAL_PREFIXES = ("kcross", "df", "xf")
+
+#: Pasted into the applycal script, and executed below for the in-process path.
+POL_TYPES_SNIPPET = '''\
+def _pol_types(gaintable):
+    """VisCal types (' Jones' stripped) of the polarisation tables in gaintable.
+
+    A table counts when its type, in lower case, starts with kcross, df or xf.
+    A table that cannot be read is left out, so the apply does not count as a
+    polarisation apply rather than counting on a guess.
+    """
+    from casatools import table as _table
+
+    out = []
+    for path in gaintable:
+        tb = _table()
+        try:
+            tb.open(path, nomodify=True)
+            kind = str(tb.getkeyword("VisCal")).replace(" Jones", "").strip()
+        except Exception:
+            kind = ""
+        finally:
+            try:
+                tb.close()
+            except Exception:
+                pass
+        if kind.lower().startswith(("kcross", "df", "xf")):
+            out.append(kind)
+    return out
+'''
+
+
 def read_stage_log(workdir: str | Path) -> list[dict]:
     """Return the log's entries, oldest first. Absent log is an empty list.
 
@@ -246,3 +282,9 @@ record_stage = _snippet_ns["_record_stage"]
 #: ``casa_task_log(path, offset=0) -> (tasks, severe, end)`` — the snippet's CASA log
 #: reader, shared with the dispatch parent (util/dispatch.py).
 casa_task_log = _snippet_ns["_casa_task_log"]
+
+_pol_ns: dict = {}
+exec(POL_TYPES_SNIPPET, _pol_ns)  # noqa: S102 - our own source, defined above
+
+#: ``pol_types(gaintable) -> list[str]`` — identical to what the applycal script calls.
+pol_types = _pol_ns["_pol_types"]

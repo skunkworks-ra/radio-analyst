@@ -35,8 +35,8 @@ def fake_ms(tmp_path):
     return ms, workdir
 
 
-def _run(ms, workdir):
-    return workflow_status.run(str(ms), str(workdir))
+def _run(ms, workdir, stokes="I"):
+    return workflow_status.run(str(ms), str(workdir), stokes)
 
 
 class _Raiser:
@@ -123,7 +123,7 @@ def test_present_corrected_column_reads_true(fake_ms, monkeypatch):
     assert corrected["flag"] == "COMPLETE"
 
 
-def _log(workdir, *stages, product="/w/thing"):
+def _log(workdir, *stages, product="/w/thing", measurement=None):
     """Append a completed line per stage, the way a generated script does."""
     import json
 
@@ -131,17 +131,15 @@ def _log(workdir, *stages, product="/w/thing"):
 
     with open(workdir / STAGE_LOG_NAME, "a") as fh:
         for stage in stages:
-            fh.write(
-                json.dumps(
-                    {
-                        "stage": stage,
-                        "product": product,
-                        "at": "2026-09-02T00:00:00Z",
-                        "exists": True,
-                    }
-                )
-                + "\n"
-            )
+            entry = {
+                "stage": stage,
+                "product": product,
+                "at": "2026-09-02T00:00:00Z",
+                "exists": True,
+            }
+            if measurement is not None:
+                entry["measurement"] = measurement
+            fh.write(json.dumps(entry) + "\n")
 
 
 # --- helpers -----------------------------------------------------------------
@@ -333,3 +331,184 @@ def test_products_recorded_reports_the_paths_the_run_actually_used(fake_ms, monk
         "/w/delay.K",
         "/w/gain.g",
     ]
+
+
+# ---------------------------------------------------------------------------
+# stokes='IQUV': the same presence rule, two more steps
+# ---------------------------------------------------------------------------
+
+
+def _stokes_i_done(ms, workdir, monkeypatch):
+    """A workdir where the Stokes I chain has reached first_image."""
+    (ms / "STATE").mkdir()
+    cal_ms = workdir / "calibrators.ms"
+    cal_ms.mkdir()
+    (cal_ms / "table.info").write_text("Type = Measurement Set\n")
+    monkeypatch.setattr(
+        workflow_status, "open_table", _fake_main_table(colnames=["DATA", "CORRECTED_DATA"])
+    )
+    _log(workdir, "set_intents", "preflag", "priorcals", "initial_bandpass", "initial_rflag")
+    _log(workdir, "gaincal", product="/w/delay.K", measurement={"gaintype": "K"})
+    _log(workdir, "bandpass", "fluxscale")
+    # calibrate's Stokes I apply on the target: parang is True by default, and
+    # no pol table is in the gaintable.
+    _log(
+        workdir,
+        "applycal",
+        product=str(ms),
+        measurement={"field": "T", "corrected_data": True, "parang": True, "pol_types": []},
+    )
+
+
+def _kcross(workdir):
+    _log(workdir, "gaincal", product="/w/kcross.K", measurement={"gaintype": "KCROSS"})
+
+
+def _dterms(workdir, poltype="Df"):
+    _log(workdir, "polcal", product="/w/dterms.D", measurement={"poltype": poltype})
+
+
+def _pol_apply(workdir, ms, pol_types=("Kcross", "Df")):
+    _log(
+        workdir,
+        "applycal",
+        product=str(ms),
+        measurement={
+            "field": "T",
+            "corrected_data": True,
+            "parang": True,
+            "pol_types": list(pol_types),
+        },
+    )
+
+
+def test_stokes_i_chain_is_unchanged_and_says_which_stokes(fake_ms, monkeypatch):
+    ms, workdir = fake_ms
+    _stokes_i_done(ms, workdir, monkeypatch)
+    data = _run(ms, workdir)["data"]
+    assert data["next_recommended_step"] == "first_image"
+    assert data["stokes"] == "I"
+    assert "polcal_solves_completed" not in data
+    assert "pol_applied_target" not in data
+
+
+def test_iquv_with_no_pol_solve_asks_for_polcal(fake_ms, monkeypatch):
+    """The Stokes I apply (parang True, no pol tables) must not satisfy it."""
+    ms, workdir = fake_ms
+    _stokes_i_done(ms, workdir, monkeypatch)
+    data = _run(ms, workdir, "IQUV")["data"]
+    assert data["next_recommended_step"] == "polcal"
+    assert data["polcal_solves_completed"] == []
+    assert data["pol_applied_target"]["value"] is False
+
+
+def test_iquv_needs_both_kcross_and_dterms(fake_ms, monkeypatch):
+    ms, workdir = fake_ms
+    _stokes_i_done(ms, workdir, monkeypatch)
+    _kcross(workdir)
+    assert _run(ms, workdir, "IQUV")["data"]["next_recommended_step"] == "polcal"
+
+
+def test_iquv_with_solves_asks_for_the_pol_apply(fake_ms, monkeypatch):
+    ms, workdir = fake_ms
+    _stokes_i_done(ms, workdir, monkeypatch)
+    _kcross(workdir)
+    _dterms(workdir, "Df+QU")
+    data = _run(ms, workdir, "IQUV")["data"]
+    assert data["polcal_solves_completed"] == ["Kcross", "Df"]
+    assert data["next_recommended_step"] == "applycal_pol_target"
+
+
+def test_iquv_pol_apply_on_the_target_reaches_first_image(fake_ms, monkeypatch):
+    ms, workdir = fake_ms
+    _stokes_i_done(ms, workdir, monkeypatch)
+    _kcross(workdir)
+    _dterms(workdir)
+    _pol_apply(workdir, ms)
+    data = _run(ms, workdir, "IQUV")["data"]
+    assert data["pol_applied_target"]["value"] is True
+    assert data["next_recommended_step"] == "first_image"
+
+
+def test_iquv_pol_apply_on_calibrators_ms_does_not_count(fake_ms, monkeypatch):
+    ms, workdir = fake_ms
+    _stokes_i_done(ms, workdir, monkeypatch)
+    _kcross(workdir)
+    _dterms(workdir)
+    _pol_apply(workdir, workdir / "calibrators.ms")
+    assert _run(ms, workdir, "IQUV")["data"]["next_recommended_step"] == "applycal_pol_target"
+
+
+def test_iquv_pol_apply_matches_the_target_through_a_symlink(fake_ms, monkeypatch, tmp_path):
+    ms, workdir = fake_ms
+    _stokes_i_done(ms, workdir, monkeypatch)
+    _kcross(workdir)
+    _dterms(workdir)
+    link = tmp_path / "link.ms"
+    link.symlink_to(ms)
+    _pol_apply(workdir, link)
+    assert _run(ms, workdir, "IQUV")["data"]["next_recommended_step"] == "first_image"
+
+
+def test_iquv_apply_without_dterms_table_does_not_count(fake_ms, monkeypatch):
+    ms, workdir = fake_ms
+    _stokes_i_done(ms, workdir, monkeypatch)
+    _kcross(workdir)
+    _dterms(workdir)
+    _pol_apply(workdir, ms, pol_types=("Kcross",))
+    assert _run(ms, workdir, "IQUV")["data"]["next_recommended_step"] == "applycal_pol_target"
+
+
+def test_iquv_xf_is_reported_but_not_required(fake_ms, monkeypatch):
+    ms, workdir = fake_ms
+    _stokes_i_done(ms, workdir, monkeypatch)
+    _kcross(workdir)
+    _dterms(workdir)
+    _log(workdir, "polcal", product="/w/polangle.X", measurement={"poltype": "Xf"})
+    _pol_apply(workdir, ms, pol_types=("Kcross", "Df", "Xf"))
+    data = _run(ms, workdir, "IQUV")["data"]
+    assert data["polcal_solves_completed"] == ["Kcross", "Df", "Xf"]
+    assert data["next_recommended_step"] == "first_image"
+
+
+def test_iquv_lines_without_the_solve_kind_do_not_count_and_warn(fake_ms, monkeypatch):
+    """Lines written by an older tool carry no gaintype/poltype/pol_types."""
+    ms, workdir = fake_ms
+    _stokes_i_done(ms, workdir, monkeypatch)
+    _log(workdir, "gaincal", product="/w/kcross.K")
+    _log(workdir, "polcal", product="/w/dterms.D")
+    result = _run(ms, workdir, "IQUV")
+    assert result["data"]["polcal_solves_completed"] == []
+    assert result["data"]["next_recommended_step"] == "polcal"
+    assert any("do not record the solve kind" in w for w in result["warnings"])
+
+
+def test_iquv_does_not_skip_an_earlier_missing_step(fake_ms, monkeypatch):
+    """Pol steps sit after the target applycal; they never jump the chain."""
+    ms, workdir = fake_ms
+    (ms / "STATE").mkdir()
+    monkeypatch.setattr(workflow_status, "open_table", _fake_main_table(colnames=["DATA"]))
+    _log(workdir, "set_intents")
+    _kcross(workdir)
+    _dterms(workdir)
+    assert _run(ms, workdir, "IQUV")["data"]["next_recommended_step"] == "apply_preflag"
+
+
+def test_unknown_stokes_is_refused(fake_ms):
+    from ms_inspect.exceptions import ComputationError
+
+    ms, workdir = fake_ms
+    with pytest.raises(ComputationError):
+        _run(ms, workdir, "QU")
+
+
+def test_iquv_plain_d_solve_is_not_a_dterm_solve(fake_ms, monkeypatch):
+    """The apply side counts only Df VisCal types, so the solve side must too:
+    otherwise a 'D' solve counts as done and its apply never does."""
+    ms, workdir = fake_ms
+    _stokes_i_done(ms, workdir, monkeypatch)
+    _kcross(workdir)
+    _dterms(workdir, "D")
+    data = _run(ms, workdir, "IQUV")["data"]
+    assert data["polcal_solves_completed"] == ["Kcross"]
+    assert data["next_recommended_step"] == "polcal"
