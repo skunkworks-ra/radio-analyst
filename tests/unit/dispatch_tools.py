@@ -92,6 +92,23 @@ def raise_ms_not_found(path: str) -> dict:
     raise MSNotFoundError("no such ms", ms_path=path)
 
 
+def write_casa_log_then_raise(path: str, lines: list[str]) -> dict:
+    """Append `lines` to this call's CASA log, then fail with an error envelope."""
+    from ms_inspect.exceptions import MSNotFoundError
+
+    with open(os.environ["_ANALYST_CASA_LOGFILE"], "a") as fh:
+        fh.write("\n".join(lines) + "\n")
+    raise MSNotFoundError("no such ms", ms_path=path)
+
+
+def write_casa_log_then_crash(path: str, lines: list[str]) -> dict:
+    """Append `lines` to this call's CASA log, then kill the worker."""
+    with open(os.environ["_ANALYST_CASA_LOGFILE"], "a") as fh:
+        fh.write("\n".join(lines) + "\n")
+    os.kill(os.getpid(), signal.SIGSEGV)
+    return {}
+
+
 def write_casa_log(path: str, lines: list[str], completeness: str = "COMPLETE") -> dict:
     """Append `lines` to this call's CASA log, as CASA would, and return success."""
     with open(os.environ["_ANALYST_CASA_LOGFILE"], "a") as fh:

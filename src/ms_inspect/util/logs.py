@@ -16,6 +16,9 @@ alone that litters the repo root, the user's project, and every pool worker.
   call), ``server.log`` (Python logging) and ``events.jsonl`` (one line per
   tool call, naming its CASA log). The workdir is ``RADIO_MCP_DIR`` if set,
   else the cwd.
+- A successful call that ran no casatasks task keeps no CASA log: dispatch
+  deletes it. Its events.jsonl line still names the path, because a script
+  the call generated writes there when it is run.
 - ``prune_logs`` removes CASA logs older than 14 days, then the oldest until
   the rest fit in 200 MB. It runs at server start.
 

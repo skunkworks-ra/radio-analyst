@@ -53,7 +53,8 @@ def test_tool_call_leaves_only_logs_dir_and_writes_event(workdir, tmp_path):
     assert events[0]["status"] == "ok"
     assert events[0]["tool"].endswith("import_casa")
     assert os.path.dirname(events[0]["casa_log"]) == str(workdir / "logs")
-    assert os.path.exists(events[0]["casa_log"])
+    # import_casa runs no casatasks task, so its log is deleted.
+    assert not os.path.exists(events[0]["casa_log"])
 
 
 def test_pool_call_leaves_only_logs_dir(workdir):
@@ -127,15 +128,52 @@ def _events(workdir):
 def test_each_call_gets_its_own_casa_log(workdir):
     async def go():
         await asyncio.gather(
-            run_tool(dt.write_casa_log, "/data/a.ms", [_MEASURES]),
-            run_tool(dt.write_casa_log, "/data/b.ms", [_MEASURES]),
+            run_tool(dt.write_casa_log, "/data/a.ms", [_BEGIN, "a", _END]),
+            run_tool(dt.write_casa_log, "/data/b.ms", [_BEGIN, "b", _END]),
         )
 
     asyncio.run(go())
-    logs_named = {e["casa_log"] for e in _events(workdir)}
-    assert len(logs_named) == 2
-    for path in logs_named:
-        assert Path(path).read_text() == _MEASURES + "\n"
+    texts = {Path(e["casa_log"]).read_text() for e in _events(workdir)}
+    assert texts == {f"{_BEGIN}\n{x}\n{_END}\n" for x in "ab"}
+
+
+def test_ok_call_without_a_task_drops_its_log(workdir):
+    result = asyncio.run(run_tool(dt.write_casa_log, "/data/a.ms", [_MEASURES]))
+    assert not result.isError
+    path = _events(workdir)[0]["casa_log"]
+    assert path and not os.path.exists(path)
+
+
+def test_ok_call_with_a_task_keeps_its_log(workdir):
+    asyncio.run(run_tool(dt.write_casa_log, "/data/a.ms", [_MEASURES, _BEGIN, _END]))
+    assert os.path.exists(_events(workdir)[0]["casa_log"])
+
+
+def test_error_call_without_a_task_keeps_its_log(workdir):
+    result = asyncio.run(run_tool(dt.write_casa_log_then_raise, "/data/a.ms", [_MEASURES]))
+    assert result.isError
+    path = result.structuredContent["log_path"]
+    assert Path(path).read_text() == _MEASURES + "\n"
+
+
+def test_crashed_call_without_a_task_keeps_its_log(workdir):
+    with pytest.raises(RuntimeError, match="signal SIGSEGV"):
+        asyncio.run(run_tool(dt.write_casa_log_then_crash, "/data/a.ms", [_MEASURES]))
+    event = _events(workdir)[0]
+    assert event["status"] == "crash"
+    assert os.path.exists(event["casa_log"])
+
+
+def test_call_that_fails_after_the_child_keeps_its_log(workdir, monkeypatch):
+    from ms_inspect.util import dispatch
+
+    def broken(envelope):
+        raise RuntimeError("result wrapping failed")
+
+    monkeypatch.setattr(dispatch, "envelope_result", broken)
+    with pytest.raises(RuntimeError, match="result wrapping failed"):
+        asyncio.run(run_tool(dt.write_casa_log, "/data/a.ms", [_MEASURES]))
+    assert os.path.exists(_events(workdir)[0]["casa_log"])
 
 
 def test_severe_inside_a_task_makes_the_result_suspect(workdir):
@@ -219,3 +257,17 @@ def test_generated_script_records_where_its_log_lines_begin(monkeypatch, tmp_pat
     preamble = logs.with_casa_log("")
     exec(preamble, {})  # noqa: S102 - the preamble under test
     assert os.environ[logs.LOGSTART_ENV] == str(log.stat().st_size)
+
+
+def test_generated_script_starts_at_zero_when_the_call_log_was_dropped(monkeypatch, tmp_path):
+    log = tmp_path / "casa-x.log"  # absent: the generating call ran no task
+    monkeypatch.setenv(logs.LOGFILE_ENV, str(log))
+    monkeypatch.setenv(logs.LOGSTART_ENV, "unset by the test")
+    try:
+        from casaconfig import config
+
+        monkeypatch.setattr(config, "logfile", config.logfile)
+    except ImportError:
+        pass
+    exec(logs.with_casa_log(""), {})  # noqa: S102 - the preamble under test
+    assert os.environ[logs.LOGSTART_ENV] == "0"

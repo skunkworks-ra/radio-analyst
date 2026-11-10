@@ -198,13 +198,18 @@ async def run_tool(
     started = time.monotonic()
     status, error_type = "crash", None
     casa_log = call_log_path()
+    drop_log = False
     try:
         async with contextlib.AsyncExitStack() as stack:
             for lock_key in sorted({os.path.realpath(k) for k in raw_keys}):
                 await stack.enter_async_context(path_lock(lock_key))
             envelope = json.loads(await _run_in_child(tool_fn, args, kwargs, casa_log))
         status, error_type = envelope.get("status", "ok"), envelope.get("error_type")
-        return envelope_result(flag_casa_severe(envelope, casa_log))
+        result = envelope_result(flag_casa_severe(envelope, casa_log))
+        # Keep the CASA log only when a casatasks task ran in it, or when the
+        # call failed: a failed call's error names the log as the place to look.
+        drop_log = status == "ok" and not casa_task_log(casa_log)[0]
+        return result
     except asyncio.CancelledError:
         status = "cancelled"
         raise
@@ -221,6 +226,9 @@ async def run_tool(
             duration_s=round(time.monotonic() - started, 3),
             casa_log=casa_log,
         )
+        if drop_log:
+            with contextlib.suppress(OSError):
+                os.unlink(casa_log)
 
 
 def flag_casa_severe(envelope: dict, casa_log: str) -> dict:
