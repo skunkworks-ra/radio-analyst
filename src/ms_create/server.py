@@ -225,9 +225,8 @@ async def ms_reduction_log(params: ReductionLogInput) -> ToolResult:
     name="ms_report",
     description=(
         "Write <workdir>/report.html: your summary, decisions and caveats, the ledger as a "
-        "table with a keep box per step (composes keep_steps for the replay), the reduce "
-        "hook's open items, links to the HTML plots in the workdir, and one image plane. "
-        "Re-run to rebuild it."
+        "table with a keep box per step (composes keep_steps for the replay), links to the "
+        "HTML plots in the workdir, and one image plane. Re-run to rebuild it."
     ),
     annotations={"readOnlyHint": False, "destructiveHint": False},
 )
@@ -243,7 +242,7 @@ async def ms_report(params: ReportInput) -> ToolResult:
         params.image_path: CASA image to show (plane 0). Optional.
 
     Returns:
-        JSON envelope with report_path, n_steps, n_open_items, plots, image.
+        JSON envelope with report_path, n_steps, plots, image.
     """
     return await _run_tool(
         report.run,

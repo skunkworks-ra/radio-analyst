@@ -978,7 +978,7 @@ the reduction. It is a FastMCP server (`ms_create.server`, port 8002) with
 | `ms_sdm_summary` | Pre-conversion ASDM inspection (read-only, no casatools): telescope, band, per-SPW line/continuum, sources + intents, scan balance |
 | `ms_import_asdm` | Convert ASDM → MS (`ocorr_mode='co'`, `savecmds=True`, `applyflags=False`); writes `import_asdm.py` + `.flagonline.txt` |
 | `ms_reduction_log` | Working-calls ledger: shuttle known-good calls into a per-reduction JSONL recipe (`append`/`render`/`list`) |
-| `ms_report` | HTML report from the workdir: model-written sections, ledger with keep boxes, open items, replay script, plots, one image plane |
+| `ms_report` | HTML report from the workdir: model-written sections, ledger with keep boxes, replay script, plots, one image plane |
 
 ---
 

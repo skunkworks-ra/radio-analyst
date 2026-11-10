@@ -50,7 +50,7 @@ report when a check fails. The commands are namespaced by the plugin:
 
 | Command | Takes you from → to |
 |---|---|
-| `/radio-analyst:reduce <ms>` | Raw MS → first image in one run: inspect, pre-calibration, calibration, optional post-cal flagging and polarisation, imaging, then the report. |
+| `/radio-analyst:orchestrate <ms> workdir=<dir> online_flags=<path>\|none` | Raw MS → first Stokes I image: a driver runs each stage (inspect, precal, calibrate, image, then post-cal flagging or selfcal when its checks call for them) in its own stage agent, checks every stage with read-only tools before the next starts, and writes the report. |
 | `/radio-analyst:inspect <ms>` | A new MS → a data-quality report with a go/no-go for calibration (orientation + instrument sanity, 12 tools, nothing written). |
 | `/radio-analyst:precal <ms>` | Imported MS → pre-calibrated calibrators: online flags, deterministic preflag, prior caltables (gain curves, opacity, requantizer, antenna positions), flux models, reference antenna, initial bandpass, residual RFI flagging. |
 | `/radio-analyst:calibrate <ms>` | Pre-calibrated MS → calibrated target: initial phase → delay → bandpass → gain → fluxscale → applycal, with solution statistics checked after every solve. |
@@ -81,10 +81,7 @@ data, not the search for it.
 
 At the end, `/radio-analyst:report` turns the log into `report.html`: the steps
 with a keep box each (to choose which steps go into the replay script), the
-decisions and caveats, plots and the image. During a `/radio-analyst:reduce`
-run, a hook logs every tool call and, when Claude stops, lists the checks the
-reduction skipped and sends Claude back once to do them or explain why not. It
-never blocks a call.
+decisions and caveats, plots and the image.
 
 ---
 
@@ -201,7 +198,7 @@ Loaded automatically when relevant. No need to invoke them yourself.
 | `radio-interferometry` | Interferometrist reasoning across the reduction: band tables, intent vocabulary, elevation/PA/flag thresholds, calibrator science, failure modes and recovery, and the execution playbooks the commands follow. |
 | `ms-simulator` | Turns a conversational description into a `casatools.simulator` script and a validated MS. |
 | `casa-docs` | Answers CASA task and parameter questions from the fetched casadocs page or casa6 source, never from memory. |
-| `reduce` | The end-to-end run behind `/radio-analyst:reduce`: stages, checks before and after each step, and the contract (`stages.json`) the hook reconciles against. |
+| `orchestrate` | The end-to-end run behind `/radio-analyst:orchestrate`: the stage order, what each stage agent is given, the checks after each stage, retries, and a JSON record of every attempt. |
 | `report` | Builds the summary and `report.html` at the end of a reduction. |
 
 ### Tools
@@ -284,7 +281,7 @@ RADIO_MCP_TRANSPORT=http RADIO_MCP_PORT=8002 pixi run serve-create
 ### opencode
 
 [opencode](https://opencode.ai) gets the same tools, skills, workflow commands
-and reduce hook from a clone; there is no marketplace install. Build the
+and stage agents from a clone; there is no marketplace install. Build the
 environment as above, then start opencode from the repo directory:
 
 ```bash
@@ -299,8 +296,6 @@ What the clone provides:
   started by `scripts/plugin/serve*.sh` from the repo's pixi environment.
 - `.opencode/commands/radio-analyst-<name>.md` link to `.claude/commands/`.
 - `.claude/skills/` are picked up by opencode's `skill` tool.
-- `.opencode/plugins/reduce-hook.js` feeds opencode events to the same
-  `scripts/plugin/reduce_hook.py` the Claude Code plugin uses.
 
 How it differs from the Claude Code plugin:
 
@@ -309,9 +304,8 @@ How it differs from the Claude Code plugin:
 | Install | `claude plugin install` | `git clone` |
 | Environment | built by the hook under `~/.claude/plugins/data/` | the repo's own `.pixi/`; pixi is needed every time a server starts |
 | First start | servers report "still being built" until done | run `pixi install` first: a cold install takes longer than the 60 s server timeout in `opencode.json` |
-| Commands | `/radio-analyst:reduce` | `/radio-analyst-reduce` |
+| Commands | `/radio-analyst:orchestrate` | `/radio-analyst-orchestrate` |
 | Python for generated scripts | given to Claude by the session-start hook | `pixi run python <script>` from the repo |
-| Stop hook | sends Claude back once with the open items | writes them to `.reduce_stop_reason`; nothing sends the model back in an interactive session |
 | Working directory | anywhere | the repo directory, so opencode finds `opencode.json` and `.opencode/` |
 
 Tested with opencode 1.19.0 in `scripts/dev/run-isolated.sh --harness opencode`,

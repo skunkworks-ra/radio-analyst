@@ -29,23 +29,19 @@ def workdir(tmp_path):
     )
     (tmp_path / "plots").mkdir()
     (tmp_path / "plots" / "caltables_overview.html").write_text("<html></html>")
-    hook = {"event": "stop", "session_id": "s", "open": ["[image] m2 ms_tclean: not called"]}
-    (tmp_path / "reduce_hooks.jsonl").write_text(json.dumps(hook) + "\n")
     return tmp_path
 
 
-def test_report_lays_out_ledger_items_plots_and_sections(workdir):
+def test_report_lays_out_ledger_plots_and_sections(workdir):
     env = report.run(
         str(workdir), summary="Para one.\n\nPara <two>.", decisions="No selfcal: DR 25."
     )
     page = (workdir / "report.html").read_text()
     assert env["data"]["n_steps"]["value"] == 2
-    assert env["data"]["n_open_items"]["value"] == 1
     assert page.count('class="keep"') == 2
     assert "G0 &lt;before&gt; bandpass" in page and "<before>" not in page
     assert "<p>Para one.</p><p>Para &lt;two&gt;.</p>" in page
     assert "No selfcal: DR 25." in page
-    assert "[image] m2 ms_tclean: not called" in page
     assert 'href="plots/caltables_overview.html"' in page
     assert 'href="gaincal_G0.py"' in page
     assert "keep_steps=[" in page  # the composer the boxes drive
@@ -61,9 +57,8 @@ def test_replay_script_is_linked_once_rendered(workdir):
     assert 'href="reduction_replay.py"' in page and "_run_script(" in page
 
 
-def test_no_hook_log_is_unavailable_not_zero(tmp_path):
+def test_empty_workdir_reports_zero_steps(tmp_path):
     env = report.run(str(tmp_path))
-    assert env["data"]["n_open_items"]["flag"] == "UNAVAILABLE"
     assert env["data"]["n_steps"]["value"] == 0
 
 

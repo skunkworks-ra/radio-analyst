@@ -8,7 +8,6 @@ Build one HTML report of a reduction from what the workdir already holds:
     step. The boxes compose the `keep_steps` list for
     ms_reduction_log(action='render', keep_steps=[...]), so the user can drop
     steps from the replay
-  - the open items the reduce hook recorded at its last Stop (reduce_hooks.jsonl)
   - the replay script from the last ledger render (reduction_replay.py), linked and shown
   - links to the HTML plots already written (caltable dashboards)
   - every PNG in the workdir and its plots/ (image previews, caltable plots),
@@ -229,11 +228,6 @@ def _steps_table(records: list[dict], wd: Path) -> str:
     return f'<table class="steps">{cols}{head}{"".join(rows)}</table>'
 
 
-def _open_items(wd: Path) -> list[str] | None:
-    stops = [r for r in _read_jsonl(wd / "reduce_hooks.jsonl") if r.get("event") == "stop"]
-    return stops[-1].get("open", []) if stops else None
-
-
 def _pngs(wd: Path) -> list[Path]:
     """PNGs in the workdir and its plots/, oldest first (the order they were made)."""
     found = {*wd.glob("*.png"), *wd.glob("plots/*.png")}
@@ -379,8 +373,7 @@ def run(
         image_path: CASA image to show (plane 0); omit for no image panel.
 
     Returns:
-        Standard envelope with report_path, n_steps, n_open_items, plots,
-        replay_script, image.
+        Standard envelope with report_path, n_steps, plots, replay_script, image.
     """
     from ms_inspect.exceptions import ComputationError
 
@@ -409,7 +402,6 @@ def run(
     caveats, image_path = given["caveats"], given["image_path"]
 
     records = _read_jsonl(wd / "reduction_log.jsonl")
-    open_items = _open_items(wd)
     plots = _plot_links(wd)
     pngs = _pngs(wd)
     replay = wd / "reduction_replay.py"
@@ -438,12 +430,6 @@ def run(
         ("Decisions", _paragraphs(decisions)),
         ("Caveats", _paragraphs(caveats)),
     ]
-    if open_items is None:
-        items_html = "<p>No reduce-hook Stop record in this workdir.</p>"
-    elif open_items:
-        items_html = "<ul>" + "".join(f"<li>{html.escape(i)}</li>" for i in open_items) + "</ul>"
-    else:
-        items_html = "<p>None at the last Stop.</p>"
     plots_html = (
         "<ul>"
         + "".join(f'<li><a href="{html.escape(p)}">{html.escape(p)}</a></li>' for p in plots)
@@ -468,8 +454,6 @@ def run(
         "A dropped step's products are not made, so later steps that use them will fail.</p>",
         '<input id="keep" readonly value="all steps kept">',
         _steps_table(records, wd),
-        "<h2>Open items at the last Stop</h2>",
-        items_html,
         "<h2>Replay script</h2>",
         replay_html,
         "<h2>Plots</h2>",
@@ -489,9 +473,6 @@ def run(
         data={
             "report_path": fmt_field(str(out)),
             "n_steps": fmt_field(len(records)),
-            "n_open_items": fmt_field(len(open_items))
-            if open_items is not None
-            else fmt_field(None, "UNAVAILABLE", "no reduce_hooks.jsonl Stop record"),
             "plots": fmt_field(plots),
             "narrative_source": fmt_field(narrative_source),
             "images_embedded": fmt_field([str(p.relative_to(wd)) for p in pngs]),

@@ -1,5 +1,5 @@
 {
-  "description": "Build the radio-analyst Python/CASA environment under ${CLAUDE_PLUGIN_DATA} in the background, so the MCP servers never install inside their startup timeout. Log tool calls and reconcile them against the reduce contract once the reduce skill is invoked (scripts/plugin/reduce_hook.py). At session end, write per-session tokens and cost (ms_create/accounting.py) and rebuild the report.",
+  "description": "Build the radio-analyst Python/CASA environment under ${CLAUDE_PLUGIN_DATA} in the background, so the MCP servers never install inside their startup timeout. At session end, write per-session tokens and cost (ms_create/accounting.py) and rebuild the report.",
   "hooks": {
     "SessionStart": [
       {
@@ -12,64 +12,6 @@
               "--hook"
             ],
             "timeout": 30
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3",
-            "args": [
-              "${CLAUDE_PLUGIN_ROOT}/scripts/plugin/reduce_hook.py"
-            ],
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": ".*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3",
-            "args": [
-              "${CLAUDE_PLUGIN_ROOT}/scripts/plugin/reduce_hook.py"
-            ],
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PostToolUseFailure": [
-      {
-        "matcher": ".*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3",
-            "args": [
-              "${CLAUDE_PLUGIN_ROOT}/scripts/plugin/reduce_hook.py"
-            ],
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3",
-            "args": [
-              "${CLAUDE_PLUGIN_ROOT}/scripts/plugin/reduce_hook.py"
-            ],
-            "timeout": 10
           }
         ]
       }
