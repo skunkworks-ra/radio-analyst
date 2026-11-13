@@ -122,3 +122,153 @@ def test_correlations_follow_ddid_polarization_row(real_ms_raw_copy):
     entry = out["data"]["per_field"][0]
     assert entry["cross_amp"]["flag"] == "UNAVAILABLE"
     assert entry["par_amp"]["value"] > 0
+
+
+class TestPartialBandPolClobber:
+    """CR-6: Zero cross-hand samples retained (not stripped) + per-SpW partial clobber check."""
+
+    def test_15_of_16_spws_zeroed_not_masked_by_one_polarized_spw(self, tmp_path):
+        from unittest.mock import MagicMock, patch
+
+        from ms_inspect.tools import verify_model
+
+        ms_dir = tmp_path / "pol16.ms"
+        ms_dir.mkdir()
+        (ms_dir / "table.info").write_text("Type = Measurement Set\n")
+        (ms_dir / "DATA_DESCRIPTION").mkdir()
+
+        # 16 DDIDs/SpWs; RR,RL,LR,LL = [5,6,7,8] on each DDID.
+        # SpW 0 has RL=LR=0.5 Jy; SpWs 1..15 were clobbered to RL=LR=0.0!
+        def make_dd_sub(dd):
+            sub = MagicMock()
+            sub.nrows.return_value = 4
+            data = np.zeros((4, 2, 4), dtype=complex)
+            data[0] = 5.0 * np.exp(1j * 0.3)
+            data[3] = 5.0 * np.exp(-1j * 0.3)
+            if dd == 0:
+                data[1] = 0.5
+                data[2] = 0.5
+            flag = np.zeros((4, 2, 4), dtype=bool)
+            sub.getcol.side_effect = lambda col, **kw: data if col == "MODEL_DATA" else flag
+            return sub
+
+        field_sub = MagicMock()
+        field_sub.nrows.return_value = 64
+        field_sub.getcol.return_value = np.repeat(np.arange(16), 4)
+
+        main_tb = MagicMock()
+        main_tb.__enter__.return_value = main_tb
+        main_tb.colnames.return_value = ["DATA", "MODEL_DATA", "FLAG"]
+
+        def query_fn(expr):
+            if "DATA_DESC_ID ==" in expr:
+                dd = int(expr.split("DATA_DESC_ID ==")[1].strip())
+                return make_dd_sub(dd)
+            return field_sub
+
+        main_tb.query.side_effect = query_fn
+
+        field_tb = MagicMock()
+        field_tb.__enter__.return_value = field_tb
+        field_tb.getcol.return_value = ["3C286"]
+
+        dd_tb = MagicMock()
+        dd_tb.__enter__.return_value = dd_tb
+        dd_tb.getcol.return_value = list(range(16))
+
+        def fake_open(path, **kw):
+            p = str(path)
+            if p.endswith("FIELD"):
+                return field_tb
+            if p.endswith("DATA_DESCRIPTION"):
+                return dd_tb
+            return main_tb
+
+        with (
+            patch.object(verify_model, "open_table", side_effect=fake_open),
+            patch.object(verify_model, "corr_codes_by_ddid", return_value=[[5, 6, 7, 8]] * 16),
+        ):
+            res = verify_model.run(str(ms_dir), field="3C286", polcal_fields="3C286")
+
+        pf = res["data"]["per_field"][0]
+        # Because 15/16 SpWs have RL=LR=0, median cross_amp is 0.0 (NOT 0.5!) and status is SUSPECT!
+        assert pf["cross_amp"]["value"] == 0.0
+        assert pf["status"]["flag"] == "SUSPECT"
+        assert pf["unpolarized_spws"]["value"] == list(range(1, 16))
+        assert res["completeness_summary"] == "SUSPECT"
+
+    def test_1_of_16_spws_zeroed_flagged_suspect_on_polcal(self, tmp_path):
+        from unittest.mock import MagicMock, patch
+
+        from ms_inspect.tools import verify_model
+
+        ms_dir = tmp_path / "pol_partial.ms"
+        ms_dir.mkdir()
+        (ms_dir / "table.info").write_text("Type = Measurement Set\n")
+        (ms_dir / "DATA_DESCRIPTION").mkdir()
+
+        # SpWs 0..14 polarized (RL=LR=0.5 Jy), SpW 15 clobbered to RL=LR=0.0!
+        def make_dd_sub(dd):
+            sub = MagicMock()
+            sub.nrows.return_value = 4
+            data = np.zeros((4, 2, 4), dtype=complex)
+            data[0] = 5.0 * np.exp(1j * 0.3)
+            data[3] = 5.0 * np.exp(-1j * 0.3)
+            if dd != 15:
+                data[1] = 0.5
+                data[2] = 0.5
+            flag = np.zeros((4, 2, 4), dtype=bool)
+            sub.getcol.side_effect = lambda col, **kw: data if col == "MODEL_DATA" else flag
+            return sub
+
+        field_sub = MagicMock()
+        field_sub.nrows.return_value = 64
+        field_sub.getcol.return_value = np.repeat(np.arange(16), 4)
+
+        main_tb = MagicMock()
+        main_tb.__enter__.return_value = main_tb
+        main_tb.colnames.return_value = ["DATA", "MODEL_DATA", "FLAG"]
+        main_tb.query.side_effect = lambda expr: (
+            make_dd_sub(int(expr.split("DATA_DESC_ID ==")[1].strip()))
+            if "DATA_DESC_ID ==" in expr
+            else field_sub
+        )
+
+        field_tb = MagicMock()
+        field_tb.__enter__.return_value = field_tb
+        field_tb.getcol.return_value = ["3C286"]
+
+        dd_tb = MagicMock()
+        dd_tb.__enter__.return_value = dd_tb
+        dd_tb.getcol.return_value = list(range(16))
+
+        def fake_open(path, **kw):
+            p = str(path)
+            if p.endswith("FIELD"):
+                return field_tb
+            if p.endswith("DATA_DESCRIPTION"):
+                return dd_tb
+            return main_tb
+
+        with (
+            patch.object(verify_model, "open_table", side_effect=fake_open),
+            patch.object(verify_model, "corr_codes_by_ddid", return_value=[[5, 6, 7, 8]] * 16),
+        ):
+            res_pol = verify_model.run(str(ms_dir), field="3C286", polcal_fields="3C286")
+            res_all = verify_model.run(str(ms_dir), field="3C286", polcal_fields="")
+
+        pf_pol = res_pol["data"]["per_field"][0]
+        assert pf_pol["cross_amp"]["value"] == 0.5
+        assert pf_pol["unpolarized_spws"]["value"] == [15]
+        assert pf_pol["status"]["flag"] == "SUSPECT"
+        assert "partial-band" in pf_pol["status"]["note"]
+        assert any("SpW(s) [15]" in w for w in res_pol["warnings"])
+
+        # Non-polcal field is NOT flagged SUSPECT for cross-hands
+        assert res_all["data"]["per_field"][0]["status"]["flag"] == "COMPLETE"
+
+        # And when all 16 SpWs are polarized on polcal_fields, status is COMPLETE
+        status_ok, _, reasons_ok = classify(
+            5.0, 17.0, 0.5, True, unpolarized_spws=[], n_spws_checked=16, **_KW
+        )
+        assert status_ok == "COMPLETE" and reasons_ok == []

@@ -57,6 +57,7 @@ OUTPUT_PARAMS = (
     "outputvis",
     "outvis",
     "concatvis",
+    "testconcatvis",
     "outfile",
     "output",
     "output_cont",
@@ -69,20 +70,104 @@ OUTPUT_PARAMS = (
     "logfile",
     "figfile",
     "plotfile",
+    "savefig",
     "bltable",
+    "bloutput",
     "rawdatafile",
+    "newestimates",
+    "rm",
+    "rmerr",
+    "pa0",
+    "pa0err",
+    "nturns",
+    "chisq",
+    "spxsol",
+    "spxerr",
+    "outsigma",
 )
+#: Per-task output parameter names whose names collide with non-output params in
+#: other tasks (e.g. ft's input model/complist, statwt's center='mean',
+#: getantposalma's UID asdm) or whose XML mistakenly sets mustexist=True.
+TASK_EXTRA_OUTPUTS: dict[str, tuple[str, ...]] = {
+    "appendantab": ("outvis",),
+    "exportasdm": ("asdm",),
+    "imfit": ("residual", "model", "complist", "summary"),
+    "pccor": ("pccor_caltable", "ff_table"),
+    "predictcomp": ("prefix",),
+    "simalma": ("project",),
+    "simanalyze": ("project",),
+    "simobserve": ("project",),
+    "specfit": (
+        "model",
+        "residual",
+        "amp",
+        "amperr",
+        "center",
+        "centererr",
+        "fwhm",
+        "fwhmerr",
+        "integral",
+        "integralerr",
+    ),
+    "splattotable": ("table",),
+    "spxfit": ("model", "residual"),
+}
+#: Output names where XML mistakenly marks mustexist="true" on an output path.
+_FORCED_OUTPUT_KEYS = frozenset({"outvis", "pccor_caltable", "ff_table"})
 #: Output names that are also inputs in some tasks (sdbaseline applies an
 #: existing bltable; deconvolve works on an existing image): one that exists
 #: is an input, one that does not is an output. Import tasks are the
 #: exception for vis: it is always their output.
 IN_OR_OUT = ("vis", "imagename", "bltable", "rawdatafile")
 #: Outputs that are caltables: archived aside on a re-run, like the wrappers do.
-CALTABLE_OUTPUTS = ("caltable", "fluxtable")
+CALTABLE_OUTPUTS = ("caltable", "fluxtable", "pccor_caltable", "ff_table")
 #: Input data paths, tried in order, for the resource lock and the MS checks.
-INPUT_PARAMS = ("vis", "imagename", "infile", "caltable")
+INPUT_PARAMS = ("vis", "imagename", "infile", "caltable", "binnedvis", "inpimage")
 #: Tasks that rewrite MS flags in place; the script saves a flag version first.
 FLAG_WRITERS = ("flagcmd", "flagmanager")
+#: Tasks that are read-only even when called with no output file parameters.
+READ_ONLY_WITHOUT_OUTPUTS = frozenset(
+    {
+        "apparentsens",
+        "asdmsummary",
+        "calstat",
+        "clearstat",
+        "imfit",
+        "imstat",
+        "imval",
+        "listcal",
+        "listfits",
+        "listhistory",
+        "listobs",
+        "listpartition",
+        "listsdm",
+        "listvis",
+        "plotants",
+        "plotbandpass",
+        "plotprofilemap",
+        "plotweather",
+        "sdfit",
+        "specfit",
+        "specflux",
+        "spxfit",
+        "uvmodelfit",
+        "visstat",
+    }
+)
+#: Tasks that unconditionally mutate a primary input in place: task -> param name.
+_ALWAYS_IN_PLACE_TARGET: dict[str, str] = {
+    "clearcal": "vis",
+    "deconvolve": "imagename",
+    "delmod": "vis",
+    "fixplanets": "vis",
+    "ft": "vis",
+    "initweights": "vis",
+    "msuvbinflag": "binnedvis",
+    "statwt": "vis",
+    "uvcontsub_old": "vis",
+    "uvsub": "vis",
+    "widebandpbcor": "imagename",
+}
 #: Refused: no guard here can make them safe.
 REFUSED = {"rmtables": "it deletes any table path it is given"}
 
@@ -125,19 +210,32 @@ def _classify(task: str, params: dict[str, Any]) -> tuple[dict[str, str], list[s
     concat vis) is left as given and its entries are reported as inputs.
     """
     spec = task_spec(task).params
+    task_extra = TASK_EXTRA_OUTPUTS.get(task, ())
     outputs: dict[str, str] = {}
     inputs: list[str] = []
     for k, v in params.items():
         if k not in spec or not v:
             continue
+        is_forced_out = k in task_extra and k in _FORCED_OUTPUT_KEYS
+        is_out_name = k in OUTPUT_PARAMS or k in task_extra or k == "vis"
         if isinstance(v, (list, tuple)):
-            if k in INPUT_PARAMS:
+            is_pure_list_out = (
+                is_out_name
+                and not (spec[k].mustexist and not is_forced_out)
+                and (k not in IN_OR_OUT or task == "sdsidebandsplit")
+            )
+            if is_pure_list_out:
+                for idx, x in enumerate(v):
+                    if isinstance(x, str) and x.strip():
+                        outputs[f"{k}[{idx}]"] = _abs(x)
+            elif k in INPUT_PARAMS:
                 inputs += [_abs(x) for x in v if isinstance(x, str) and x]
             continue
         if not isinstance(v, str):
             continue
-        is_out_name = k in OUTPUT_PARAMS or k == "vis"
-        if spec[k].mustexist or not is_out_name:
+        if task == "pccor" and k == "ff_table" and v.strip().lower() == "none":
+            continue
+        if (spec[k].mustexist and not is_forced_out) or not is_out_name:
             if k in INPUT_PARAMS:
                 inputs.append(_abs(v))
             continue
@@ -152,8 +250,52 @@ def _classify(task: str, params: dict[str, Any]) -> tuple[dict[str, str], list[s
     return outputs, inputs
 
 
+def _in_place_mutation_info(task: str, params: dict[str, Any]) -> tuple[str | None, bool]:
+    """Return (mutated_param_key_or_None, is_read_only_without_outputs) for task+params."""
+    if task in _ALWAYS_IN_PLACE_TARGET:
+        return _ALWAYS_IN_PLACE_TARGET[task], False
+    if task == "flagmanager":
+        mode = str(params.get("mode") or "list").strip().lower()
+        return (None, True) if mode == "list" else ("vis", False)
+    if task == "flagcmd":
+        action = str(params.get("action") or "apply").strip().lower()
+        return (None, True) if action in ("list", "plot") else ("vis", False)
+    if task == "imhead":
+        mode = str(params.get("mode") or "summary").strip().lower()
+        return (None, True) if mode in ("summary", "list", "get") else ("imagename", False)
+    if task == "imhistory":
+        mode = str(params.get("mode") or "list").strip().lower()
+        return (None, True) if mode == "list" else ("imagename", False)
+    if task == "vishead":
+        mode = str(params.get("mode") or "summary").strip().lower()
+        return (None, True) if mode in ("summary", "list", "get") else ("vis", False)
+    if task == "makemask":
+        mode = str(params.get("mode") or "list").strip().lower()
+        if mode == "list":
+            return None, True
+        if mode in ("delete", "setdefaultmask") or not str(params.get("output") or "").strip():
+            return "inpimage", False
+        return None, False
+    if task in ("fixvis", "hanningsmooth", "phaseshift"):
+        if not str(params.get("outputvis") or "").strip():
+            return "vis", False
+        return None, False
+    if task == "imbaseline":
+        if bool(params.get("output_cont", False)) or not str(params.get("linefile") or "").strip():
+            return "imagename", False
+        return None, False
+    if task == "sdbaseline":
+        if bool(params.get("overwrite", False)) and not str(params.get("outfile") or "").strip():
+            return "infile", False
+        return None, False
+    return None, task in READ_ONLY_WITHOUT_OUTPUTS
+
+
+_EXTRA_LOCK_PARAMS = tuple(k for extra in TASK_EXTRA_OUTPUTS.values() for k in extra)
 #: Parameters whose value names a path the call reads or writes, and so locks.
-LOCK_PARAMS = tuple(dict.fromkeys(INPUT_PARAMS + OUTPUT_PARAMS + IN_OR_OUT + ("gaintable",)))
+LOCK_PARAMS = tuple(
+    dict.fromkeys(INPUT_PARAMS + OUTPUT_PARAMS + _EXTRA_LOCK_PARAMS + IN_OR_OUT + ("gaintable",))
+)
 
 
 def lock_paths(params: dict[str, Any], workdir: str) -> list[str]:
@@ -305,6 +447,36 @@ def run(task: str, params: dict[str, Any], workdir: str, execute: bool = False) 
                 ms_path=data_in,
             )
 
+    mutated_key, is_read_only = _in_place_mutation_info(task, params)
+    mutated_targets: list[str] = []
+    if mutated_key is not None:
+        raw_target = params.get(mutated_key)
+        target_items = raw_target if isinstance(raw_target, (list, tuple)) else [raw_target]
+        target_strs = [
+            str(x).strip() for x in target_items if isinstance(x, str) and str(x).strip()
+        ]
+        if not target_strs:
+            raise ComputationError(
+                f"{task} modifies {mutated_key!r} in place and requires a path strictly inside "
+                f"workdir {workdir_path}.",
+                ms_path=data_in,
+            )
+        for ts in target_strs:
+            tp = Path(ts).expanduser().resolve()
+            if tp == workdir_path or not tp.is_relative_to(workdir_path):
+                raise ComputationError(
+                    f"{task} modifies {tp} in place, which is not strictly inside workdir "
+                    f"{workdir_path}. Split or copy the input into workdir first.",
+                    ms_path=data_in,
+                )
+            mutated_targets.append(str(tp))
+    elif not outputs and not is_read_only:
+        raise ComputationError(
+            f"{task} writes output products and requires an explicit output parameter inside "
+            f"workdir {workdir_path}.",
+            ms_path=data_in,
+        )
+
     # Checked paths go into the script as absolute paths, so it does not depend
     # on the directory it is run from.
     run_params = dict(params)
@@ -312,12 +484,17 @@ def run(task: str, params: dict[str, Any], workdir: str, execute: bool = False) 
         if isinstance(v, str) and v and (k in outputs or (k in INPUT_PARAMS and _abs(v) in inputs)):
             run_params[k] = _abs(v)
 
-    in_place = [] if outputs else inputs
+    in_place = mutated_targets or ([] if outputs else inputs)
     flag_backup_vis = ""
     if task in FLAG_WRITERS and isinstance(run_params.get("vis"), str):
-        mode = str(run_params.get("mode", "")).lower()
-        if task == "flagcmd" or mode not in ("list", "save", ""):
-            flag_backup_vis = run_params["vis"]
+        if task == "flagcmd":
+            action = str(run_params.get("action") or "apply").strip().lower()
+            if action not in ("list", "plot"):
+                flag_backup_vis = run_params["vis"]
+        else:
+            mode = str(run_params.get("mode") or "list").strip().lower()
+            if mode not in ("list", "save"):
+                flag_backup_vis = run_params["vis"]
 
     product = next(iter(outputs.values()), "") or data_in or str(workdir_path)
     measurement = {"modifies_in_place": in_place} if in_place else {}

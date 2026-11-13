@@ -69,3 +69,34 @@ def test_refuses_to_touch_a_measurement_set(safe_rm_table, tmp_path):
     # Refused, so nothing moved.
     assert ms.exists()
     assert not (tmp_path / "target.ms.attempt1").exists()
+
+
+class TestValidateOutputCaltable:
+    """CR-11a: validate_output_caltable rejects workdir itself, outside paths, and MSs."""
+
+    def test_rejects_output_equal_to_workdir(self, tmp_path):
+        from ms_inspect.exceptions import ComputationError
+
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        ms = tmp_path / "src.ms"
+        with pytest.raises(ComputationError, match="equals workdir"):
+            pathguard.validate_output_caltable(str(workdir), str(workdir), str(ms))
+
+    def test_rejects_output_outside_workdir(self, tmp_path):
+        from ms_inspect.exceptions import ComputationError
+
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        ms = tmp_path / "src.ms"
+        with pytest.raises(ComputationError, match="not inside workdir"):
+            pathguard.validate_output_caltable(str(tmp_path / "gain.G"), str(workdir), str(ms))
+
+    def test_accepts_output_strictly_inside_workdir(self, tmp_path):
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        ms = tmp_path / "src.ms"
+        resolved = pathguard.validate_output_caltable(
+            str(workdir / "gain.G"), str(workdir), str(ms)
+        )
+        assert resolved == (workdir / "gain.G").resolve()

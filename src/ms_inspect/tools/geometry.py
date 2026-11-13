@@ -45,6 +45,34 @@ _MOUNT_PA_OFFSET_DEG: dict[str, float] = {
 }
 
 
+def circular_span_deg(angles_deg: Any) -> float:
+    """Minimum enclosing circular arc in degrees over finite angles in angles_deg.
+
+    Returns 0.0 when <= 1 unique finite angle is present. Handles the +-180 deg
+    meridian branch cut (e.g. northern-transit calibrators jumping from +177 to
+    -177 deg span 6.0 deg, not 354.0 deg).
+    """
+    import numpy as np
+
+    arr = np.asarray(angles_deg, dtype=float).ravel()
+    arr = arr[np.isfinite(arr)]
+    if arr.size <= 1:
+        return 0.0
+    angles_mod = np.sort(np.mod(arr, 360.0))
+    if np.unique(angles_mod).size <= 1:
+        return 0.0
+    gaps = np.empty(angles_mod.size, dtype=float)
+    gaps[:-1] = np.diff(angles_mod)
+    gaps[-1] = (angles_mod[0] + 360.0) - angles_mod[-1]
+    return max(0.0, 360.0 - float(np.max(gaps)))
+
+
+def wrap_angle_pm180(angle_deg: float) -> float:
+    """Wrap angle in degrees into (-180.0, +180.0], matching atan2 convention."""
+    wrapped = ((float(angle_deg) + 180.0) % 360.0) - 180.0
+    return 180.0 if wrapped == -180.0 else wrapped
+
+
 def _require_astropy() -> Any:
     try:
         import astropy  # noqa: F401
@@ -425,11 +453,11 @@ def run_parallactic_angle_vs_time(ms_path: str) -> dict:
 
         pa_sky_start = pa_sky_values[0]
         pa_sky_end = pa_sky_values[-1]
-        pa_sky_range = max(pa_sky_values) - min(pa_sky_values)
+        pa_sky_range = circular_span_deg(pa_sky_values)
 
-        pa_feed_start = pa_sky_start + pa_offset_deg
-        pa_feed_end = pa_sky_end + pa_offset_deg
-        pa_feed_range = pa_sky_range  # range is identical, only zero-point shifts
+        pa_feed_start = wrap_angle_pm180(pa_sky_start + pa_offset_deg)
+        pa_feed_end = wrap_angle_pm180(pa_sky_end + pa_offset_deg)
+        pa_feed_range = pa_sky_range  # circular span is invariant under constant offset
 
         fields_out.append(
             {
@@ -439,14 +467,18 @@ def run_parallactic_angle_vs_time(ms_path: str) -> dict:
                 "pa_sky_start_deg": field(
                     round(pa_sky_start, 2),
                     flag="COMPLETE",
-                    note="astropy sky-frame PA, North through East",
+                    note="astropy sky-frame PA, North through East, in (-180, +180] deg",
                 ),
                 "pa_sky_end_deg": field(round(pa_sky_end, 2), flag="COMPLETE"),
-                "pa_sky_range_deg": field(round(pa_sky_range, 2), flag="COMPLETE"),
+                "pa_sky_range_deg": field(
+                    round(pa_sky_range, 2),
+                    flag="COMPLETE",
+                    note="Minimum enclosing circular arc over sampled PA values",
+                ),
                 "pa_feed_start_deg": field(
                     round(pa_feed_start, 2),
                     flag="COMPLETE",
-                    note=f"Feed-frame PA = PA_sky + ({pa_offset_deg}°), "
+                    note=f"Feed-frame PA = wrap(PA_sky + ({pa_offset_deg} deg)) in (-180, +180], "
                     f"CASA convention for {primary_mount} mount",
                 ),
                 "pa_feed_end_deg": field(round(pa_feed_end, 2), flag="COMPLETE"),

@@ -206,9 +206,11 @@ async def run_tool(
             envelope = json.loads(await _run_in_child(tool_fn, args, kwargs, casa_log))
         status, error_type = envelope.get("status", "ok"), envelope.get("error_type")
         result = envelope_result(flag_casa_severe(envelope, casa_log))
-        # Keep the CASA log only when a casatasks task ran in it, or when the
-        # call failed: a failed call's error names the log as the place to look.
-        drop_log = status == "ok" and not casa_task_log(casa_log)[0]
+        tasks, severe, _ = casa_task_log(casa_log)
+        # Keep the CASA log when a casatasks task ran, when CASA logged SEVERE
+        # (including casatools SEVERE lines outside any task), or when the call
+        # failed: those logs carry diagnostic evidence referenced by the output.
+        drop_log = status == "ok" and not tasks and not severe
         return result
     except asyncio.CancelledError:
         status = "cancelled"
@@ -217,6 +219,11 @@ async def run_tool(
         error_type = type(exc).__name__
         raise
     finally:
+        logged_casa_log: str | None = casa_log
+        if drop_log:
+            with contextlib.suppress(OSError):
+                os.unlink(casa_log)
+            logged_casa_log = None
         log_event(
             tool=_label
             or f"{getattr(tool_fn, '__module__', '?')}.{getattr(tool_fn, '__qualname__', '?')}",
@@ -224,19 +231,16 @@ async def run_tool(
             status=status,
             error_type=error_type,
             duration_s=round(time.monotonic() - started, 3),
-            casa_log=casa_log,
+            casa_log=logged_casa_log,
         )
-        if drop_log:
-            with contextlib.suppress(OSError):
-                os.unlink(casa_log)
 
 
 def flag_casa_severe(envelope: dict, casa_log: str) -> dict:
-    """Mark a successful result SUSPECT when CASA logged SEVERE inside a task.
+    """Mark a successful result SUSPECT when CASA logged SEVERE lines.
 
-    Reads the call's own CASA log (casa_task_log: only lines between a task's
-    Begin and End markers count). Error envelopes and calls that ran no task
-    are returned unchanged.
+    Reads the call's own CASA log (both casatasks and casatools SEVERE lines,
+    ignoring only the benign casaconfig import notice). Error envelopes and
+    clean calls are returned unchanged.
     """
     if envelope.get("status") != "ok":
         return envelope
@@ -245,9 +249,10 @@ def flag_casa_severe(envelope: dict, casa_log: str) -> dict:
         return envelope
     current = envelope.get("completeness_summary") or "COMPLETE"
     envelope["completeness_summary"] = worst_flag([current, "SUSPECT"])
+    where = f" during {', '.join(dict.fromkeys(tasks))}" if tasks else ""
     envelope["warnings"] = [
         *(envelope.get("warnings") or []),
-        f"CASA logged {len(severe)} SEVERE line(s) during {', '.join(dict.fromkeys(tasks))}; "
+        f"CASA logged {len(severe)} SEVERE line(s){where}; "
         "see casa_severe. Some tasks log SEVERE and still succeed: read the lines "
         "before acting on the result.",
     ]

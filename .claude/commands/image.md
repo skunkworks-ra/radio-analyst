@@ -99,9 +99,8 @@ Prerequisite: CORRECTED_DATA populated on the target field(s) — run
    pb_level=abs(pblimit), png_path=<name>_iquv.png)` and report its `planes`
    against §Quality gates (per-plane) in place of step 7.
 
-If `residual_rms_jy > 3 ×` radiometer estimate, escalate — the problem is calibration,
-not imaging. `ms_residual_stats` on the target's CORRECTED column before
-re-imaging.
+If `residual_rms_jy > 3 x` radiometer estimate, escalate: the problem is calibration
+or unflagged target RFI, not imaging parameters.
 
 **Output:** the derived tclean parameters, image paths, image-quality metrics
 with pass/fail per gate, and a recommendation (ship, re-image with different

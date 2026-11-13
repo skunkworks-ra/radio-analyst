@@ -259,3 +259,76 @@ class TestScalesAndAsp:
         assert not any(
             "no scales" in w or "ignored: deconvolver" in w or "is expensive" in w for w in warnings
         )
+
+
+class TestMtmfsNtermsAndPathguard:
+    """CR-4 & CR-11b: mtmfs default nterms=None -> .image.tt0, nterms=1 -> .image, and imagename pathguard."""
+
+    def test_mtmfs_nterms_none_records_tt0(self, tmp_path, real_ms_calibrated):
+        script, _ = _run(tmp_path, real_ms_calibrated, deconvolver="mtmfs", nterms=None)
+        assert '_image = imagename + (".image.tt0" if True else ".image")' in script
+        assert "nterms       =" not in script
+
+    def test_mtmfs_nterms_two_records_tt0(self, tmp_path, real_ms_calibrated):
+        script, _ = _run(tmp_path, real_ms_calibrated, deconvolver="mtmfs", nterms=2)
+        assert '_image = imagename + (".image.tt0" if True else ".image")' in script
+        assert "nterms       = 2," in script
+
+    def test_mtmfs_nterms_one_records_plain_image(self, tmp_path, real_ms_calibrated):
+        script, _ = _run(tmp_path, real_ms_calibrated, deconvolver="mtmfs", nterms=1)
+        assert '_image = imagename + (".image.tt0" if False else ".image")' in script
+        assert "nterms       = 1," in script
+
+    def test_execute_mtmfs_nterms_none_checks_tt0(self, tmp_path, real_ms_calibrated, monkeypatch):
+        import casatasks
+
+        from ms_modify.tclean import run
+
+        workdir = tmp_path / "work_exec"
+        workdir.mkdir()
+        img_prefix = workdir / "mtmfs_default"
+
+        def fake_tclean(**kwargs):
+            # CASA default nterms=2 writes .image.tt0, NOT .image
+            (Path(kwargs["imagename"] + ".image.tt0")).mkdir()
+            return {"stopcode": 2}
+
+        monkeypatch.setattr(casatasks, "tclean", fake_tclean)
+        res = run(
+            real_ms_calibrated,
+            str(img_prefix),
+            field="0",
+            deconvolver="mtmfs",
+            nterms=None,
+            workdir=str(workdir),
+            execute=True,
+        )
+        assert res["status"] == "ok"
+        assert res["data"]["completed"]["value"] is True
+
+    def test_imagename_outside_or_equal_to_workdir_refused(self, tmp_path, real_ms_calibrated):
+        from ms_inspect.exceptions import ComputationError
+        from ms_modify.tclean import run
+
+        workdir = tmp_path / "work_guard"
+        workdir.mkdir()
+        outside = tmp_path / "outside_img"
+
+        with pytest.raises(ComputationError, match="not inside workdir"):
+            run(
+                real_ms_calibrated,
+                str(outside),
+                field="0",
+                workdir=str(workdir),
+                execute=False,
+            )
+        with pytest.raises(ComputationError, match="equals workdir"):
+            run(
+                real_ms_calibrated,
+                str(workdir),
+                field="0",
+                workdir=str(workdir),
+                execute=False,
+            )
+        # Ensure no script was written on refused calls
+        assert list(workdir.glob("tclean_*.py")) == []

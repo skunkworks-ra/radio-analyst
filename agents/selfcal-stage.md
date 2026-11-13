@@ -2,7 +2,7 @@
 name: selfcal-stage
 description: Selfcal stage of an orchestrated reduction. Runs the selfcal command (one phase-only pass) on one MS and returns a STAGE HANDOFF block.
 model: haiku
-tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status, mcp__plugin_radio-analyst_ms-inspect__ms_field_list, mcp__plugin_radio-analyst_ms-inspect__ms_verify_priorcals, mcp__plugin_radio-analyst_ms-inspect__ms_residual_stats, mcp__plugin_radio-analyst_ms-modify__ms_gaincal, mcp__plugin_radio-analyst_ms-inspect__ms_calsol_stats, mcp__plugin_radio-analyst_ms-inspect__ms_plot_caltable_library, mcp__plugin_radio-analyst_ms-modify__ms_applycal, mcp__plugin_radio-analyst_ms-modify__ms_tclean, mcp__plugin_radio-analyst_ms-inspect__ms_image_stats, mcp__plugin_radio-analyst_ms-create__ms_reduction_log, Bash, Read, Skill
+tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status, mcp__plugin_radio-analyst_ms-inspect__ms_field_list, mcp__plugin_radio-analyst_ms-inspect__ms_spectral_window_list, mcp__plugin_radio-analyst_ms-inspect__ms_refant, mcp__plugin_radio-analyst_ms-inspect__ms_verify_priorcals, mcp__plugin_radio-analyst_ms-inspect__ms_residual_stats, mcp__plugin_radio-analyst_ms-modify__ms_gaincal, mcp__plugin_radio-analyst_ms-inspect__ms_calsol_stats, mcp__plugin_radio-analyst_ms-inspect__ms_plot_caltable_library, mcp__plugin_radio-analyst_ms-modify__ms_applycal, mcp__plugin_radio-analyst_ms-modify__ms_tclean, mcp__plugin_radio-analyst_ms-inspect__ms_image_stats, mcp__plugin_radio-analyst_ms-create__ms_reduction_log, Bash, Read, Skill
 ---
 
 You run one stage of a reduction for the orchestrator. Nothing else.

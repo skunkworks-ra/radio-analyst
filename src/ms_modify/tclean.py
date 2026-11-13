@@ -103,8 +103,9 @@ def _build_script(
     scales: list[int] | None = None,
 ) -> str:
     # Same rule the execute=True path uses at the bottom of run(): mtmfs with
-    # nterms writes Taylor terms, so there is no plain .image to record.
-    is_mtmfs = deconvolver == "mtmfs" and nterms is not None
+    # nterms > 1 (or default None -> 2) writes Taylor terms, so there is no
+    # plain .image to record. nterms == 1 writes a plain .image.
+    is_mtmfs = deconvolver == "mtmfs" and (nterms is None or nterms > 1)
     optional_lines = ""
     if spw:
         optional_lines += f"    spw          = {spw!r},\n"
@@ -155,7 +156,7 @@ _PRODUCT_SUFFIXES = (
     ".image", ".residual", ".psf", ".pb", ".model", ".sumwt", ".mask",
     ".pbcor", ".weight", ".gridwt", ".workdirectory",
 )
-for p in glob.glob(imagename + ".*"):
+for p in glob.glob(glob.escape(imagename) + ".*"):
     rest = p[len(imagename):]
     is_product = any(
         rest == s or rest[: len(s) + 1] == s + "." for s in _PRODUCT_SUFFIXES
@@ -391,6 +392,10 @@ def run(
             ms_path=ms_path,
         )
 
+    from ms_modify.pathguard import validate_output_caltable
+
+    imagename = str(validate_output_caltable(imagename, str(workdir_path), ms_str))
+
     # Verify CORRECTED_DATA column exists.
     # Open failure (casatools not installed, table locked) is non-fatal — add a warning.
     # Missing column is always fatal — tclean on uncalibrated data is a silent science error.
@@ -526,9 +531,9 @@ def run(
             ms_path=ms_path,
         ) from exc
 
-    # mtmfs (nterms>1) writes Taylor-term images: .image.tt0, .image.tt1, ...
-    # There is no plain .image in that case, so check the tt0 product.
-    if deconvolver == "mtmfs" and nterms is not None:
+    # mtmfs (nterms > 1, including CASA default None -> 2) writes Taylor-term
+    # images: .image.tt0, .image.tt1, ...; nterms == 1 writes plain .image.
+    if deconvolver == "mtmfs" and (nterms is None or nterms > 1):
         image_path = imagename + ".image.tt0"
     else:
         image_path = imagename + ".image"

@@ -84,8 +84,9 @@ Every "→ run" below: run the script detached and poll it, as the skill's
 
 8. `ms_field_list(calibrators.ms)`: read bp_field's `resolved_source` and warnings,
    and pick `uvrange` by 10-precal-workflow.md Step 5, "UV limits on the bandpass
-   calibrator". Then `ms_initial_bandpass(calibrators.ms, bp_field, ref_ant, workdir,
-   priorcals=<priorcals_list from step 5>, uvrange=<from that table>, execute=False)` → run.
+   calibrator". Then `ms_initial_bandpass(calibrators.ms, bp_field,
+   applycal_field=bp_field, ref_ant=ref_ant, workdir=workdir,
+   priorcals=<priorcals_list from step 5>, uvrange=<from that table>, execute=False)` -> run.
 
 9. `ms_verify_model(calibrators.ms, field=bp_field)` — if the model is the
    1 Jy default, skip the rflag below. Otherwise

@@ -52,9 +52,10 @@ def test_tool_call_leaves_only_logs_dir_and_writes_event(workdir, tmp_path):
     assert len(events) == 1
     assert events[0]["status"] == "ok"
     assert events[0]["tool"].endswith("import_casa")
-    assert os.path.dirname(events[0]["casa_log"]) == str(workdir / "logs")
-    # import_casa runs no casatasks task, so its log is deleted.
-    assert not os.path.exists(events[0]["casa_log"])
+    # import_casa runs no casatasks task and logs no SEVERE, so its log is unlinked
+    # and events.jsonl records casa_log=None (no dangling path).
+    assert events[0]["casa_log"] is None
+    assert list((workdir / "logs").glob("casa-*.log")) == []
 
 
 def test_pool_call_leaves_only_logs_dir(workdir):
@@ -140,8 +141,22 @@ def test_each_call_gets_its_own_casa_log(workdir):
 def test_ok_call_without_a_task_drops_its_log(workdir):
     result = asyncio.run(run_tool(dt.write_casa_log, "/data/a.ms", [_MEASURES]))
     assert not result.isError
-    path = _events(workdir)[0]["casa_log"]
-    assert path and not os.path.exists(path)
+    assert _events(workdir)[0]["casa_log"] is None
+    assert list((workdir / "logs").glob("casa-*.log")) == []
+
+
+def test_casatools_severe_without_task_marks_suspect_and_retains_log(workdir):
+    """CR-10: casatools SEVERE line with zero Begin Task markers -> SUSPECT + log kept."""
+    ctool_sev = "t\tSEVERE\tmsmetadata::::\tException: subtable SPECTRAL_WINDOW corrupt"
+    result = asyncio.run(run_tool(dt.write_casa_log, "/data/a.ms", [_MEASURES, ctool_sev]))
+    env = result.structuredContent
+    assert not result.isError
+    assert env["completeness_summary"] == "SUSPECT"
+    assert env["casa_severe"]["lines"] == [ctool_sev]
+    assert any("CASA logged 1 SEVERE line(s); see casa_severe" in w for w in env["warnings"])
+    logged_path = _events(workdir)[0]["casa_log"]
+    assert logged_path is not None and os.path.exists(logged_path)
+    assert env["casa_severe"]["casa_log"] == logged_path
 
 
 def test_ok_call_with_a_task_keeps_its_log(workdir):

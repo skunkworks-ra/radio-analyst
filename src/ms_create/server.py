@@ -21,6 +21,9 @@ from ms_inspect.util.logs import init_server_logging
 # ---------------------------------------------------------------------------
 # Server initialisation
 # ---------------------------------------------------------------------------
+_mcp_host = os.environ.get("RADIO_MCP_HOST", "127.0.0.1")
+_mcp_port = int(os.environ.get("RADIO_MCP_PORT", "8002"))
+
 mcp = FastMCP(
     "radio_ms_create",
     instructions=(
@@ -29,6 +32,8 @@ mcp = FastMCP(
         f"{CASA_LOG_NOTE}"
         f"Version: {__version__}"
     ),
+    host=_mcp_host,
+    port=_mcp_port,
 )
 
 
@@ -302,10 +307,12 @@ async def ms_import_asdm(params: ImportASDMInput) -> ToolResult:
 def main() -> None:
     init_server_logging("ms-create")
     transport = os.environ.get("RADIO_MCP_TRANSPORT", "stdio").lower()
-    port = int(os.environ.get("RADIO_MCP_PORT", "8002"))
 
     if transport == "http":
-        mcp.run(transport="streamable-http", host="127.0.0.1", port=port)
+        if hasattr(mcp, "settings"):
+            mcp.settings.host = os.environ.get("RADIO_MCP_HOST", _mcp_host)
+            mcp.settings.port = int(os.environ.get("RADIO_MCP_PORT", str(_mcp_port)))
+        mcp.run(transport="streamable-http")
     else:
         mcp.run(transport="stdio")
 

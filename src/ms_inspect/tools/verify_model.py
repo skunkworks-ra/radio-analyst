@@ -54,6 +54,18 @@ def _field_id_map(ms_str: str) -> dict[int, str]:
     return {i: str(n) for i, n in enumerate(names)}
 
 
+def _ddid_spw_map(ms_str: str) -> dict[int, int]:
+    dd_path = Path(ms_str) / "DATA_DESCRIPTION"
+    if not dd_path.exists():
+        return {}
+    try:
+        with open_table(str(dd_path)) as tb:
+            spws = list(tb.getcol("SPECTRAL_WINDOW_ID"))
+        return {i: int(s) for i, s in enumerate(spws)}
+    except Exception:
+        return {}
+
+
 def _model_metrics(
     data: np.ndarray,
     flag: np.ndarray,
@@ -62,7 +74,7 @@ def _model_metrics(
 ) -> dict:
     """Median parallel/cross-hand MODEL amplitude and parallel phase RMS.
 
-    MODEL is noise-free, so no per-channel vector averaging is needed — the
+    MODEL is noise-free, so no per-channel vector averaging is needed -- the
     metrics are taken over all unflagged samples on the selected correlations.
     """
     return _metrics_from(*_collect(data, flag, par_idx, cross_idx))
@@ -71,14 +83,18 @@ def _model_metrics(
 def _collect(
     data: np.ndarray, flag: np.ndarray, par_idx: list[int], cross_idx: list[int]
 ) -> tuple[np.ndarray, np.ndarray | None]:
-    """Unflagged non-zero parallel-hand samples, and cross-hand samples
-    (None when this data description has no cross-hand correlations)."""
+    """Unflagged non-zero parallel-hand samples, and unflagged cross-hand samples
+    (None when this data description has no cross-hand correlations).
+
+    Zero cross-hand samples are intentionally retained so partial-band or
+    full-band Stokes-I clobbers (RL = LR = 0) are visible in the median and
+    per-DDID checks rather than stripped away.
+    """
     pvis = data[par_idx, :, :][~flag[par_idx, :, :]]
     pvis = pvis[np.abs(pvis) > 0]
     cvis = None
     if cross_idx:
         cvis = data[cross_idx, :, :][~flag[cross_idx, :, :]]
-        cvis = cvis[np.abs(cvis) > 0]
     return pvis, cvis
 
 
@@ -93,9 +109,9 @@ def _metrics_from(pvis: np.ndarray, cvis: np.ndarray | None) -> dict:
 
     cross_amp: float | None = None
     if cvis is not None:
-        # Median over ALL cross-hand samples (including exact zeros would bias
-        # low); a Stokes-I model has no non-zero cross-hand samples at all, so
-        # an empty cvis is itself the "no polarization" signal → 0.0.
+        # Median over ALL unflagged cross-hand samples (including exact zeros so
+        # partial-band clobbering is not masked). If cross_idx exists and all
+        # cross-hand samples were flagged, cvis is empty -> 0.0.
         cross_amp = float(np.median(np.abs(cvis))) if cvis.size else 0.0
 
     return {
@@ -116,6 +132,8 @@ def classify(
     plausible_min_jy: float,
     plausible_max_jy: float,
     crosshand_ratio_thresh: float,
+    unpolarized_spws: list[int] | None = None,
+    n_spws_checked: int = 0,
 ) -> tuple[str, float | None, list[str]]:
     """Pure classification of one field's MODEL metrics.
 
@@ -125,7 +143,7 @@ def classify(
     reasons: list[str] = []
 
     if abs(par_amp - 1.0) <= default_amp_tol and par_phase_rms <= default_phase_rms_deg:
-        reasons.append("pinned at MODEL=1 Jy default (amp≈1, flat phase) — model likely unwritten")
+        reasons.append("pinned at MODEL=1 Jy default (amp~1, flat phase) -- model likely unwritten")
     if par_amp < plausible_min_jy or par_amp > plausible_max_jy:
         reasons.append(
             f"par_amp {par_amp} Jy outside plausible band [{plausible_min_jy}, {plausible_max_jy}]"
@@ -135,13 +153,23 @@ def classify(
     if cross_amp is not None and par_amp > 0:
         ratio = round(cross_amp / par_amp, 6)
     if is_polcal:
+        bad_spws = sorted(set(unpolarized_spws or []))
         if ratio is None:
             reasons.append("pol-cal field but MS has no cross-hand correlations")
         elif ratio < crosshand_ratio_thresh:
+            spw_detail = (
+                f" (unpolarized SpW(s): {bad_spws} of {n_spws_checked} checked)" if bad_spws else ""
+            )
             reasons.append(
                 f"pol-cal field but cross/parallel ratio {ratio} < "
-                f"{crosshand_ratio_thresh} — no polarization in MODEL "
+                f"{crosshand_ratio_thresh}{spw_detail} -- no polarization in MODEL "
                 "(Stokes-I only, or clobbered by a later plain setjy)"
+            )
+        elif bad_spws:
+            reasons.append(
+                f"pol-cal field has cross/parallel ratio < {crosshand_ratio_thresh} in "
+                f"SpW(s) {bad_spws} ({len(bad_spws)}/{n_spws_checked or len(bad_spws)} checked) -- "
+                "partial-band polarization model clobber"
             )
 
     return ("SUSPECT" if reasons else "COMPLETE", ratio, reasons)
@@ -213,8 +241,9 @@ def run(
     for codes in corr_codes_by_ddid(ms_str):
         par_idx = _indices(codes, _PARALLEL_CODES) or list(range(len(codes)))
         corr_idx.append((par_idx, _indices(codes, _CROSSHAND_CODES)))
+    ddid_to_spw = _ddid_spw_map(ms_str)
     casa_calls.append(
-        f"tb.open(POLARIZATION, DATA_DESCRIPTION) → CORR_TYPE per DDID, (par, cross)={corr_idx}"
+        f"tb.open(POLARIZATION, DATA_DESCRIPTION) -> CORR_TYPE per DDID, (par, cross)={corr_idx}"
     )
 
     per_field: list[dict] = []
@@ -242,6 +271,8 @@ def run(
             # DDIDs with different shapes cannot share one getcol array.
             p_parts: list[np.ndarray] = []
             c_parts: list[np.ndarray] = []
+            unpolarized_spws: list[int] = []
+            n_spws_checked = 0
             for dd in dd_ids:
                 sub = tb.query(f"FIELD_ID == {fid} && DATA_DESC_ID == {dd}")
                 try:
@@ -253,8 +284,15 @@ def run(
                 p_parts.append(pv)
                 if cv is not None:
                     c_parts.append(cv)
+                dd_m = _metrics_from(pv, cv)
+                if dd_m["n_par"] > 0 and dd_m["par_amp"] and dd_m["par_amp"] > 0:
+                    n_spws_checked += 1
+                    if dd_m["cross_amp"] is not None:
+                        dd_ratio = dd_m["cross_amp"] / dd_m["par_amp"]
+                        if dd_ratio < crosshand_ratio_thresh:
+                            unpolarized_spws.append(ddid_to_spw.get(dd, dd))
             casa_calls.append(
-                f"tb.query(FIELD_ID=={fid} && DATA_DESC_ID in {dd_ids}) → "
+                f"tb.query(FIELD_ID=={fid} && DATA_DESC_ID in {dd_ids}) -> "
                 f"MODEL_DATA, FLAG (rowincr={step})"
             )
 
@@ -283,6 +321,7 @@ def run(
                 continue
 
             par_amp = m["par_amp"]
+            bad_spws = sorted(set(unpolarized_spws))
             status_flag, ratio, reasons = classify(
                 par_amp,
                 m["par_phase_rms"],
@@ -293,7 +332,15 @@ def run(
                 plausible_min_jy,
                 plausible_max_jy,
                 crosshand_ratio_thresh,
+                unpolarized_spws=bad_spws,
+                n_spws_checked=n_spws_checked,
             )
+            if is_polcal and bad_spws:
+                warnings.append(
+                    f"Field '{fname}' (polcal_fields) has cross/parallel ratio < "
+                    f"{crosshand_ratio_thresh} in SpW(s) {bad_spws} "
+                    f"({len(bad_spws)}/{n_spws_checked} checked)."
+                )
             status_note = "; ".join(reasons) if reasons else "model written and sensible"
             per_field.append(
                 {
@@ -309,6 +356,11 @@ def run(
                     ),
                     "crosshand_ratio": fmt_field(
                         ratio, flag="UNAVAILABLE" if ratio is None else "COMPLETE"
+                    ),
+                    "n_spws_checked": fmt_field(n_spws_checked),
+                    "unpolarized_spws": fmt_field(
+                        bad_spws if m["cross_amp"] is not None else None,
+                        flag="UNAVAILABLE" if m["cross_amp"] is None else "COMPLETE",
                     ),
                     "status": fmt_field(status_flag, flag=status_flag, note=status_note),
                 }

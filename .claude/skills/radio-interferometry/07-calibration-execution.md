@@ -406,22 +406,23 @@ model is the 1 Jy default); fluxscale rescales them in Step 6.
 **Call:**
 ```
 ms_gaincal(
-    ms_path     = {VIS},
-    field       = '{FLUX_FIELD},{PHASE_FIELD}',  # all calibrators in one call
-    spw         = {WIDE_CHANNELS},
-    caltable    = {WORKDIR}/gain.G,
-    gaintype    = 'G',
-    calmode     = 'ap',
-    solint      = 'inf',
-    solnorm     = False,
-    refant      = {REFANT},
-    minsnr      = 3.0,
-    minblperant = {MINBLPERANT},
-    gaintable   = {PRIORCALS} + [delay.K, bandpass.B],
-    interp      = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest'],
-    parang      = True,
-    workdir     = {WORKDIR},
-    execute     = False,
+    ms_path       = {VIS},
+    field         = '{FLUX_FIELD},{PHASE_FIELD}',  # all calibrators in one call
+    target_fields = '{PHASE_FIELD}',               # transfer fields when VIS is calibrators.ms
+    spw           = {WIDE_CHANNELS},
+    caltable      = {WORKDIR}/gain.G,
+    gaintype      = 'G',
+    calmode       = 'ap',
+    solint        = 'inf',
+    solnorm       = False,
+    refant        = {REFANT},
+    minsnr        = 3.0,
+    minblperant   = {MINBLPERANT},
+    gaintable     = {PRIORCALS} + [delay.K, bandpass.B],
+    interp        = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest'],
+    parang        = True,
+    workdir       = {WORKDIR},
+    execute       = False,
 )
 ```
 

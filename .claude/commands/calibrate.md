@@ -52,7 +52,7 @@ even if an earlier stage denied one of them: call them.
    - `ms_spectral_window_list(calibrators.ms)` → suggested.center_channels_string,
      suggested.wide_channels_string, all_spw_string
    - `ms_antenna_list(calibrators.ms)` → recommended_minblperant
-   - `ms_verify_priorcals(workdir)` → priorcals_list
+   - `ms_verify_priorcals(calibrators.ms, workdir)` -> priorcals_list
    - `ms_refant(calibrators.ms, field=<each calibrator>)` → refant healthy on all of them
 
 3. Initial phase (G0): `ms_gaincal(…, gaintype='G', calmode='p', solint='int',

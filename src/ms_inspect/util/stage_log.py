@@ -49,16 +49,15 @@ def _casa_task_log(path, offset=0):
     """(tasks, severe, end) read from a CASA log, from byte ``offset`` on.
 
     ``tasks`` are the names in the casatasks '##### Begin Task: <name>' lines,
-    in order. ``severe`` are the SEVERE lines logged while a task was running,
-    between its Begin and End markers. A SEVERE line outside every task, such
-    as the casaconfig measures_update notice at import, is not counted. A task
-    that raises posts no End marker, so every later line counts as inside it.
-    ``end`` is the byte offset just past what was read. A missing or unreadable
-    log gives two empty lists and ``offset``.
+    in order. ``severe`` are all SEVERE lines logged by casatasks or casatools
+    (both inside and outside task Begin/End markers), excluding only the benign
+    casaconfig ``measures_update`` notice emitted at import. ``end`` is the byte
+    offset just past what was read. A missing or unreadable log gives two empty
+    lists and ``offset``.
     """
     import re
 
-    tasks, severe, depth = [], [], 0
+    tasks, severe = [], []
     try:
         with open(path, "rb") as _fh:
             _fh.seek(offset)
@@ -70,10 +69,11 @@ def _casa_task_log(path, offset=0):
         marker = re.search(r"##### (Begin|End) Task: (\\S+)", line)
         if marker and marker.group(1) == "Begin":
             tasks.append(marker.group(2))
-            depth += 1
         elif marker:
-            depth = max(depth - 1, 0)
-        elif depth and "\\tSEVERE\\t" in line:
+            continue
+        elif "\\tSEVERE\\t" in line and not (
+            "measures_update:" in line or "not maintained by casaconfig" in line
+        ):
             severe.append(line)
     return tasks, severe, offset + len(data)
 

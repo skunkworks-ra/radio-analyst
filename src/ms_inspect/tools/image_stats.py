@@ -33,6 +33,7 @@ no MS access is performed.
 
 from __future__ import annotations
 
+import math
 from itertools import product
 from pathlib import Path
 
@@ -43,6 +44,125 @@ from ms_inspect.util.formatting import response_envelope
 TOOL_NAME = "ms_image_stats"
 
 _MAD_TO_SIGMA = 1.4826
+
+# Signed Stokes parameters where a negative extremum is a real polarized signal
+# (e.g. Q = -50 mJy/beam) rather than an imaging bowling artifact.
+_SIGNED_STOKES = frozenset({"Q", "U", "V", "RL", "LR", "XY", "YX"})
+
+_ARCSEC_PER_UNIT: dict[str, float] = {
+    "arcsec": 1.0,
+    "arcsecs": 1.0,
+    "arcsecond": 1.0,
+    "arcseconds": 1.0,
+    '"': 1.0,
+    "''": 1.0,
+    "arcmin": 60.0,
+    "arcmins": 60.0,
+    "arcminute": 60.0,
+    "arcminutes": 60.0,
+    "'": 60.0,
+    "deg": 3600.0,
+    "degs": 3600.0,
+    "degree": 3600.0,
+    "degrees": 3600.0,
+    "rad": 180.0 * 3600.0 / math.pi,
+    "rads": 180.0 * 3600.0 / math.pi,
+    "radian": 180.0 * 3600.0 / math.pi,
+    "radians": 180.0 * 3600.0 / math.pi,
+    "mas": 1e-3,
+    "marcsec": 1e-3,
+    "uas": 1e-6,
+    "uarcsec": 1e-6,
+}
+
+_DEG_PER_UNIT: dict[str, float] = {
+    "deg": 1.0,
+    "degs": 1.0,
+    "degree": 1.0,
+    "degrees": 1.0,
+    "rad": 180.0 / math.pi,
+    "rads": 180.0 / math.pi,
+    "radian": 180.0 / math.pi,
+    "radians": 180.0 / math.pi,
+    "arcmin": 1.0 / 60.0,
+    "arcmins": 1.0 / 60.0,
+    "arcminute": 1.0 / 60.0,
+    "arcminutes": 1.0 / 60.0,
+    "'": 1.0 / 60.0,
+    "arcsec": 1.0 / 3600.0,
+    "arcsecs": 1.0 / 3600.0,
+    "arcsecond": 1.0 / 3600.0,
+    "arcseconds": 1.0 / 3600.0,
+    '"': 1.0 / 3600.0,
+    "''": 1.0 / 3600.0,
+}
+
+
+def _select_peak(max_v: float, min_v: float | None, stokes: str | None) -> float:
+    """Return signed extremum for polarized Stokes (Q, U, V, cross-hands), else max_v."""
+    if stokes in _SIGNED_STOKES and min_v is not None and math.isfinite(min_v):
+        return float(min_v) if abs(min_v) > abs(max_v) else float(max_v)
+    return float(max_v)
+
+
+def _single_plane_stokes(ia) -> str | None:
+    """Return the Stokes label of a single-plane image if determinable, else None."""
+    try:
+        csys = ia.coordsys()
+        sn = csys.stokes()
+        if sn and len(sn) == 1 and isinstance(sn[0], str):
+            return sn[0]
+    except Exception:
+        return None
+    return None
+
+
+def _broadcast_pb(pb_pix, target_shape: tuple[int, ...]):
+    """Broadcast pb_pix to target_shape when spatial axes match and extra axes are 1 or equal."""
+    import numpy as np
+
+    if pb_pix.shape == target_shape:
+        return pb_pix
+    if (
+        pb_pix.ndim == len(target_shape)
+        and pb_pix.shape[:2] == target_shape[:2]
+        and all(p in (1, t) for p, t in zip(pb_pix.shape[2:], target_shape[2:], strict=True))
+    ):
+        return np.broadcast_to(pb_pix, target_shape)
+    return None
+
+
+def _quantity_to_arcsec(q: dict) -> float:
+    """Convert a CASA angular quantity dict {'value': ..., 'unit': ...} to arcsec."""
+    val = float(q["value"])
+    unit = str(q.get("unit", "arcsec")).strip()
+    if not unit:
+        return val
+    scale = _ARCSEC_PER_UNIT.get(unit)
+    if scale is None:
+        scale = _ARCSEC_PER_UNIT.get(unit.lower())
+    if scale is not None:
+        return val * scale
+    import astropy.units as u
+
+    return float((val * u.Unit(unit)).to_value(u.arcsec))
+
+
+def _quantity_to_deg(q: dict) -> float:
+    """Convert a CASA angular quantity dict {'value': ..., 'unit': ...} to deg."""
+    val = float(q["value"])
+    unit = str(q.get("unit", "deg")).strip()
+    if not unit:
+        return val
+    scale = _DEG_PER_UNIT.get(unit)
+    if scale is None:
+        scale = _DEG_PER_UNIT.get(unit.lower())
+    if scale is not None:
+        return val * scale
+    import astropy.units as u
+
+    return float((val * u.Unit(unit)).to_value(u.deg))
+
 
 # Peak-to-noise (dynamic range) label boundaries. These are descriptive
 # thresholds, not a go/no-go: what peak-to-noise is sufficient depends on the
@@ -120,8 +240,20 @@ def _find_pixel_axis(csys, kind: str) -> int | None:
     return int(pix[0])
 
 
-def _per_plane_stats(ia, casa_calls: list[str], warnings: list[str]) -> list[dict] | None:
+def _per_plane_stats(
+    ia,
+    casa_calls: list[str],
+    warnings: list[str],
+    image_path: str = "",
+    pb_level: float = 0.1,
+) -> list[dict] | None:
     """Per-(Stokes, channel) rms/peak/DR for a multi-plane image.
+
+    When a sibling .pb image exists on disk with broadcastable shape (e.g.
+    [nx, ny, 1, nchan] or [nx, ny, nstokes, nchan]), per-plane statistics are
+    restricted to pixels where pb >= pb_level so primary-beam division on
+    .image.pbcor cubes does not corrupt edge noise or peaks. Falls back to
+    ia.statistics(axes=[0, 1]) when no sibling .pb exists.
 
     Returns None for a single-plane image (the scalar path handles it) or when
     the image shape / statistics cannot be resolved.
@@ -156,6 +288,62 @@ def _per_plane_stats(ia, casa_calls: list[str], warnings: list[str]) -> list[dic
     except Exception as exc:
         warnings.append(f"Could not read coordinate system for plane labels: {exc}")
 
+    import numpy as np
+
+    labels = _plane_labels(
+        remaining_axes, remaining_shape, stokes_pix_axis, spec_pix_axis, stokes_names
+    )
+
+    # Prefer PB-restricted per-plane statistics when a sibling .pb exists.
+    if image_path:
+        _, pb_path = _siblings(image_path)
+        if pb_path.exists():
+            try:
+                with open_image(str(pb_path)) as ia_pb:
+                    pb_pix = np.asarray(ia_pb.getchunk(), dtype=float)
+                img_pix = np.asarray(ia.getchunk(), dtype=float)
+                pb_bcast = _broadcast_pb(pb_pix, tuple(shape))
+                if pb_bcast is not None and img_pix.shape == tuple(shape):
+                    casa_calls.append(
+                        f"ia.getchunk() on {Path(image_path).name} where "
+                        f"{pb_path.name} >= {pb_level} [per-plane]"
+                    )
+                    planes_pb: list[dict] = []
+                    for lab, combo in zip(
+                        labels, product(*[range(n) for n in remaining_shape]), strict=True
+                    ):
+                        sl = (slice(None), slice(None), *combo)
+                        plane_img = img_pix[sl]
+                        plane_pb = pb_bcast[sl]
+                        vals = plane_img[(plane_pb >= pb_level) & np.isfinite(plane_img)]
+                        if vals.size > 0:
+                            med_v = float(np.median(vals))
+                            mad_v = float(np.median(np.abs(vals - med_v)))
+                            rms_v = _MAD_TO_SIGMA * mad_v
+                            max_v = float(np.max(vals))
+                            min_v = float(np.min(vals))
+                            peak_v = _select_peak(max_v, min_v, lab.get("stokes"))
+                            dr = abs(peak_v) / rms_v if rms_v > 0 else None
+                        else:
+                            rms_v = 0.0
+                            peak_v = 0.0
+                            dr = None
+                        entry = dict(lab)
+                        entry["rms_jy"] = round(rms_v, 9)
+                        entry["peak_jy"] = round(peak_v, 9)
+                        entry["dynamic_range"] = round(dr, 1) if dr is not None else None
+                        entry["detection"] = _classify_detection(dr)
+                        planes_pb.append(entry)
+                    return planes_pb
+                warnings.append(
+                    f"Sibling PB shape {pb_pix.shape} incompatible with image shape "
+                    f"{tuple(shape)}; falling back to unmasked per-plane statistics."
+                )
+            except Exception as exc:
+                warnings.append(
+                    f"Could not apply sibling PB mask ({pb_path.name}) to per-plane stats: {exc}"
+                )
+
     try:
         sr = ia.statistics(axes=[0, 1], robust=True)
         ss = ia.statistics(axes=[0, 1])
@@ -164,24 +352,26 @@ def _per_plane_stats(ia, casa_calls: list[str], warnings: list[str]) -> list[dic
         warnings.append(f"Per-plane statistics failed: {exc}")
         return None
 
-    import numpy as np
-
     mad = np.asarray(sr.get("medabsdevmed"), dtype=float).reshape(-1)
     mx = np.asarray(ss.get("max"), dtype=float).reshape(-1)
-    if mad.size != n_planes or mx.size != n_planes:
+    mn_raw = ss.get("min")
+    mn = (
+        np.asarray(mn_raw, dtype=float).reshape(-1)
+        if mn_raw is not None
+        else np.full(n_planes, math.nan)
+    )
+    if mad.size != n_planes or mx.size != n_planes or mn.size != n_planes:
         warnings.append(
             f"Per-plane statistics array size ({mad.size}/{mx.size}) does not match "
             f"plane count ({n_planes}); skipping per-plane breakdown."
         )
         return None
 
-    labels = _plane_labels(
-        remaining_axes, remaining_shape, stokes_pix_axis, spec_pix_axis, stokes_names
-    )
     planes: list[dict] = []
-    for lab, mad_v, max_v in zip(labels, mad, mx, strict=True):
+    for lab, mad_v, max_v, min_v in zip(labels, mad, mx, mn, strict=True):
         rms_v = _MAD_TO_SIGMA * float(mad_v)
-        peak_v = float(max_v)
+        min_opt = float(min_v) if math.isfinite(min_v) else None
+        peak_v = _select_peak(float(max_v), min_opt, lab.get("stokes"))
         dr = abs(peak_v) / rms_v if rms_v > 0 else None
         entry = dict(lab)
         entry["rms_jy"] = round(rms_v, 9)
@@ -195,18 +385,18 @@ def _per_plane_stats(ia, casa_calls: list[str], warnings: list[str]) -> list[dic
 def _extract_beam(beam_info: dict) -> tuple[float | None, float | None, float | None]:
     """Return (major_arcsec, minor_arcsec, pa_deg) from ia.restoringbeam() output."""
     if "major" in beam_info:
-        major = float(beam_info["major"]["value"])
-        minor = float(beam_info["minor"]["value"])
-        pa = float(beam_info["positionangle"]["value"])
+        major = _quantity_to_arcsec(beam_info["major"])
+        minor = _quantity_to_arcsec(beam_info["minor"])
+        pa = _quantity_to_deg(beam_info["positionangle"])
         return major, minor, pa
 
     # Multi-beam image (cube or mtmfs): use channel 0 as representative.
     try:
         first = beam_info["beams"]["*0"]["*0"]
         return (
-            float(first["major"]["value"]),
-            float(first["minor"]["value"]),
-            float(first["positionangle"]["value"]),
+            _quantity_to_arcsec(first["major"]),
+            _quantity_to_arcsec(first["minor"]),
+            _quantity_to_deg(first["positionangle"]),
         )
     except (KeyError, TypeError):
         return None, None, None
@@ -245,9 +435,10 @@ def _residual_rms(
     with open_image(str(residual)) as ia_res:
         res_pix = np.asarray(ia_res.getchunk(), dtype=float)
     casa_calls.append(f"ia.getchunk() on {residual.name} where {pb.name} >= {pb_level}")
-    if pb_pix.shape != res_pix.shape:
+    pb_bcast = _broadcast_pb(pb_pix, res_pix.shape)
+    if pb_bcast is None:
         return None, region, f"shape mismatch: pb {pb_pix.shape}, residual {res_pix.shape}"
-    vals = res_pix[(pb_pix >= pb_level) & np.isfinite(res_pix)]
+    vals = res_pix[(pb_bcast >= pb_level) & np.isfinite(res_pix)]
     region["n_pixels"] = int(vals.size)
     if vals.size == 0:
         return None, region, f"no pixels with pb >= {pb_level}"
@@ -338,13 +529,19 @@ def run(
         else:
             rms_val = _MAD_TO_SIGMA * float(mad_arr[0])
 
-        # Peak: use simple statistics for max pixel value.
+        # Peak: use simple statistics for max/min pixel value.
         stats_simple = ia.statistics()
         casa_calls.append(f"ia.statistics() on {Path(image_path).name}")
-        peak_val = float(stats_simple["max"][0])
+        max_val = float(stats_simple["max"][0])
+        min_arr = stats_simple.get("min")
+        min_val = float(min_arr[0]) if min_arr is not None and len(min_arr) > 0 else None
 
         # Per-plane breakdown for cubes / multi-Stokes images (None otherwise).
-        planes = _per_plane_stats(ia, casa_calls, warnings)
+        planes = _per_plane_stats(
+            ia, casa_calls, warnings, image_path=image_path, pb_level=pb_level
+        )
+        single_stokes = _single_plane_stokes(ia)
+        peak_val = _select_peak(max_val, min_val, single_stokes)
 
         # Beam from image header.
         try:

@@ -357,9 +357,9 @@ Quality gates:
 | `beam_major_arcsec` | Close to `lambda/max_baseline_m * (180*3600/pi)` | Large deviation: uv coverage gaps or flagging holes |
 | `peak_jy` | Positive, above threshold | Negative peak > rms: clean diverged; reduce gain or niter |
 
-If `residual_rms_jy` is > 3× the radiometer estimate, run `ms_residual_stats`
-on the CORRECTED column before re-imaging — the problem is likely in the
-calibration, not the imaging parameters.
+If `residual_rms_jy` is > 3× the radiometer estimate, escalate rather than
+re-imaging: the problem is likely in the calibration or unflagged target RFI,
+not in the imaging parameters.
 
 ### Reading `detection`
 
@@ -445,6 +445,7 @@ ms_tclean(
     robust      = 0.5,
     niter       = 50000,
     threshold   = {threshold},
+    savemodel   = 'none',            # preserve Stokes I model in MODEL_DATA
     workdir     = {WORKDIR},
     execute     = False,
 )

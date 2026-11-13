@@ -37,6 +37,26 @@ def _is_delay_type(table_type: str) -> bool:
     return table_type.startswith("K")
 
 
+def _is_kcross_type(table_type: str) -> bool:
+    """True for cross-hand delay tables (KCROSS), where corr 0 holds the R-L/X-Y
+    delay and corr 1 is CASA's structural 0.0 placeholder."""
+    return "KCROSS" in table_type.upper()
+
+
+def _signed_max_abs_per_ant(active_delay: np.ndarray) -> list[float | None]:
+    """Per-antenna signed delay with largest |delay| across (spw, field, active_corr)."""
+    out: list[float | None] = []
+    for i in range(active_delay.shape[0]):
+        vals = active_delay[i]
+        vals = vals[np.isfinite(vals)]
+        if vals.size == 0:
+            out.append(None)
+        else:
+            best = float(vals[int(np.argmax(np.abs(vals)))])
+            out.append(round(best, 3))
+    return out
+
+
 def _is_freq_dependent_type(table_type: str) -> bool:
     """True for tables with a per-channel solution axis (B, Df, Xf, Bf)."""
     return table_type == "B" or table_type.startswith(("Df", "Xf", "Bf"))
@@ -622,22 +642,25 @@ def run(
     n_antennas_lost = len(antennas_lost)
 
     delay_rms_ns = None
+    active_delay: np.ndarray | None = None
     if _is_delay_type(table_type) and delay_arr is not None:
-        # RMS across antennas per (spw, field) → [n_spw, n_field]
-        delay_rms_ns = np.sqrt(np.nanmean(delay_arr**2, axis=(0, 3))).tolist()  # [n_spw, n_field]
+        # For KCROSS tables, corr 0 holds the cross-hand delay and corr 1 is
+        # CASA's structural 0.0 placeholder -- exclude corr 1 from summaries.
+        active_delay = delay_arr[..., :1] if _is_kcross_type(table_type) else delay_arr
+        # RMS across antennas and active correlations per (spw, field) -> [n_spw, n_field]
+        delay_rms_ns = np.sqrt(np.nanmean(active_delay**2, axis=(0, 3))).tolist()
 
     # Table-wide scalars, so a check copies one number instead of reducing an
     # array by hand. amp_median is over every unflagged solution, not over the
-    # per-antenna means. delay_abs_max_ns is the largest |delay|: a KCROSS
-    # table holds its one cross-hand delay on every antenna row in the first
-    # correlation and 0 in the second, so an RMS would understate it.
+    # per-antenna means. delay_abs_max_ns is the largest |delay| across active
+    # delay correlations.
     amp_median = None
     if _complex and amp_values:
         all_amp = np.concatenate(amp_values)
         amp_median = float(np.median(all_amp)) if all_amp.size else None
     delay_abs_max_ns = None
-    if delay_arr is not None and np.any(np.isfinite(delay_arr)):
-        delay_abs_max_ns = float(np.nanmax(np.abs(delay_arr)))
+    if active_delay is not None and np.any(np.isfinite(active_delay)):
+        delay_abs_max_ns = float(np.nanmax(np.abs(active_delay)))
 
     # --- build response data ---
     def _flag(arr: np.ndarray | None) -> str:
@@ -708,11 +731,15 @@ def run(
             data["delay_rms_ns"] = fmt_field(
                 delay_rms_ns,
                 flag="COMPLETE",
-                note=f"Shape [n_spw={n_spw}, n_field={n_field}]. RMS across antennas per SPW/field.",
+                note=(
+                    f"Shape [n_spw={n_spw}, n_field={n_field}]. RMS across antennas "
+                    "(and active correlations; corr 0 only for KCROSS) per SPW/field."
+                ),
             )
             data["delay_abs_max_ns"] = (
                 fmt_field(
-                    delay_abs_max_ns, note="Largest |delay| over every antenna/SPW/field/corr."
+                    delay_abs_max_ns,
+                    note="Largest |delay| over every antenna/SPW/field/active-corr (corr 0 only for KCROSS).",
                 )
                 if delay_abs_max_ns is not None
                 else fmt_field(None, flag="UNAVAILABLE", note="No unflagged delays.")
@@ -801,8 +828,10 @@ def run(
             "n_antennas_lost": n_antennas_lost,
             "antennas_lost": antennas_lost,
             "per_antenna_note": (
-                "Arrays are aligned to ant_names and averaged over spw/field. "
-                "Per-channel bandpass shape is omitted here — use ms_calsol_plot."
+                "Arrays are aligned to ant_names and averaged over spw/field, except "
+                "delay_ns which reports the signed largest-|delay| per antenna across "
+                "(spw, field, active_corr) (corr 0 only for KCROSS). "
+                "Per-channel bandpass shape is omitted here: use ms_calsol_plot."
             ),
             "flagged_frac": _per_ant(flagged_frac_arr),
             "snr_mean": _per_ant(snr_mean_arr),
@@ -826,9 +855,8 @@ def run(
                 compact_data["phase_rms_deg_per_corr"] = [
                     [round(float(x), 4) if np.isfinite(x) else None for x in row] for row in pc_ant
                 ]
-        if _is_delay_type(table_type) and delay_arr is not None:
-            da = np.nanmean(delay_arr, axis=(1, 2, 3))  # [n_ant]
-            compact_data["delay_ns"] = [round(float(x), 3) if np.isfinite(x) else None for x in da]
+        if _is_delay_type(table_type) and active_delay is not None:
+            compact_data["delay_ns"] = _signed_max_abs_per_ant(active_delay)
             compact_data["delay_rms_ns"] = delay_rms_ns
             compact_data["delay_abs_max_ns"] = (
                 round(delay_abs_max_ns, 4) if delay_abs_max_ns is not None else None

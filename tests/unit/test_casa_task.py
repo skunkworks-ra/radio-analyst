@@ -145,7 +145,7 @@ def test_script_written_with_params_and_caltable_archive(fake_spec, work):
 def test_in_place_task_records_input_ms_as_product(fake_spec, work):
     from ms_modify.casa_task import run
 
-    ms = _ms(work.parent / "a.ms")
+    ms = _ms(work / "a.ms")
     result = run("statwt", {"vis": str(ms), "fitorder": 1}, str(work))
     text = (work / "casa_task_statwt.py").read_text()
     assert f"_product = {str(ms)!r}" in text
@@ -273,7 +273,7 @@ def test_flagcmd_script_saves_flag_version_first(work, monkeypatch):
         "task_spec",
         lambda name: parse_task_xml(_write_xml(work.parent, name, 'name="inpmode" type="string"')),
     )
-    ms = _ms(work.parent / "a.ms")
+    ms = _ms(work / "a.ms")
     result = ct.run("flagcmd", {"vis": str(ms), "inpmode": "list"}, str(work))
     text = (work / "casa_task_flagcmd.py").read_text()
     assert text.index("_flagmanager(vis=") < text.index("_result = flagcmd(")
@@ -312,3 +312,70 @@ def test_import_task_refuses_an_existing_vis(work, monkeypatch):
     ms = _ms(work / "x.ms")
     with pytest.raises(ComputationError):
         ct.run("importuvfits", {"fitsfile": "x.uvfits", "vis": str(ms)}, str(work))
+
+
+@pytest.mark.parametrize(
+    "task,extra_params",
+    [
+        ("clearcal", {}),
+        ("delmod", {}),
+        ("statwt", {}),
+        ("uvsub", {}),
+        ("ft", {}),
+        ("flagmanager", {"mode": "restore", "versionname": "v1"}),
+        ("flagmanager", {"mode": "save", "versionname": "v1"}),
+        ("flagcmd", {"inpmode": "list"}),
+        ("fixvis", {}),
+        ("phaseshift", {"phasecenter": "J2000 00h00m00s +00d00m00s"}),
+    ],
+)
+def test_in_place_mutators_refuse_vis_outside_workdir(work, tmp_path, task, extra_params):
+    """CR-11c: Real schemas -- in-place mutators cannot touch an MS outside workdir."""
+    from ms_modify.casa_task import run
+
+    outside_ms = _ms(tmp_path / "archival.ms")
+    with pytest.raises(ComputationError, match="not strictly inside workdir"):
+        run(task, {"vis": str(outside_ms), **extra_params}, str(work))
+
+
+def test_read_only_tasks_allowed_on_vis_outside_workdir(work, tmp_path):
+    """Read-only tasks (visstat, listobs, flagmanager mode='list') may inspect archival MSs."""
+    from ms_modify.casa_task import run
+
+    outside_ms = _ms(tmp_path / "archival.ms")
+    r1 = run("visstat", {"vis": str(outside_ms), "axis": "amp"}, str(work))
+    assert r1["status"] == "ok"
+    r2 = run("flagmanager", {"vis": str(outside_ms), "mode": "list"}, str(work))
+    assert r2["status"] == "ok"
+
+
+@pytest.mark.parametrize(
+    "task,out_key,extra",
+    [
+        ("imfit", "residual", {"imagename": "in.im"}),
+        ("imfit", "model", {"imagename": "in.im"}),
+        ("rmfit", "rm", {"imagename": "in.im"}),
+        ("specfit", "center", {"imagename": "in.im"}),
+        ("wvrgcal", "caltable", {"vis": "in.ms"}),
+        ("exportasdm", "asdm", {"vis": "in.ms"}),
+        ("immoments", "outfile", {"imagename": "in.im"}),
+        ("splattotable", "table", {"filenames": "splat.txt"}),
+    ],
+)
+def test_expanded_output_params_reject_paths_outside_workdir(work, tmp_path, task, out_key, extra):
+    """CR-11c: Previously missed task output parameters are validated inside workdir."""
+    from ms_modify.casa_task import run
+
+    outside_out = tmp_path / f"outside_{task}.out"
+    with pytest.raises(ComputationError, match="not inside workdir"):
+        run(task, {**extra, out_key: str(outside_out)}, str(work))
+
+
+@pytest.mark.parametrize("task", ["wvrgcal", "exportasdm", "cvel", "mstransform", "immoments"])
+def test_pure_output_tasks_refuse_missing_output_path(work, tmp_path, task):
+    from ms_modify.casa_task import run
+
+    src = _ms(tmp_path / "src.ms")
+    params = {"imagename": str(src)} if task == "immoments" else {"vis": str(src)}
+    with pytest.raises(ComputationError, match="requires an explicit output parameter"):
+        run(task, params, str(work))

@@ -2,6 +2,8 @@
 description: One pass of phase-only self-calibration on the target of a calibrated, imaged MS, with a before/after image comparison. Follows skill 12-selfcal.md.
 allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
                mcp__plugin_radio-analyst_ms-inspect__ms_field_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_spectral_window_list,
+               mcp__plugin_radio-analyst_ms-inspect__ms_refant,
                mcp__plugin_radio-analyst_ms-inspect__ms_verify_priorcals,
                mcp__plugin_radio-analyst_ms-inspect__ms_residual_stats,
                mcp__plugin_radio-analyst_ms-modify__ms_gaincal,

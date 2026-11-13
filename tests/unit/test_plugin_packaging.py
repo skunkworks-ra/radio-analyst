@@ -278,3 +278,61 @@ def test_excerpts_travel_as_file_paths(stage):
         body = (agent / f"{stage}-stage.md").read_text()
         assert "before the first `SKILL EXCERPT FILE:` line" in body.replace("\n", " ")
         assert "SKILL EXCERPTS" not in body
+
+
+def test_http_transport_startup_across_all_three_servers(monkeypatch, tmp_path):
+    """CR-12: HTTP transport passes host/port via FastMCP settings, never mcp.run(host=..., port=...)."""
+    from unittest.mock import MagicMock
+
+    import ms_create.server as create_srv
+    import ms_inspect.server as inspect_srv
+    import ms_modify.server as modify_srv
+
+    monkeypatch.setenv("RADIO_MCP_DIR", str(tmp_path))
+    monkeypatch.setenv("RADIO_MCP_TRANSPORT", "http")
+    monkeypatch.setenv("RADIO_MCP_HOST", "127.0.0.1")
+
+    for srv, default_port in ((inspect_srv, 8000), (modify_srv, 8001), (create_srv, 8002)):
+        monkeypatch.setenv("RADIO_MCP_PORT", str(default_port))
+        run_mock = MagicMock()
+        monkeypatch.setattr(srv.mcp, "run", run_mock)
+        srv.main()
+        run_mock.assert_called_once_with(transport="streamable-http")
+        assert srv.mcp.settings.host == "127.0.0.1"
+        assert srv.mcp.settings.port == default_port
+
+
+def test_section3_command_and_skill_argument_and_grant_fixes():
+    """Wave 1 Section 3: verify permission grants, required arguments, and line citations."""
+    precal = (REPO_ROOT / ".claude" / "commands" / "precal.md").read_text()
+    assert "applycal_field=bp_field" in precal
+
+    calibrate = (REPO_ROOT / ".claude" / "commands" / "calibrate.md").read_text()
+    assert "ms_verify_priorcals(calibrators.ms, workdir)" in calibrate
+    assert "ms_verify_priorcals(workdir)" not in calibrate
+
+    cal_skill = (
+        REPO_ROOT / ".claude" / "skills" / "radio-interferometry" / "07-calibration-execution.md"
+    ).read_text()
+    step4_block = cal_skill.split("## Step 4 ", 1)[1].split("## Step 4b", 1)[0]
+    assert "target_fields" in step4_block
+
+    selfcal_tools = _tools(
+        _frontmatter(REPO_ROOT / ".claude" / "commands" / "selfcal.md")["allowed-tools"]
+    )
+    assert "mcp__plugin_radio-analyst_ms-inspect__ms_spectral_window_list" in selfcal_tools
+    assert "mcp__plugin_radio-analyst_ms-inspect__ms_refant" in selfcal_tools
+
+    img_skill = (
+        REPO_ROOT / ".claude" / "skills" / "radio-interferometry" / "11-imaging.md"
+    ).read_text()
+    iquv_block = img_skill.split("## Polarization frequency cubes", 1)[1]
+    assert "savemodel" in iquv_block and "'none'" in iquv_block
+    assert "ms_residual_stats" not in img_skill
+
+    img_cmd = (REPO_ROOT / ".claude" / "commands" / "image.md").read_text()
+    assert "ms_residual_stats" not in img_cmd
+
+    orch = (REPO_ROOT / ".claude" / "skills" / "orchestrate" / "SKILL.md").read_text()
+    assert ":123 opacity row" in orch
+    assert "(12:217-224)" in orch

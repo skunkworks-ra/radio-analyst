@@ -735,3 +735,108 @@ class TestTableScalars:
         with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=_patch_all_for_g(tbl)):
             d = calsol_stats.run(str(tbl), verbosity="full")["data"]
         assert "delay_abs_max_ns" not in d
+
+
+class TestKcrossAndSignedCompactDelay:
+    """CR-2: KCROSS corr-1 structural zero exclusion and signed largest-|delay| in compact mode."""
+
+    def _mock_delay_table(self, tbl_path, viscal: str, spw_delays: dict[int, np.ndarray]):
+        """Build open_table side_effect for a K or KCROSS table with per-SPW FPARAM [n_corr, 1, n_ant]."""
+        spws = sorted(spw_delays.keys())
+        ant_tb = _make_tb(getcol_side={"NAME": np.array(_ANT_NAMES)})
+        field_tb = _make_tb(getcol_side={"NAME": np.array(["3C286"])})
+        kw_tb = _make_tb(keywords={"VisCal": viscal})
+        axis_tb = _make_tb(
+            getcol_side={
+                "SPECTRAL_WINDOW_ID": np.repeat(spws, _N_ANT),
+                "FIELD_ID": np.zeros(len(spws) * _N_ANT, dtype=int),
+            }
+        )
+        ant1 = np.arange(_N_ANT)
+        flag = np.zeros((2, 1, _N_ANT), dtype=bool)
+        snr = np.zeros((2, 1, _N_ANT), dtype=float)
+        subs = {
+            spw: _make_subtable(
+                nrows=_N_ANT, ant1=ant1, fparam=fparam, flag=flag.copy(), snr=snr.copy()
+            )
+            for spw, fparam in spw_delays.items()
+        }
+
+        calls: list[str] = []
+
+        def _open_table(path, **kwargs):
+            p = str(path)
+            calls.append(p)
+            if p.endswith("ANTENNA"):
+                return ant_tb
+            if p.endswith("FIELD"):
+                return field_tb
+            n = sum(1 for c in calls if c == str(tbl_path))
+            if n == 1:
+                return kw_tb
+            if n == 2:
+                return axis_tb
+            tb = _make_tb(nrows=len(spws) * _N_ANT)
+
+            def _query(expr):
+                for spw in spws:
+                    if f"SPECTRAL_WINDOW_ID == {spw}" in expr:
+                        return subs[spw]
+                raise AssertionError(f"Unexpected query: {expr}")
+
+            tb.query.side_effect = _query
+            return tb
+
+        return _open_table
+
+    def test_kcross_single_spw_excludes_corr1_structural_zero(self, tmp_path):
+        tbl = tmp_path / "kcross.K"
+        tbl.mkdir()
+        # Corr 0 holds 10.69 ns on every antenna; corr 1 holds CASA's structural 0.0.
+        fparam = np.array([[[10.69, 10.69, 10.69]], [[0.0, 0.0, 0.0]]], dtype=float)
+        for viscal in ("Kcross Jones", "KCROSS Jones"):
+            ot = self._mock_delay_table(tbl, viscal, {0: fparam})
+            with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=ot):
+                compact = calsol_stats.run(str(tbl), verbosity="compact")["data"]
+            ot_full = self._mock_delay_table(tbl, viscal, {0: fparam})
+            with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=ot_full):
+                full = calsol_stats.run(str(tbl), verbosity="full")["data"]
+
+            # No 0.5x compact dilution and no 1/sqrt(2) RMS dilution!
+            assert compact["delay_ns"] == pytest.approx([10.69, 10.69, 10.69])
+            assert compact["delay_rms_ns"] == [[pytest.approx(10.69)]]
+            assert compact["delay_abs_max_ns"] == pytest.approx(10.69)
+            assert full["delay_rms_ns"]["value"] == [[pytest.approx(10.69)]]
+            assert full["delay_abs_max_ns"]["value"] == pytest.approx(10.69)
+
+    def test_kcross_multi_spw_opposite_sign_no_cancellation(self, tmp_path):
+        tbl = tmp_path / "kcross2.K"
+        tbl.mkdir()
+        # SPW 0 = +10.69 ns, SPW 1 = -6.68 ns (run S3 sign-cancellation regression)
+        f0 = np.array([[[10.69, 10.69, 10.69]], [[0.0, 0.0, 0.0]]], dtype=float)
+        f1 = np.array([[[-6.68, -6.68, -6.68]], [[0.0, 0.0, 0.0]]], dtype=float)
+        ot = self._mock_delay_table(tbl, "Kcross Jones", {0: f0, 1: f1})
+        with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=ot):
+            compact = calsol_stats.run(str(tbl), verbosity="compact")["data"]
+        assert compact["delay_ns"] == pytest.approx([10.69, 10.69, 10.69])
+
+        # Flip magnitudes so negative SPW dominates: sign of -10.69 must be preserved!
+        f0_neg = np.array([[[6.68, 6.68, 6.68]], [[0.0, 0.0, 0.0]]], dtype=float)
+        f1_neg = np.array([[[-10.69, -10.69, -10.69]], [[0.0, 0.0, 0.0]]], dtype=float)
+        ot_neg = self._mock_delay_table(tbl, "Kcross Jones", {0: f0_neg, 1: f1_neg})
+        with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=ot_neg):
+            compact_neg = calsol_stats.run(str(tbl), verbosity="compact")["data"]
+        assert compact_neg["delay_ns"] == pytest.approx([-10.69, -10.69, -10.69])
+
+    def test_standard_k_table_retains_both_parallel_hands(self, tmp_path):
+        tbl = tmp_path / "delay.K"
+        tbl.mkdir()
+        fparam = np.array([[[1.0, 2.0, 3.0]], [[1.1, -2.5, 0.0]]], dtype=float)
+        ot = self._mock_delay_table(tbl, "K Jones", {0: fparam})
+        with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=ot):
+            compact = calsol_stats.run(str(tbl), verbosity="compact")["data"]
+        assert compact["delay_ns"] == pytest.approx([1.1, -2.5, 3.0])
+        assert compact["delay_abs_max_ns"] == pytest.approx(3.0)
+        # Both corr 0 and corr 1 contribute to K-table RMS (including legitimate 0.0 on ant 2 corr 1)
+        expected_rms = math.sqrt(np.mean(np.array([1.0, 2.0, 3.0, 1.1, -2.5, 0.0]) ** 2))
+        assert compact["delay_rms_ns"] == [[pytest.approx(expected_rms)]]

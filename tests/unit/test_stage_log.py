@@ -294,7 +294,7 @@ def _log(tmp_path, lines, name="casa.log"):
     return str(path)
 
 
-def test_casa_task_log_counts_only_severe_inside_a_task(tmp_path):
+def test_casa_task_log_counts_casatasks_and_casatools_severe_ignoring_measures(tmp_path):
     path = _log(
         tmp_path,
         [_MEASURES, _begin("gaincal"), _sev("solve failed"), _end("gaincal"), _sev("after")],
@@ -302,7 +302,14 @@ def test_casa_task_log_counts_only_severe_inside_a_task(tmp_path):
     tasks, severe, end = stage_log.casa_task_log(path)
     assert end == os.path.getsize(path)
     assert tasks == ["gaincal"]
-    assert severe == [_sev("solve failed")]
+    assert severe == [_sev("solve failed"), _sev("after")]
+
+
+def test_casa_task_log_captures_casatools_severe_with_zero_tasks(tmp_path):
+    path = _log(tmp_path, [_MEASURES, "t\tSEVERE\ttable::::\tTableError: corrupt column"])
+    tasks, severe, _ = stage_log.casa_task_log(path)
+    assert tasks == []
+    assert severe == ["t\tSEVERE\ttable::::\tTableError: corrupt column"]
 
 
 def test_casa_task_log_task_without_end_marker_runs_to_end_of_log(tmp_path):
@@ -314,7 +321,7 @@ def test_casa_task_log_nested_tasks_and_task_order(tmp_path):
     lines = [_begin("a"), _begin("b"), _end("b"), _sev("still in a"), _end("a"), _sev("outside")]
     tasks, severe, _ = stage_log.casa_task_log(_log(tmp_path, lines))
     assert tasks == ["a", "b"]
-    assert severe == [_sev("still in a")]
+    assert severe == [_sev("still in a"), _sev("outside")]
 
 
 def test_casa_task_log_reads_from_offset(tmp_path):

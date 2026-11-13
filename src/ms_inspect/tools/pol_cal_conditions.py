@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import math
 
+from ms_inspect.tools.geometry import circular_span_deg
 from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
 from ms_inspect.util.conversions import ecef_to_geodetic, mjd_seconds_to_unix
 from ms_inspect.util.formatting import field, response_envelope
@@ -148,10 +149,11 @@ def _pa_spread_deg(
     lon_deg: float,
 ) -> float | None:
     """
-    Compute Δ(PA_sky) = max(PA) − min(PA) across the supplied midpoint times.
+    Compute the minimum enclosing circular PA span in degrees across scan midpoints.
 
     Returns None if fewer than 2 valid PA values can be computed.
-    Uses the same atan2 formula as geometry.py::_compute_el_pa.
+    Uses circular_span_deg so northern-transit calibrators crossing the +-180 deg
+    meridian branch cut report the true angular span rather than ~360 deg.
     """
     import astropy.units as u
     from astropy.time import Time
@@ -177,7 +179,7 @@ def _pa_spread_deg(
 
     if len(pa_values) < 2:
         return None
-    return max(pa_values) - min(pa_values)
+    return circular_span_deg(pa_values)
 
 
 def _df_poltype_from_source_knowledge(role_at_band: str) -> tuple[str | None, str]:

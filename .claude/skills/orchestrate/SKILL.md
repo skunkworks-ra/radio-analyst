@@ -159,7 +159,7 @@ Where the skill says "Hard stop" or "stop", the row stops and asks the user.
 From the same `ms_field_list({ms})` read `bp_field`'s
 `observing_frequency.centre_ghz` yourself; that is `bp_field_centre_ghz` below.
 
-### 2. precal (10-precal-workflow.md:311-321, decision gate; :122 opacity row)
+### 2. precal (10-precal-workflow.md:311-321, decision gate; :123 opacity row)
 
 All four rows are "Hard stop" in the skill (10:317-320). Precal also cannot be
 re-run on the same MS without undoing its flags, so a failed precal check stops.
@@ -167,13 +167,13 @@ re-run on the same MS without undoing its flags, so a failed precal check stops.
 | Check | Tool, field | Pass | On fail |
 |---|---|---|---|
 | `gain_curves.gc` valid (10:317) | `ms_verify_priorcals({cal}, workdir)` `tables[].valid` | true | stop |
-| `opacities.opac` valid when `bp_field_centre_ghz` >= 18 (10:318, :122) | same | true | stop |
+| `opacities.opac` valid when `bp_field_centre_ghz` >= 18 (10:318, :123) | same | true | stop |
 | Initial bandpass caltables present (10:319) | `ms_verify_caltables({cal}, init_gain_table={workdir}/init_gain.g, bp_table={workdir}/BP0.b)` `caltables_valid` | true | stop |
 | Bandpass model not the 1 Jy default (10:320) | `ms_verify_model({cal}, field=bp_field)` `per_field[].status` and `note`; with `pol_scope: on`, `field=<bp_field>,<angle_cal>` and `polcal_fields=<angle_cal>` | not default; the angle cal's cross-hands present | stop |
 | Pre-calibration complete (commands/calibrate.md step 1) | `ms_workflow_status({ms}, workdir)` `next_recommended_step` | `delay_bandpass_gain` | stop |
 | Polarisation scope (`stokes=IQUV` only; commands/precal.md step 6) | handoff `pol_scope:` and `angle_cal:` lines | `pol_scope: on` with an `angle_cal` | line missing: stop. `off`: stop and ask the user whether a Stokes I only reduction is acceptable, with the reason from the line. On yes, continue with `stokes=I`; record the user's answer in `reason` |
 
-### 3. calibrate (07-calibration-execution.md:646-663, decision gate; 11-imaging.md:54-68, coherence gate)
+### 3. calibrate (07-calibration-execution.md:647-664, decision gate; 11-imaging.md:54-68, coherence gate)
 
 Read the phase calibrator fields from `ms_field_list({cal})`, the target fields
 from `ms_field_list({ms})`, and the channel range from
@@ -185,21 +185,21 @@ coherence rows `not_checked` with the string as the reason.
 
 | Check | Tool, field | Pass | On fail |
 |---|---|---|---|
-| BP flagged fraction (07:652) | `ms_calsol_stats({workdir}/bandpass.B)` `overall_flagged_frac` | < 0.20 | stop: the fix is more RFI excision in precal (07:659), which this orchestrator does not run |
-| Gain flagged fraction (07:653) | `ms_calsol_stats({workdir}/gain.G)` `overall_flagged_frac` | < 0.15 | stop, as above |
-| Antennas lost (07:654) | `ms_calsol_stats` `n_antennas_lost` on `initial_phase.G0`, `delay.K`, `bandpass.B`, `gain.G` | ≤ 3 each | stop (07:662) |
-| fluxscale done, `gain.fluxscaled` written (07:657) | `ms_workflow_status({ms}, workdir)` `final_solves_completed` | contains `"fluxscale"` | retry |
+| BP flagged fraction (07:653) | `ms_calsol_stats({workdir}/bandpass.B)` `overall_flagged_frac` | < 0.20 | stop: the fix is more RFI excision in precal (07:660), which this orchestrator does not run |
+| Gain flagged fraction (07:654) | `ms_calsol_stats({workdir}/gain.G)` `overall_flagged_frac` | < 0.15 | stop, as above |
+| Antennas lost (07:655) | `ms_calsol_stats` `n_antennas_lost` on `initial_phase.G0`, `delay.K`, `bandpass.B`, `gain.G` | <= 3 each | stop (07:663) |
+| fluxscale done, `gain.fluxscaled` written (07:658) | `ms_workflow_status({ms}, workdir)` `final_solves_completed` | contains `"fluxscale"` | retry |
 | CORRECTED on the target (commands/image.md step 1) | same, `corrected_populated_target` | true | retry |
 | Phase cal coherence (11:66) | `ms_corrected_stats({cal}, field=<phase cals>, chan_start, chan_end)` `phase_rms_deg` | < 30 | retry, re-solve |
 | Phase cal gains (11:67) | same, `amp_robust_std` vs `amp_median` | < ~20% | retry |
-| Target not decorrelated (11:68) | `ms_corrected_stats({ms}, field=<targets>, chan_start, chan_end)` `amp_median`, `amp_robust_std` | `amp_median` > 0, std not ≫ median | retry |
+| Target not decorrelated (11:68) | `ms_corrected_stats({ms}, field=<targets>, chan_start, chan_end)` `amp_median`, `amp_robust_std` | `amp_median` > 0, std not >> median | retry |
 
 Record the target's `phase_rms_deg` per pointing beside that row. 11:68 gives no
 phase criterion for the target (a resolved source has structure phase), so it
 is a number to report, not a pass/fail.
 
-Record as `not_checked` with the reason: 07:655 (lost antennas flagged on both
-MSs: no read-only tool measures it) and 07:656 (fluxscale flux vs
+Record as `not_checked` with the reason: 07:656 (lost antennas flagged on both
+MSs: no read-only tool measures it) and 07:657 (fluxscale flux vs
 `flux_estimate`: copy the stage's value from the handoff into `value` and say
 it is the stage's).
 
@@ -293,8 +293,8 @@ remaining gap is the imaging. Work down this order, one step per attempt:
    wrote) with the Read tool before deciding anything further. Write what you
    see into the record's `png_reviewed`: is the source structure clean, or are
    there stripes, rings or negative bowls around it?
-3. **Selfcal, if the model is good.** This also covers 11:360 (over 3x: run
-   `ms_residual_stats` before re-imaging). Apply 12 Step 0 (12:36-62): `dynamic_range`
+3. **Selfcal, if the model is good.** This also covers 11:360 (over 3x: escalate
+   rather than re-imaging with different imaging parameters). Apply 12 Step 0 (12:36-62): `dynamic_range`
    from `ms_image_stats` (< 30: selfcal unlikely to help, stop and ask; 30 and
    up: proceed), and `ms_residual_stats` on each target pointing (any SpW with
    `p95_amp / median_amp` > 10: RFI-dominated, stop and ask). If the PNG shows a
@@ -314,7 +314,7 @@ remaining gap is the imaging. Work down this order, one step per attempt:
 | Check | Tool, field | Pass | On fail |
 |---|---|---|---|
 | Selfcal image measures | `ms_image_stats(<prefix>_sc1.image.pbcor, psf_path, pb_level)` | status ok | retry |
-| `dynamic_range` change vs the image before (12:217-222) | `ms_image_stats`, both images | report it | < 10%: did not help, end; 10% or more: end and recommend more rounds to the user (12:235-246, one pass only); decreased: diverged, end and point at the `pcal1.g` solutions |
+| `dynamic_range` change vs the image before (12:217-224) | `ms_image_stats`, both images | report it | < 10%: did not help, end; 10% or more: end and recommend more rounds to the user (12:235-246, one pass only); decreased: diverged, end and point at the `pcal1.g` solutions |
 
 With `stokes=IQUV`, one more row: selfcal's applycal rebuilds CORRECTED on the
 target, so it must carry the polarisation tables again.

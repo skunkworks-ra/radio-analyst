@@ -59,6 +59,37 @@ class TestExtractBeam:
         assert minor is None
         assert pa is None
 
+    def test_beam_angular_unit_conversions(self):
+        import math
+
+        # Single-beam in deg / arcmin / rad
+        beam_deg = {
+            "major": {"value": 1.0 / 3600.0, "unit": "deg"},
+            "minor": {"value": 0.5 / 60.0, "unit": "arcmin"},
+            "positionangle": {"value": math.pi / 4.0, "unit": "rad"},
+        }
+        major, minor, pa = _extract_beam(beam_deg)
+        assert major == pytest.approx(1.0)
+        assert minor == pytest.approx(0.5)
+        assert pa == pytest.approx(45.0)
+
+        # Multi-beam in mas and rad
+        beam_mas = {
+            "beams": {
+                "*0": {
+                    "*0": {
+                        "major": {"value": 2500.0, "unit": "mas"},
+                        "minor": {"value": math.radians(1.5 / 3600.0), "unit": "rad"},
+                        "positionangle": {"value": -30.0, "unit": "deg"},
+                    }
+                }
+            }
+        }
+        major2, minor2, pa2 = _extract_beam(beam_mas)
+        assert major2 == pytest.approx(2.5)
+        assert minor2 == pytest.approx(1.5)
+        assert pa2 == pytest.approx(-30.0)
+
 
 class TestPlaneLabels:
     def test_iquv_cube_order(self):
@@ -239,3 +270,132 @@ class TestResidualRms:
         assert why is None
         assert region["n_pixels"] == 64 * 32
         assert 0.9 < rms < 1.1
+
+
+class TestSignedStokesAndPbMaskedPlanes:
+    """CR-3: Signed Q/U/V peaks and PB-masked per-plane stats on .image.pbcor cubes."""
+
+    def _mock_csys(self, stokes_names, stokes_axis=2, spec_axis=3):
+        csys = MagicMock()
+        csys.stokes.return_value = stokes_names
+
+        def _find(kind):
+            if kind == "stokes" and stokes_axis is not None:
+                return {"return": True, "pixel": [stokes_axis]}
+            if kind == "spectral" and spec_axis is not None:
+                return {"return": True, "pixel": [spec_axis]}
+            return {"return": False, "pixel": []}
+
+        csys.findcoordinate.side_effect = _find
+        return csys
+
+    def test_unmasked_fallback_preserves_negative_quv_peaks(self):
+        import numpy as np
+
+        from ms_inspect.tools.image_stats import _MAD_TO_SIGMA, _per_plane_stats
+
+        ia = MagicMock()
+        ia.shape.return_value = [16, 16, 4, 1]  # I, Q, U, V; 1 channel
+        ia.coordsys.return_value = self._mock_csys(["I", "Q", "U", "V"])
+        # Stokes I: max=+0.10, min=-0.20 (negative bowl -> Stokes I still reports +0.10)
+        # Stokes Q: max=+0.0003, min=-0.050 (-50 mJy polarized source -> reports -0.050!)
+        # Stokes U: max=+0.030, min=-0.0002 -> reports +0.030
+        # Stokes V: max=+0.0002, min=-0.0003 -> reports -0.0003 (noise, undetected)
+        ia.statistics.side_effect = [
+            {"medabsdevmed": np.array([0.001, 0.001, 0.001, 0.001])},
+            {
+                "max": np.array([0.10, 0.0003, 0.030, 0.0002]),
+                "min": np.array([-0.20, -0.050, -0.0002, -0.0003]),
+            },
+        ]
+        planes = _per_plane_stats(ia, [], [])
+        assert planes is not None and len(planes) == 4
+        by_stokes = {p["stokes"]: p for p in planes}
+
+        assert by_stokes["I"]["peak_jy"] == pytest.approx(0.10)
+        assert by_stokes["Q"]["peak_jy"] == pytest.approx(-0.050)
+        assert by_stokes["Q"]["dynamic_range"] == pytest.approx(
+            0.050 / (_MAD_TO_SIGMA * 0.001), rel=1e-2
+        )
+        assert by_stokes["Q"]["detection"] == "detection"
+        assert by_stokes["U"]["peak_jy"] == pytest.approx(0.030)
+        assert by_stokes["U"]["detection"] == "detection"
+        assert by_stokes["V"]["peak_jy"] == pytest.approx(-0.0003)
+        assert by_stokes["V"]["detection"] == "undetected"
+
+    def test_single_plane_negative_stokes_q_detected(self, tmp_path):
+        from ms_inspect.tools import image_stats
+
+        img_dir = tmp_path / "q_map.image"
+        img_dir.mkdir()
+        ia = MagicMock()
+        ia.shape.return_value = [32, 32, 1, 1]
+        ia.coordsys.return_value = self._mock_csys(["Q"])
+        ia.statistics.side_effect = [
+            {"medabsdevmed": [0.001]},
+            {"max": [0.0003], "min": [-0.050], "rms": [0.0015]},
+        ]
+        ia.restoringbeam.return_value = {
+            "major": {"value": 2.0, "unit": "arcsec"},
+            "minor": {"value": 2.0, "unit": "arcsec"},
+            "positionangle": {"value": 0.0, "unit": "deg"},
+        }
+        cm = MagicMock()
+        cm.__enter__.return_value = ia
+        with patch.object(image_stats, "open_image", return_value=cm):
+            res = image_stats.run(str(img_dir))
+        assert res["data"]["peak_jy"]["value"] == pytest.approx(-0.050)
+        assert res["data"]["detection"]["value"] == "detection"
+
+    def test_pbcor_cube_per_plane_masks_edge_noise_and_broadcasts_pb(self, tmp_path):
+        import numpy as np
+
+        from ms_inspect.tools import image_stats
+
+        rng = np.random.default_rng(42)
+        # Shape [32, 32, 4, 2] for IQUV x 2 channels; sibling .pb has [32, 32, 1, 2]
+        cube = rng.normal(0.0, 0.001, (32, 32, 4, 2))
+        # Outside PB (x < 16): 100x PB-divided edge noise spikes (+0.5 / -0.5 Jy)
+        cube[:16, :, :, :] *= 200.0
+        # Inside PB (x >= 16): plant +0.20 Jy in I and -0.040 Jy in Q at (24, 24)
+        cube[24, 24, 0, :] = 0.20
+        cube[24, 24, 1, :] = -0.040
+
+        pb = np.full((32, 32, 1, 2), 0.02, dtype=float)
+        pb[16:, :, :, :] = 0.8
+
+        img_dir = tmp_path / "cube_iquv.image.pbcor"
+        pb_dir = tmp_path / "cube_iquv.pb"
+        img_dir.mkdir()
+        pb_dir.mkdir()
+
+        ia_img = MagicMock()
+        ia_img.shape.return_value = list(cube.shape)
+        ia_img.coordsys.return_value = self._mock_csys(["I", "Q", "U", "V"])
+        ia_img.getchunk.return_value = cube
+
+        ia_pb = MagicMock()
+        ia_pb.shape.return_value = list(pb.shape)
+        ia_pb.getchunk.return_value = pb
+
+        def fake_open(path):
+            cm = MagicMock()
+            cm.__enter__.return_value = ia_pb if Path(path).name.endswith(".pb") else ia_img
+            return cm
+
+        with patch.object(image_stats, "open_image", side_effect=fake_open):
+            planes = image_stats._per_plane_stats(
+                ia_img, [], [], image_path=str(img_dir), pb_level=0.1
+            )
+
+        assert planes is not None and len(planes) == 8
+        q0 = next(p for p in planes if p["stokes"] == "Q" and p["chan"] == 0)
+        i0 = next(p for p in planes if p["stokes"] == "I" and p["chan"] == 0)
+        v0 = next(p for p in planes if p["stokes"] == "V" and p["chan"] == 0)
+
+        # Edge noise (200x) was masked out: per-plane RMS stays ~0.001 Jy, not ~0.2 Jy!
+        assert 0.0007 < q0["rms_jy"] < 0.0014
+        assert q0["peak_jy"] == pytest.approx(-0.040, abs=1e-4)
+        assert q0["detection"] == "detection"
+        assert i0["peak_jy"] == pytest.approx(0.20, abs=1e-4)
+        assert v0["detection"] == "undetected"

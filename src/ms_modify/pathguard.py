@@ -49,13 +49,18 @@ def validate_output_caltable(
 
     if ct == ms:
         raise ComputationError(
-            f"Output caltable path equals the MS path ({ct}) — refusing: the "
+            f"Output caltable path equals the MS path ({ct}) -- refusing: the "
             "caltable is deleted and rewritten on each run.",
+            ms_path=ms_path,
+        )
+    if ct == wd:
+        raise ComputationError(
+            f"Output path equals workdir ({wd}) -- refusing to overwrite or archive workdir.",
             ms_path=ms_path,
         )
     if ct.exists() and _is_measurement_set(ct):
         raise ComputationError(
-            f"Output caltable path {ct} is an existing Measurement Set — refusing to overwrite it.",
+            f"Output caltable path {ct} is an existing Measurement Set -- refusing to overwrite it.",
             ms_path=ms_path,
         )
     if not ct.is_relative_to(wd):

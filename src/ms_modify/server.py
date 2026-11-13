@@ -41,14 +41,19 @@ from ms_modify import (
 # ---------------------------------------------------------------------------
 # Server initialisation
 # ---------------------------------------------------------------------------
+_mcp_host = os.environ.get("RADIO_MCP_HOST", "127.0.0.1")
+_mcp_port = int(os.environ.get("RADIO_MCP_PORT", "8001"))
+
 mcp = FastMCP(
     "radio_ms_modify",
     instructions=(
         "Radio interferometric Measurement Set modification utilities. "
-        "Tools in this server write to the MS — use with care. "
+        "Tools in this server write to the MS -- use with care. "
         f"{CASA_LOG_NOTE}"
         f"Version: {__version__}"
     ),
+    host=_mcp_host,
+    port=_mcp_port,
 )
 
 
@@ -2287,10 +2292,12 @@ async def ms_casa_tool(params: CasaToolInput) -> ToolResult:
 def main() -> None:
     init_server_logging("ms-modify")
     transport = os.environ.get("RADIO_MCP_TRANSPORT", "stdio").lower()
-    port = int(os.environ.get("RADIO_MCP_PORT", "8001"))
 
     if transport == "http":
-        mcp.run(transport="streamable-http", host="127.0.0.1", port=port)
+        if hasattr(mcp, "settings"):
+            mcp.settings.host = os.environ.get("RADIO_MCP_HOST", _mcp_host)
+            mcp.settings.port = int(os.environ.get("RADIO_MCP_PORT", str(_mcp_port)))
+        mcp.run(transport="streamable-http")
     else:
         mcp.run(transport="stdio")
 
