@@ -13,6 +13,8 @@ numeric-only names are combined with unusable ECEF positions.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 from ms_inspect.exceptions import InsufficientMetadataError
@@ -24,7 +26,12 @@ from ms_inspect.util.conversions import (
     ecef_to_geodetic,
     largest_angular_scale_arcsec,
 )
-from ms_inspect.util.formatting import field, offload_detail, response_envelope
+from ms_inspect.util.formatting import (
+    field,
+    offload_detail,
+    resolve_sidecar_path,
+    response_envelope,
+)
 
 TOOL_ANT = "ms_antenna_list"
 TOOL_BASELINES = "ms_baseline_lengths"
@@ -112,7 +119,7 @@ def _read_main_antenna_ids(ms_str: str) -> tuple[set[int], list[str]]:
     return ant1 | ant2, casa_calls
 
 
-def run_antenna_list(ms_path: str) -> dict:
+def run_antenna_list(ms_path: str, workdir: str | None = None) -> dict:
     """
     Return the antenna list with ECEF positions, diameters, and completeness check.
 
@@ -231,10 +238,21 @@ def run_antenna_list(ms_path: str) -> dict:
     else:
         recommended_minblperant = max(2, n_ant - 3)
 
+    valid_diams = [float(d) for d in diameters if float(d) > 0]
+    if valid_diams:
+        dish_diameter_field = field(round(float(np.median(valid_diams)), 2), flag="COMPLETE")
+    else:
+        dish_diameter_field = field(
+            None,
+            flag="UNAVAILABLE",
+            note="No positive values in ANTENNA::DISH_DIAMETER",
+        )
+
     data = {
         "n_antennas": n_ant,
         "n_antennas_in_main_table": len(main_ids - {a for a in main_ids if False}),
         "n_baselines_cross": n_ant * (n_ant - 1) // 2,
+        "dish_diameter_m": dish_diameter_field,
         "recommended_minblperant": recommended_minblperant,
         "orphaned_antenna_ids": [],
         "antenna_table_completeness": "COMPLETE",
@@ -247,7 +265,9 @@ def run_antenna_list(ms_path: str) -> dict:
     # Offload the per-antenna table to a JSON sidecar (recoverable on demand).
     # Summary (counts, completeness, array centre) stays inline; warnings already
     # flag any SUSPECT positions, so gate decisions need not read the full table.
-    data = offload_detail(data, ["antennas"], ms_str + ".antenna_list.json")
+    data = offload_detail(
+        data, ["antennas"], resolve_sidecar_path(f"{Path(p).name}.antenna_list.json", workdir)
+    )
 
     return response_envelope(
         tool_name=TOOL_ANT,
@@ -258,7 +278,11 @@ def run_antenna_list(ms_path: str) -> dict:
     )
 
 
-def run_baseline_lengths(ms_path: str, spw_centre_freqs_hz: list[float] | None = None) -> dict:
+def run_baseline_lengths(
+    ms_path: str,
+    spw_centre_freqs_hz: list[float] | None = None,
+    workdir: str | None = None,
+) -> dict:
     """
     Compute physical baseline length statistics and derived angular scales.
 
@@ -376,7 +400,11 @@ def run_baseline_lengths(ms_path: str, spw_centre_freqs_hz: list[float] | None =
     res_vals = [e["resolution_arcsec"]["value"] for e in per_spw] if per_spw else []
     if res_vals:
         data["resolution_arcsec_range"] = [min(res_vals), max(res_vals)]
-    data = offload_detail(data, ["per_spw_derived"], ms_str + ".baseline_lengths.json")
+    data = offload_detail(
+        data,
+        ["per_spw_derived"],
+        resolve_sidecar_path(f"{Path(p).name}.baseline_lengths.json", workdir),
+    )
 
     return response_envelope(
         tool_name=TOOL_BASELINES,

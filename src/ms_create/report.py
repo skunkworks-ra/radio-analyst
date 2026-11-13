@@ -401,7 +401,9 @@ def run(
     summary, decisions = given["summary"], given["decisions"]
     caveats, image_path = given["caveats"], given["image_path"]
 
-    records = _read_jsonl(wd / "reduction_log.jsonl")
+    from ms_create.reduction_log import load_effective_records
+
+    records = load_effective_records(wd)
     plots = _plot_links(wd)
     pngs = _pngs(wd)
     replay = wd / "reduction_replay.py"

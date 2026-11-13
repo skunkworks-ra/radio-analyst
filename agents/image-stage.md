@@ -2,7 +2,7 @@
 name: image-stage
 description: Image stage of an orchestrated reduction. Runs the image command on one MS and returns a STAGE HANDOFF block.
 model: haiku
-tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status, mcp__plugin_radio-analyst_ms-inspect__ms_field_list, mcp__plugin_radio-analyst_ms-inspect__ms_spectral_window_list, mcp__plugin_radio-analyst_ms-inspect__ms_observation_info, mcp__plugin_radio-analyst_ms-inspect__ms_antenna_list, mcp__plugin_radio-analyst_ms-inspect__ms_baseline_lengths, mcp__plugin_radio-analyst_ms-inspect__ms_scan_list, mcp__plugin_radio-analyst_ms-modify__ms_tclean, mcp__plugin_radio-analyst_ms-inspect__ms_image_stats, Bash, Read, Write, Skill
+tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status, mcp__plugin_radio-analyst_ms-inspect__ms_field_list, mcp__plugin_radio-analyst_ms-inspect__ms_spectral_window_list, mcp__plugin_radio-analyst_ms-inspect__ms_observation_info, mcp__plugin_radio-analyst_ms-inspect__ms_antenna_list, mcp__plugin_radio-analyst_ms-inspect__ms_baseline_lengths, mcp__plugin_radio-analyst_ms-inspect__ms_scan_list, mcp__plugin_radio-analyst_ms-inspect__ms_radiometer_estimate, mcp__plugin_radio-analyst_ms-modify__ms_tclean, mcp__plugin_radio-analyst_ms-inspect__ms_image_stats, Bash, Read, Skill
 ---
 
 You run one stage of a reduction for the orchestrator. Nothing else.

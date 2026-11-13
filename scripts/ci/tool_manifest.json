@@ -37,7 +37,9 @@
       "ms_phase_cal_lookup": {"ra_deg": 180.0, "dec_deg": 30.0},
       "ms_casa_task_lookup": {"task_name": "tclean"},
       "ms_casa_task_spec": {"task": "statwt"},
-      "ms_casa_tool_spec": {"tool": "table", "method": "nrows"}
+      "ms_casa_tool_spec": {"tool": "table", "method": "nrows"},
+      "ms_radiometer_estimate": {"ms_path": "{SMOKE_MS}"},
+      "ms_vis_amp_time_stats": {"ms_path": "{SMOKE_MS}", "datacolumn": "DATA"}
     },
     "ms-modify": {
       "ms_casa_tool": {"calls": [{"method": "open", "args": {"tablename": "{SMOKE_MS}"}}, {"method": "nrows"}, {"method": "close"}], "workdir": "/nonexistent/workdir"},

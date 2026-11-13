@@ -108,7 +108,7 @@ Parameter choices:
 | `minsnr=3.0` | Minimum SNR gate | Prevents flagging all solutions on faint targets; lower to 2.0 if many solutions are flagged |
 | `gaintype='G'` | Per-polarisation | Standard; use `'T'` only if polarisation independent solutions are acceptable (low SNR) |
 
-Generate the script first (`execute=False`), review it, then run it as a background job.
+Generate the script (`execute=False`), then run it via `run-step.sh` (SKILL.md "Running generated scripts").
 
 After the script completes, call `ms_calsol_stats` to inspect solution quality:
 
@@ -123,7 +123,7 @@ Check:
 
 | Output | What to look for | Action if bad |
 |---|---|---|
-| `flagged_fraction` per antenna | > 30% flagged → solution failed for that antenna | Lower `minsnr` to 2.0 and re-solve |
+| `flagged_frac` / `overall_flagged_frac` | > 0.30 flagged -> solution failed for that antenna | Lower `minsnr` to 2.0 and re-solve |
 | `phase_mean_deg` / `phase_rms_deg` per antenna | Large mean offset or > 30° scatter over time → large phase errors being corrected (this is fine) | Just note — this is what selfcal is for |
 | `abs(phase_mean_deg)` < 1° **and** `phase_rms_deg` < 1° on every antenna | Solutions are near-zero — no phase error to correct | Selfcal will not help; stop here |
 
@@ -159,7 +159,7 @@ ms_applycal(
 )
 ```
 
-Generate, review, run as background job. This overwrites CORRECTED_DATA.
+Generate (`execute=False`) and run via `run-step.sh`. This overwrites CORRECTED_DATA.
 
 **applycal writes CORRECTED from DATA, so the stack must be complete.** Pass the
 same tables as the first-pass apply (07 Step 7c, plus the polarisation tables if
@@ -188,7 +188,7 @@ ms_tclean(
 )
 ```
 
-Generate, review, run as background job.
+Generate (`execute=False`) and run via `run-step.sh` (SKILL.md "Running generated scripts").
 
 ---
 

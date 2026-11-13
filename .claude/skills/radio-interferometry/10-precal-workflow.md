@@ -16,28 +16,28 @@ pass of RFI removed, ready for the full calibration solve.
 ## Sequence overview
 
 ```
-ms_sdm_summary(sdm_path)                 → what this dataset IS, before importing it
-ms_import_asdm(execute=False, ...)       → generate import_asdm.py
-  → run import_asdm.py detached and poll until it exits (SKILL.md "Running generated scripts"); no time limit
-ms_verify_import(ms_path, flag_file)     → confirm MS valid + .flagonline.txt present
+ms_sdm_summary(sdm_path)                 -> what this dataset IS, before importing it
+ms_import_asdm(execute=False, ...)       -> generate import_asdm.py
+  -> run import_asdm.py via run-step.sh (SKILL.md "Running generated scripts")
+ms_verify_import(ms_path, flag_file)     -> confirm MS valid + .flagonline.txt present
 
-ms_apply_preflag(execute=False, ...)     → generate preflag.py + preflag_cmds.txt
-  → run preflag.py detached and poll until it exits (SKILL.md "Running generated scripts"); no time limit
+ms_apply_preflag(execute=False, ...)     -> generate preflag.py + preflag_cmds.txt
+  -> run preflag.py via run-step.sh (SKILL.md "Running generated scripts")
 
-ms_generate_priorcals(execute=False)     → generate priorcals.py
-  → run priorcals.py detached and poll until it exits (SKILL.md "Running generated scripts"); no time limit
-ms_verify_priorcals(workdir)             → confirm all required tables exist
+ms_generate_priorcals(execute=False)     -> generate priorcals.py
+  -> run priorcals.py via run-step.sh (SKILL.md "Running generated scripts")
+ms_verify_priorcals(calibrators.ms, workdir) -> confirm all required tables exist
 
-ms_setjy(usescratch=True, execute=False, ...) → generate setjy.py
-  → run setjy.py detached and poll until it exits (SKILL.md "Running generated scripts"); no time limit
+ms_setjy(usescratch=True, execute=False, ...) -> generate setjy.py
+  -> run setjy.py via run-step.sh (SKILL.md "Running generated scripts")
 
-ms_refant(calibrators.ms, field=bp_field)    → refant ranked on BP cal (calibrate re-scores on all calibrators)
-ms_initial_bandpass(execute=False, ...)   → generate initial_bandpass.py
-  → run initial_bandpass.py detached and poll until it exits (SKILL.md "Running generated scripts"); no time limit
+ms_refant(calibrators.ms, field=bp_field)    -> refant ranked on BP cal (calibrate re-scores on all calibrators)
+ms_initial_bandpass(execute=False, ...)   -> generate initial_bandpass.py
+  -> run initial_bandpass.py via run-step.sh (SKILL.md "Running generated scripts")
 
-ms_verify_model(field=bp_field)          → confirm a real model, not the 1 Jy default
-ms_apply_initial_rflag(execute=False)    → generate initial_rflag.py
-  → run initial_rflag.py detached and poll until it exits (SKILL.md "Running generated scripts"); no time limit
+ms_verify_model(field=bp_field)          -> confirm a real model, not the 1 Jy default
+ms_apply_initial_rflag(execute=False)    -> generate initial_rflag.py
+  -> run initial_rflag.py via run-step.sh (SKILL.md "Running generated scripts")
 ```
 
 ---
@@ -301,8 +301,8 @@ N × the thermal floor from clean SpWs.
 `ms_apply_initial_rflag` runs rflag + tfcrop on the residual column in a single
 flagdata list-mode pass. `flagbackup=True` saves a versioned backup automatically.
 
-If the bandpass calibrator minimum elevation during its scans (from `ms_elevation_vs_time`
-Phase 2 output) is < 30°, use `timedevscale=7, freqdevscale=7` instead of the
+If the bandpass calibrator minimum elevation during its scans (`bp_cal_min_elevation_deg`
+from orientation) is < 30 deg, use `timedevscale=7, freqdevscale=7` instead of the
 defaults (5, 5). Elevated system temperature at low elevations inflates scatter
 and causes false positives at tighter thresholds.
 

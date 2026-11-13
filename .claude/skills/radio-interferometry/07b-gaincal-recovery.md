@@ -13,7 +13,7 @@ The source-type table (Bright/Phase/Weak/Resolved thresholds) is in 07 Step 4b
 ## Recovery Tree 1: Caltable Not Produced
 
 **Symptoms:** gaincal script completed, but `{WORKDIR}/gain.G` does not exist
-OR exists but is empty (`n_total_solutions = 0`).
+OR has no usable solutions (`n_antennas_lost == n_antennas` or `overall_flagged_frac == 1.0`).
 
 **Diagnostic path:**
 
@@ -61,10 +61,10 @@ OR exists but is empty (`n_total_solutions = 0`).
 
 ---
 
-## Recovery Tree 2: Low SNR (overall_snr_mean < 3.0)
+## Recovery Tree 2: Low SNR (snr_mean < 3.0)
 
-**Symptoms:** gaincal produced a caltable, but `snr_mean < 3.0` or > 20% of
-antennas have SNR < 2.0.
+**Symptoms:** gaincal produced a caltable, but typical `snr_mean < 3.0` or
+`outliers.low_snr` (`outliers.low_snr_n_antennas`) covers > 20% of antennas.
 
 **Diagnostic path:**
 
@@ -93,8 +93,8 @@ antennas have SNR < 2.0.
 
    Inspect each with `ms_calsol_stats` and keep the one with the least solution
    noise (the lowest `phase_rms_deg` / `amp_std` scatter at an acceptable
-   flagged fraction). Record all three and the choice in the ledger
-   `rationale`. The cost is time resolution: a gain that varies faster than the
+   flagged fraction). Report all three variants and why you chose the winner in
+   your stage summary (`stage_log.jsonl` records the solves automatically). The cost is time resolution: a gain that varies faster than the
    solint is averaged away.
 
 4. **Check bandpass quality:**
@@ -128,7 +128,7 @@ never changes MS flags; applycal flags the data whose solutions are flagged.
    ```
    ms_calsol_stats(caltable_path={WORKDIR}/gain.G)
    ```
-   Read `antennas_lost` and the per-antenna flagged fraction; drill in with
+   Read `antennas_lost` and `flagged_frac`; drill in with
    `ms_calsol_stats_detail` on the antennas it names.
 
 2. **Check if the source is resolved:**
@@ -162,17 +162,17 @@ never changes MS flags; applycal flags the data whose solutions are flagged.
 
 ---
 
-## Recovery Tree 4: Low Coverage (< 50% solutions)
+## Recovery Tree 4: Low Coverage (overall_flagged_frac >= 0.5)
 
-**Symptoms:** gaincal produced a caltable, but `n_flagged_solutions / n_total_solutions > 0.5`
-(more than half the solutions are flagged).
+**Symptoms:** gaincal produced a caltable, but `overall_flagged_frac >= 0.5`
+(half or more of the solutions are flagged).
 
 **Diagnostic path:**
 
 1. **Check which antennas are missing:**
    ```
    ms_calsol_stats(caltable_path={WORKDIR}/gain.G)
-   # Inspect: solutions_per_antenna (count non-flagged solutions per antenna)
+   # Inspect: flagged_frac (per antenna), n_antennas_lost, antennas_lost, outliers
    ```
    - **If 1–2 antennas are missing solutions:** likely refant issue or hardware problem
    - **If > 3 antennas missing:** data quality problem or field selection error

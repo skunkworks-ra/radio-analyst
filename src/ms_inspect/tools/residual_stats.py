@@ -13,11 +13,13 @@ A max_rows limit prevents memory exhaustion on large MSs.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 from ms_inspect.util.casa_context import open_table, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
-from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.formatting import resolve_sidecar_path, response_envelope
 from ms_inspect.util.selection import parallel_corr_by_ddid
 
 TOOL_NAME = "ms_residual_stats"
@@ -89,15 +91,15 @@ def _spw_stats(amp: np.ndarray, flag: np.ndarray) -> dict:
 def _bound_chan_payload(
     data: dict,
     max_per_chan_records: int,
-    sidecar_path: str,
+    sidecar_path: str | None,
     warnings: list[str],
 ) -> dict:
     """Drop the chan_* arrays from every SpW if the total channel count exceeds
-    max_per_chan_records, writing the full data to a JSON sidecar instead.
+    max_per_chan_records, writing the full data to a JSON sidecar inside workdir.
 
     All-or-nothing, as in ms_spw_amp_severity: either every SpW keeps its
     chan_* arrays or none does. Per-SpW aggregates are never touched. The
-    sidecar is written only when truncation occurs.
+    sidecar is written only when truncation occurs and workdir is configured.
     """
     import json as _json
 
@@ -109,17 +111,19 @@ def _bound_chan_payload(
         data["per_chan_truncated"] = fmt_field(False)
         return data
 
-    written: str | None = sidecar_path
-    try:
-        with open(sidecar_path, "w") as fh:
-            _json.dump(data, fh, separators=(",", ":"), default=str)
-    except OSError as exc:
-        written = None
-        warnings.append(
-            f"Could not write per-channel sidecar to {sidecar_path}: {exc}. "
-            "The per-channel arrays are dropped from this response and are not "
-            "on disk; re-run with max_per_chan_records=0 to receive them inline."
-        )
+    written: str | None = None
+    write_failed = False
+    if sidecar_path:
+        try:
+            with open(sidecar_path, "w") as fh:
+                _json.dump(data, fh, separators=(",", ":"), default=str)
+            written = sidecar_path
+        except OSError as exc:
+            write_failed = True
+            warnings.append(
+                f"Could not write per-channel sidecar to {sidecar_path}: {exc}. "
+                "Pass a writable workdir to persist the per-channel arrays."
+            )
 
     for e in per_spw:
         e["n_chan_omitted"] = len(e.get("chan_median_amp", []))
@@ -135,15 +139,29 @@ def _bound_chan_payload(
             f"{len(per_spw)} SpW entries. Per-SpW aggregates are complete."
         ),
     )
-    data["detail_path"] = fmt_field(written, flag="COMPLETE" if written else "UNAVAILABLE")
-    data["detail_note"] = (
-        "Full per-channel arrays (all SpWs) written to detail_path as compact "
-        "JSON. Alternatively re-run with a larger max_per_chan_records, or 0 "
-        "for no bound."
-        if written
-        else "Sidecar write failed; re-run with max_per_chan_records=0 to "
-        "receive the per-channel arrays inline."
-    )
+    if written:
+        data["detail_path"] = fmt_field(written, flag="COMPLETE")
+        data["detail_note"] = (
+            "Full per-channel arrays (all SpWs) written to detail_path as compact JSON."
+        )
+    elif write_failed:
+        data["detail_path"] = fmt_field(
+            None,
+            flag="UNAVAILABLE",
+            note="Sidecar write failed; pass a writable workdir to persist per-channel arrays.",
+        )
+        data["detail_note"] = (
+            "Sidecar write failed; pass a writable workdir to persist per-channel arrays."
+        )
+    else:
+        data["detail_path"] = fmt_field(
+            None,
+            flag="PARTIAL",
+            note="No workdir provided; pass workdir or set RADIO_MCP_DIR to write per-channel sidecar.",
+        )
+        data["detail_note"] = (
+            "Per-channel arrays omitted from wire output; pass workdir to write JSON sidecar."
+        )
     return data
 
 
@@ -152,6 +170,7 @@ def run(
     field_id: int,
     max_rows: int = _DEFAULT_MAX_ROWS,
     max_per_chan_records: int = _DEFAULT_MAX_PER_CHAN_RECORDS,
+    workdir: str | None = None,
 ) -> dict:
     """
     Compute per-SPW amplitude stats of CORRECTED − MODEL for a field.
@@ -296,7 +315,9 @@ def run(
     data = _bound_chan_payload(
         data,
         max_per_chan_records=max_per_chan_records,
-        sidecar_path=f"{ms_str}.residual_stats.field{field_id}.json",
+        sidecar_path=resolve_sidecar_path(
+            f"{Path(p).name}.residual_stats.field{field_id}.json", workdir
+        ),
         warnings=warnings,
     )
 

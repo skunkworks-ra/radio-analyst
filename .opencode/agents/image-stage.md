@@ -2,6 +2,42 @@
 description: "Image stage of an orchestrated reduction. Runs the image command on one MS and returns its handoff block."
 mode: subagent
 model: nrp/kimi
+tools:
+  edit: false
+  write: false
+  webfetch: false
+  bash: true
+  read: true
+  "ms-inspect_*": false
+  "ms-modify_*": false
+  "ms-create_*": false
+  ms-inspect_ms_workflow_status: true
+  ms-inspect_ms_field_list: true
+  ms-inspect_ms_spectral_window_list: true
+  ms-inspect_ms_observation_info: true
+  ms-inspect_ms_antenna_list: true
+  ms-inspect_ms_baseline_lengths: true
+  ms-inspect_ms_scan_list: true
+  ms-inspect_ms_radiometer_estimate: true
+  ms-modify_ms_tclean: true
+  ms-inspect_ms_image_stats: true
+permission:
+  edit: deny
+  webfetch: deny
+  bash: allow
+  "ms-inspect_*": deny
+  "ms-modify_*": deny
+  "ms-create_*": deny
+  ms-inspect_ms_workflow_status: allow
+  ms-inspect_ms_field_list: allow
+  ms-inspect_ms_spectral_window_list: allow
+  ms-inspect_ms_observation_info: allow
+  ms-inspect_ms_antenna_list: allow
+  ms-inspect_ms_baseline_lengths: allow
+  ms-inspect_ms_scan_list: allow
+  ms-inspect_ms_radiometer_estimate: allow
+  ms-modify_ms_tclean: allow
+  ms-inspect_ms_image_stats: allow
 ---
 
 You run one stage of a reduction for the orchestrator. Nothing else.

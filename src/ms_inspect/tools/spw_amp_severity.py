@@ -39,11 +39,19 @@ order-independent uniform sample over the unflagged population per channel.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 from ms_inspect.util.casa_context import open_table, validate_ms_path
+from ms_inspect.util.formatting import (
+    _collect_flags,
+    normalize_field_sel,
+    resolve_sidecar_path,
+    response_envelope,
+    unwrap_fields,
+)
 from ms_inspect.util.formatting import field as fmt_field
-from ms_inspect.util.formatting import normalize_field_sel, response_envelope
 from ms_inspect.util.selection import match_field_names, parallel_corr_by_ddid
 
 TOOL_NAME = "ms_spw_amp_severity"
@@ -58,7 +66,7 @@ _SEED = 1234  # fixed for reproducibility
 # set by the dataset, not by this tool — a wideband MS puts tens of thousands of
 # per-channel records into one MCP response. The per-SpW aggregates are never
 # capped: they are small, and they are what 13-postcal-rfi-flagging.md consumes.
-_DEFAULT_MAX_PER_CHAN_RECORDS = 2000
+_DEFAULT_MAX_PER_CHAN_RECORDS = 128
 
 
 class _ChanReservoir:
@@ -123,7 +131,7 @@ def _corr_first_axis(arr: np.ndarray) -> np.ndarray:
 def _bound_per_chan_payload(
     data: dict,
     max_per_chan_records: int,
-    sidecar_path: str,
+    sidecar_path: str | None,
     warnings: list[str],
 ) -> dict:
     """
@@ -134,8 +142,8 @@ def _bound_per_chan_payload(
     either every SpW keeps its `per_chan` or none does. The per-SpW aggregates
     are never touched.
 
-    The sidecar is written only when truncation actually occurs — this is a
-    read-only tool and must not write next to the caller's MS for nothing.
+    The sidecar is written into `<workdir>/sidecars/` only when truncation
+    occurs and a workdir is configured -- NEVER next to `ms_path`.
 
     Every per_spw entry is required to carry a `per_chan` list. A missing key
     is a construction bug upstream, not a condition to degrade past, so it
@@ -162,20 +170,48 @@ def _bound_per_chan_payload(
         data["per_chan_truncated"] = fmt_field(False)
         return data
 
-    written: str | None = sidecar_path
-    try:
-        with open(sidecar_path, "w") as fh:
-            _json.dump(data, fh, separators=(",", ":"), default=str)
-    except OSError as exc:
-        written = None
-        warnings.append(
-            f"Could not write per-channel sidecar to {sidecar_path}: {exc}. "
-            "The per-channel detail is dropped from this response and is not "
-            "on disk; re-run with max_per_chan_records=0 to receive it inline."
-        )
+    written: str | None = None
+    write_failed = False
+    if sidecar_path:
+        try:
+            with open(sidecar_path, "w") as fh:
+                _json.dump(data, fh, separators=(",", ":"), default=str)
+            written = sidecar_path
+        except OSError as exc:
+            write_failed = True
+            warnings.append(
+                f"Could not write per-channel sidecar to {sidecar_path}: {exc}. "
+                "The per-channel detail is dropped from this response; pass a writable "
+                "workdir to persist the full per-channel JSON sidecar."
+            )
+
+    per_chan_only = {"per_spw": [{"per_chan": entry["per_chan"]} for entry in per_spw]}
+    offloaded_flags = _collect_flags(per_chan_only)
+    _, offloaded_field_flags = unwrap_fields(per_chan_only)
 
     for entry in per_spw:
-        entry["n_per_chan_omitted"] = len(entry.pop("per_chan"))
+        chans = entry.pop("per_chan")
+        entry["n_per_chan_omitted"] = len(chans)
+        thresh = entry.get("elevation_threshold")
+        if isinstance(thresh, (int, float)):
+            elevated = [
+                {
+                    "chan": c.get("chan"),
+                    "freq_ghz": (
+                        round(float(c["freq_mhz"]) / 1000.0, 6)
+                        if c.get("freq_mhz") is not None
+                        else c.get("freq_ghz")
+                    ),
+                    "median": c.get("median"),
+                    "discardable_frac": c.get("discardable_frac"),
+                }
+                for c in chans
+                if isinstance(c, dict)
+                and isinstance(c.get("median"), (int, float))
+                and c["median"] > thresh
+            ]
+            elevated.sort(key=lambda r: float(r["median"] or 0.0), reverse=True)
+            entry["top_elevated_chans"] = elevated[:5]
 
     data["per_chan_truncated"] = fmt_field(
         True,
@@ -187,15 +223,34 @@ def _bound_per_chan_payload(
         ),
     )
     data["n_per_chan_records_dropped"] = total
-    data["detail_path"] = fmt_field(written, flag="COMPLETE" if written else "UNAVAILABLE")
-    data["detail_note"] = (
-        "Full per-channel detail (all SpWs) written to detail_path as compact "
-        "JSON; read it from the filesystem. Alternatively re-run with a larger "
-        "max_per_chan_records, or 0 for no bound."
-        if written
-        else "Sidecar write failed; re-run with max_per_chan_records=0 to "
-        "receive the per-channel detail inline."
-    )
+    if written:
+        data["detail_path"] = fmt_field(written, flag="COMPLETE")
+        data["detail_note"] = (
+            "Full per-channel detail (all SpWs) written to detail_path as compact "
+            "JSON; read it directly from the filesystem."
+        )
+    elif write_failed:
+        data["detail_path"] = fmt_field(
+            None,
+            flag="UNAVAILABLE",
+            note="Sidecar write failed; pass a writable workdir to persist per-channel detail.",
+        )
+        data["detail_note"] = (
+            "Sidecar write failed; pass a writable workdir to persist per-channel detail."
+        )
+    else:
+        data["detail_path"] = fmt_field(
+            None,
+            flag="PARTIAL",
+            note="No workdir provided; pass workdir or set RADIO_MCP_DIR to write per-channel sidecar.",
+        )
+        data["detail_note"] = (
+            "Per-channel detail omitted from wire output; pass workdir to write JSON sidecar."
+        )
+    if offloaded_flags:
+        data["_offloaded_flags"] = offloaded_flags
+    if offloaded_field_flags:
+        data["_offloaded_field_flags"] = offloaded_field_flags
     return data
 
 
@@ -207,6 +262,7 @@ def run(
     max_samples_per_chan: int = _DEFAULT_MAX_SAMPLES,
     row_chunk: int = _DEFAULT_ROW_CHUNK,
     max_per_chan_records: int = _DEFAULT_MAX_PER_CHAN_RECORDS,
+    workdir: str | None = None,
 ) -> dict:
     """
     Per-channel robust amplitude stats of a data column, aggregated per SpW.
@@ -519,7 +575,7 @@ def run(
     data = _bound_per_chan_payload(
         data,
         max_per_chan_records=max_per_chan_records,
-        sidecar_path=ms_str + ".spw_amp_severity.json",
+        sidecar_path=resolve_sidecar_path(f"{Path(p).name}.spw_amp_severity.json", workdir),
         warnings=warnings,
     )
 

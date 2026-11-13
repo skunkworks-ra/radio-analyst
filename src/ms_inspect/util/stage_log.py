@@ -92,8 +92,12 @@ def _record_stage(workdir, stage, product, measurement=None):
     measurement, not the path. A solve tool also records here which kind of
     solve it ran (gaintype, poltype), because one stage name covers several.
     """
+    import base64
+    import hashlib
+    import inspect
     import json
     import os
+    import sys
     from datetime import datetime, timezone
 
     exists = os.path.exists(product)
@@ -105,6 +109,43 @@ def _record_stage(workdir, stage, product, measurement=None):
         "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "exists": exists,
     }
+    tool_env = os.environ.get("_ANALYST_TOOL_NAME")
+    script_env = os.environ.get("_ANALYST_SCRIPT_PATH")
+    params_env = os.environ.get("_ANALYST_CALL_PARAMS")
+    if tool_env:
+        entry["tool"] = tool_env
+        if script_env:
+            entry["script_path"] = script_env
+            if os.path.isfile(script_env):
+                with open(script_env, "rb") as _sf:
+                    entry["script_sha256"] = hashlib.sha256(_sf.read()).hexdigest()
+        if params_env:
+            try:
+                _raw_p = (
+                    params_env
+                    if params_env.lstrip()[:1] == "{"
+                    else base64.b64decode(params_env.encode("ascii")).decode("utf-8")
+                )
+                entry["params"] = json.loads(_raw_p)
+            except Exception:
+                pass
+    else:
+        try:
+            _caller = sys._getframe(1)
+            _tname = _caller.f_globals.get("TOOL_NAME")
+            if (
+                isinstance(_tname, str)
+                and _tname[:3] == "ms_"
+                and _caller.f_code.co_name in ("run", "set_intents")
+            ):
+                entry["tool"] = _tname
+                _fn = _caller.f_globals.get(_caller.f_code.co_name) or _caller.f_globals.get("run")
+                if callable(_fn):
+                    _sig = inspect.signature(_fn)
+                    _raw = {k: _caller.f_locals[k] for k in _sig.parameters if k in _caller.f_locals}
+                    entry["params"] = json.loads(json.dumps(_raw, default=str))
+        except Exception:
+            pass
     casa_log = os.environ.get("_ANALYST_CASA_LOGFILE")
     if casa_log:
         entry["casa_log"] = casa_log

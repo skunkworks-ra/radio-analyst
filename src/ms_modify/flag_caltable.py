@@ -226,8 +226,11 @@ def _build_script(
     flagbackup: bool,
     selection: dict[str, str] | None = None,
     reason: str = "",
+    workdir: str = "",
 ) -> str:
     """Return a self-contained flag_caltable.py driver script."""
+    from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
+
     kwargs = _flag_kwargs(mode, sigma, selection or {})
     flag_kwargs = ", ".join(f"{k}={v!r}" for k, v in kwargs.items())
     if mode == "manual":
@@ -241,10 +244,19 @@ def _build_script(
         what = (
             f"Autoflags caltable solutions (mode={mode!r}, datacolumn={datacolumn!r}) at\n"
             f"sigma={sigma}. Prints the flagged fraction before and after so you can decide\n"
-            "whether the a-priori flagging was sufficient (> 30% flagged → improve preflag\n"
+            "whether the a-priori flagging was sufficient (> 30% flagged -> improve preflag\n"
             "and redo the solve rather than loosening sigma)."
         )
         datacol_kwarg = f"\n    datacolumn={datacolumn!r},"
+
+    record_block = f"\n{record}\n" if workdir else ""
+    record_call = (
+        f'\n_record_stage({workdir!r}, "flag_caltable", caltable, '
+        f'{{"mode": {mode!r}, "flagged_frac_before": round(_frac(before), 4), '
+        f'"flagged_frac_after": round(_frac(after), 4)}})'
+        if workdir
+        else ""
+    )
 
     return f"""\
 #!/usr/bin/env python
@@ -255,7 +267,7 @@ Run with: python flag_caltable.py
 {what}
 \"\"\"
 from casatasks import flagdata
-
+{record_block}
 caltable = {caltable_str!r}
 
 
@@ -277,7 +289,7 @@ flagdata(
 
 after = flagdata(vis=caltable, mode="summary", datacolumn={datacolumn!r})
 print(f"Flagged fraction after:  {{_frac(after):.4f}}")
-print(f"Delta: {{_frac(after) - _frac(before):.4f}}")
+print(f"Delta: {{_frac(after) - _frac(before):.4f}}"){record_call}
 """
 
 
@@ -378,6 +390,7 @@ def run(
         flagbackup=flagbackup,
         selection=sel,
         reason=reason,
+        workdir=str(workdir_path),
     )
     _debug = debug_mode.validate(debug, debug_params, DEBUG_TASKS)
     if _debug:
@@ -463,6 +476,18 @@ def run(
     frac_before = _frac(before)
     frac_after = _frac(after)
     delta = frac_after - frac_before
+    from ms_inspect.util.stage_log import record_stage
+
+    record_stage(
+        str(workdir_path),
+        "flag_caltable",
+        caltable_str,
+        {
+            "mode": resolved_mode,
+            "flagged_frac_before": round(frac_before, 4),
+            "flagged_frac_after": round(frac_after, 4),
+        },
+    )
     base_data["flagged_frac_before"] = fmt_field(round(frac_before, 4))
     base_data["flagged_frac_after"] = fmt_field(round(frac_after, 4))
     base_data["flagged_frac_delta"] = fmt_field(round(delta, 4))

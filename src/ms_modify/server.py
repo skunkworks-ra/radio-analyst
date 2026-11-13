@@ -49,6 +49,9 @@ mcp = FastMCP(
     instructions=(
         "Radio interferometric Measurement Set modification utilities. "
         "Tools in this server write to the MS -- use with care. "
+        "Debug mode: pass debug=True and debug_params={task: {param: val}} on retries "
+        "to override non-protected CASA task parameters (validated against task schemas; "
+        "paths, flag selections, and safety flags cannot be overridden). "
         f"{CASA_LOG_NOTE}"
         f"Version: {__version__}"
     ),
@@ -65,24 +68,13 @@ mcp = FastMCP(
 # debug / debug_params: declared last in every write tool that calls a CASA task
 # (ms_modify/debug_mode.py), so a model reads the tool's own parameters first.
 def _debug_field():
-    return Field(
-        default=False,
-        description=(
-            "Debug mode. Only with debug=True are debug_params accepted. Use on a "
-            "retry, when the tool's own parameters are not enough to diagnose a failure."
-        ),
-    )
+    return Field(default=False, description="Enable debug_params overrides.")
 
 
 def _debug_params_field():
     return Field(
         default_factory=dict,
-        description=(
-            "Debug mode only: extra or overriding CASA parameters, keyed by the CASA "
-            "task this tool calls, e.g. {'gaincal': {'minsnr': 2.0}}. Names are checked "
-            "against the installed casatasks; data/product paths, flagging selection and "
-            "safety settings cannot be overridden."
-        ),
+        description="CASA {task: {param: val}} overrides (requires debug=True).",
     )
 
 
@@ -117,21 +109,11 @@ class SetIntentsInput(BaseModel):
     )
     pol_angle_fields: list[str] = Field(
         default_factory=list,
-        description=(
-            "Field names (or field ids as strings) to mark as the polarisation "
-            "ANGLE calibrator, in addition to any pol-catalogue match. Normally "
-            "left empty: 3C286 / 3C138 / 3C48 are assigned automatically."
-        ),
+        description="Optional field names/IDs to tag as CALIBRATE_POL_ANGLE.",
     )
     pol_leakage_fields: list[str] = Field(
         default_factory=list,
-        description=(
-            "Field names (or field ids as strings) to mark as the polarisation "
-            "LEAKAGE calibrator. Use when no dedicated leakage cal (3C84, OQ208, "
-            "3C147, ...) was observed and you are nominating another field, "
-            "typically the phase calibrator. Rank the options with "
-            "ms_pol_cal_conditions first; the choice is yours, not the tool's."
-        ),
+        description="Optional field names/IDs to tag as CALIBRATE_POL_LEAKAGE.",
     )
 
 
@@ -506,54 +488,26 @@ class GeneratePriorcalsInput(BaseModel):
 class SetjyInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     ms_path: str = Field(..., description="Path to calibrators.ms (or full MS).", min_length=1)
-    workdir: str = Field(..., description="Existing directory for setjy.py script.", min_length=1)
+    workdir: str = Field(..., description="Existing directory for setjy.py.", min_length=1)
     standard: str = Field(
         default="",
-        description=(
-            "Whole-run OVERRIDE. Leave empty (default) to resolve a standard PER "
-            "FIELD from that field's own observing frequency — required when one "
-            "MS needs two standards (e.g. a solar-system body plus a quasar). A "
-            "non-empty value forces one standard on every flux field and SKIPS "
-            "the frequency validity check."
-        ),
+        description="Optional whole-run flux standard override (empty resolves per field).",
     )
     manual_flux: dict = Field(
         default_factory=dict,
-        description=(
-            "Explicit flux for sources CASA has no model for (e.g. PKS0408-65), "
-            "as {field_name: {'fluxdensity': [I, Q, U, V], 'spix': ..., "
-            "'reffreq': ...}}. Only the keys given are emitted; nothing is "
-            "defaulted. Without an entry such a field is SKIPPED with a warning "
-            "— it is never routed to a different standard."
-        ),
+        description="Explicit flux map {field: {'fluxdensity': [I,Q,U,V], 'spix': ..., 'reffreq': ...}}.",
     )
     usescratch: bool = Field(
         default=False,
-        description=(
-            "False (default) = virtual model; True = fill physical MODEL_DATA. "
-            "Must match across all setjy calls on one MS. If polarization "
-            "calibration is in scope, set True here (ms_setjy_polcal forces True "
-            "because virtual models fail on non-zero-RM source models — a known "
-            "CASA bug). Mixing leaves virtual-model fields at MODEL_DATA=1 Jy and "
-            "corrupts the flux scale."
-        ),
+        description="False = virtual model; True = physical MODEL_DATA (set True when polcal is in scope).",
     )
     exclude_fields: str = Field(
         default="",
-        description=(
-            "Comma-separated field NAMES to omit from the Stokes-I setjy pass, "
-            "even if catalogued flux standards. Pass the pol-angle calibrator here "
-            "when it overlaps a flux/BP cal: its polarized model is set by "
-            "ms_setjy_polcal, and a plain Stokes-I setjy would overwrite it "
-            "(MODEL is last-writer-wins per field)."
-        ),
+        description="Comma-separated field names to omit (e.g. pol-angle cal set via ms_setjy_polcal).",
     )
     execute: bool = Field(
         default=False,
-        description=(
-            "If False (default), write setjy.py and return. "
-            "If True, run setjy in-process for each flux field."
-        ),
+        description="False writes script; True runs in-process.",
     )
     debug: bool = _debug_field()
     debug_params: dict[str, dict[str, Any]] = _debug_params_field()
@@ -743,139 +697,69 @@ class ApplyInitialRflagInput(BaseModel):
 
 class PostcalFlagInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    ms_path: str = Field(
-        ...,
-        description="Path to the MS (CORRECTED populated on the selected fields).",
-        min_length=1,
-    )
-    workdir: str = Field(..., description="Existing directory for generated scripts.", min_length=1)
+    ms_path: str = Field(..., description="Path to MS with CORRECTED populated.", min_length=1)
+    workdir: str = Field(..., description="Existing directory for scripts.", min_length=1)
     field: str = Field(
         ...,
-        description=(
-            "REQUIRED. The phase calibrator and/or science target whose CORRECTED column "
-            "is valid after the final applycal. An all-field pass over fields without valid "
-            "CORRECTED flags almost everything."
-        ),
+        description="Calibrated field(s) to flag (required; never uncalibrated fields).",
         min_length=1,
     )
-    keep_spw: str = Field(
-        default="",
-        description="SpWs being KEPT — tfcrop + rflag run on these to salvage localized RFI. Empty = all.",
-    )
-    drop_spw: str = Field(
-        default="",
-        description="Drop-tier SpWs — fully flagged via manual command. Empty = drop nothing.",
-    )
+    keep_spw: str = Field(default="", description="SpWs to flag with tfcrop+rflag (empty = all).")
+    drop_spw: str = Field(default="", description="SpWs to flag completely (empty = none).")
     datacolumn: str = Field(
         default="corrected",
-        description="Column to flag on (default 'corrected'). Must be 'residual' when any clip is requested.",
+        description="Column to flag ('corrected' default; 'residual' required when clipping).",
     )
     clip_sigma: float | None = Field(
         default=None,
-        description=(
-            "Residual clip: ceiling = clip_sigma*1.4826*MAD(Re(CORRECTED-MODEL)) per field / kept SpW / "
-            "parallel-hand correlation. Default None (no clip). Requires datacolumn='residual' and a real "
-            "MODEL (not the 1 Jy default) on every selected field; raises otherwise. Never clip a phase "
-            "calibrator or target without a model."
-        ),
+        description="Residual clip ceiling in MAD sigma (requires datacolumn='residual' and real MODEL).",
     )
     clipmax: float | None = Field(
         default=None,
-        description="Flat |residual| ceiling, used only when clip_sigma is None. Same residual/model requirement.",
+        description="Flat |residual| ceiling when clip_sigma is None.",
     )
     floor_spw: str = Field(
         default="",
-        description=(
-            "Optional known-clean SpWs. If set, each (field, corr) uses the median residual sigma over these "
-            "SpWs as a thermal floor for every kept SpW (robust when RFI fills most of a SpW)."
-        ),
+        description="Optional clean SpWs to set thermal residual floor.",
     )
-    uvrange: str = Field(
-        default="",
-        description="Optional CASA uvrange applied to the clip only (e.g. '>2klambda').",
-    )
-    timedevscale: float = Field(default=5.0, description="rflag time deviation threshold.", gt=0.0)
-    freqdevscale: float = Field(
-        default=5.0, description="rflag frequency deviation threshold.", gt=0.0
-    )
-    timecutoff: float = Field(default=4.0, description="tfcrop time deviation threshold.", gt=0.0)
-    freqcutoff: float = Field(
-        default=4.0, description="tfcrop frequency deviation threshold.", gt=0.0
-    )
-    execute: bool = Field(
-        default=False,
-        description="If False (default), write scripts and return. If True, run flagdata(mode='list') in-process.",
-    )
+    uvrange: str = Field(default="", description="Optional uvrange for clip pass.")
+    timedevscale: float = Field(default=5.0, description="rflag time threshold.", gt=0.0)
+    freqdevscale: float = Field(default=5.0, description="rflag freq threshold.", gt=0.0)
+    timecutoff: float = Field(default=4.0, description="tfcrop time threshold.", gt=0.0)
+    freqcutoff: float = Field(default=4.0, description="tfcrop freq threshold.", gt=0.0)
+    execute: bool = Field(default=False, description="False writes script; True runs in-process.")
     debug: bool = _debug_field()
     debug_params: dict[str, dict[str, Any]] = _debug_params_field()
 
 
 class FlagCaltableInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    caltable_path: str = Field(
-        ..., description="Path to the CASA calibration table to autoflag.", min_length=1
-    )
-    workdir: str = Field(
-        ..., description="Existing directory for the generated script.", min_length=1
-    )
-    sigma: float = Field(
-        default=5.0,
-        description=(
-            "Threshold scale (default 5.0; 6.0 is more conservative). Maps to "
-            "timecutoff/freqcutoff (tfcrop) or timedevscale/freqdevscale (rflag)."
-        ),
-        gt=0.0,
-    )
+    caltable_path: str = Field(..., description="Path to CASA caltable.", min_length=1)
+    workdir: str = Field(..., description="Existing directory for script.", min_length=1)
+    sigma: float = Field(default=5.0, description="Flagging sigma threshold (default 5.0).", gt=0.0)
     mode: str | None = Field(
         default=None,
-        description=(
-            "'rflag', 'tfcrop' or 'manual'. Default None → auto-route from the VisCal "
-            "type (B→tfcrop, G/T/D→rflag, K→refused). 'manual' flags the named "
-            "selection (antenna/spw/field/scan/timerange/observation) on any table "
-            "type, needs at least one selection and a reason, and skips the "
-            "solution-interval check."
-        ),
+        description="'rflag', 'tfcrop', 'manual', or None (auto: B->tfcrop, G/T/D->rflag).",
     )
     datacolumn: str = Field(
         default="CPARAM",
-        description="Solution column to flag on. Default 'CPARAM' (complex: B/G/D). 'FPARAM' for real-valued.",
+        description="'CPARAM' (complex) or 'FPARAM' (real).",
         min_length=1,
     )
-    flagbackup: bool = Field(
-        default=True,
-        description="Save a .flagversions backup of the caltable before flagging (default True).",
-    )
+    flagbackup: bool = Field(default=True, description="Save .flagversions backup first.")
     min_intervals: int = Field(
         default=10,
-        description=(
-            "Gain tables (G, T): minimum median solution intervals per (field, SpW, antenna) "
-            "for autoflagging along time. Below it auto-routing refuses; an explicit mode runs "
-            "with a warning. Interval counts are always reported."
-        ),
+        description="Minimum median time intervals for G/T auto-routing (default 10).",
         ge=0,
     )
-    execute: bool = Field(
-        default=False,
-        description=(
-            "If False (default), write flag_caltable.py and return. If True, run "
-            "summary→apply→summary in-process and report flagged_frac_before/after/delta."
-        ),
-    )
-    antenna: str = Field(default="", description="mode='manual': flagdata antenna selection.")
-    spw: str = Field(default="", description="mode='manual': flagdata spw selection.")
-    field: str = Field(default="", description="mode='manual': flagdata field selection.")
-    scan: str = Field(default="", description="mode='manual': flagdata scan selection.")
-    timerange: str = Field(default="", description="mode='manual': flagdata timerange selection.")
-    observation: str = Field(
-        default="", description="mode='manual': flagdata observation selection."
-    )
-    reason: str = Field(
-        default="",
-        description=(
-            "mode='manual', required: why these solutions are flagged (the "
-            "ms_calsol_stats evidence). Written into the script header."
-        ),
-    )
+    execute: bool = Field(default=False, description="False writes script; True runs in-process.")
+    antenna: str = Field(default="", description="mode='manual': antenna selection.")
+    spw: str = Field(default="", description="mode='manual': spw selection.")
+    field: str = Field(default="", description="mode='manual': field selection.")
+    scan: str = Field(default="", description="mode='manual': scan selection.")
+    timerange: str = Field(default="", description="mode='manual': timerange selection.")
+    observation: str = Field(default="", description="mode='manual': observation selection.")
+    reason: str = Field(default="", description="mode='manual' required: measurement reason.")
     debug: bool = _debug_field()
     debug_params: dict[str, dict[str, Any]] = _debug_params_field()
 
@@ -1410,29 +1294,16 @@ class GaincalInput(BaseModel):
     interp: list[str] = Field(default_factory=list, description="Interpolation mode per gaintable.")
     spwmap: list[list[int]] = Field(
         default_factory=list,
-        description=(
-            "Optional per-prior-table SPW map (list-of-lists aligned to gaintable) to "
-            "fan an spw-combined prior across all SPWs. Empty → CASA identity. Only "
-            "needed if a prior used combine='spw' (VLA multiband delay)."
-        ),
+        description="Optional per-prior-table SPW map (e.g. [[], [0,0,0,0]]).",
     )
     gainfield: list[str] = Field(
         default_factory=list,
-        description=(
-            "Optional per-prior-table field selection (aligned to gaintable): which "
-            "field's solutions each prior applies, e.g. ['', '', 'J1822-0938'] to take "
-            "a multi-field gain table's rows from the phase calibrator only (selfcal). "
-            "Empty → solutions from every field."
-        ),
+        description="Optional per-prior-table field selection aligned to gaintable.",
     )
     parang: bool = Field(default=True, description="Apply parallactic angle correction.")
     target_fields: str = Field(
         default="",
-        description=(
-            "Optional CASA field selection for the science-target / transfer fields, "
-            "used only for the SpW-coverage guardrail. Empty infers them from intents; "
-            "the tool raises if it cannot infer them."
-        ),
+        description="Science-target fields for SpW-coverage check (required on calibrator-only MS).",
     )
     execute: bool = Field(
         default=False,
@@ -1530,45 +1401,23 @@ class ApplycalInput(BaseModel):
     workdir: str = Field(..., description="Existing directory for script output.", min_length=1)
     gainfield: list[str] = Field(
         default_factory=list,
-        description=(
-            "Per-table field selection for which solutions to use. "
-            "Default: all solutions in each table. "
-            "Set to the calibrator field name for the gain/fluxtable entry."
-        ),
+        description="Per-table field selection (default: all solutions in each table).",
     )
     interp: list[str] = Field(
         default_factory=list,
-        description=(
-            "Per-table interpolation mode. "
-            "Use 'nearest' for calibrators, 'linear' for target, "
-            "'nearest,nearestflag' for delay (K) tables."
-        ),
+        description="Per-table interpolation ('nearest', 'linear', 'nearest,nearestflag').",
     )
     spwmap: list[list[int]] = Field(
         default_factory=list,
-        description=(
-            "Optional per-table SPW map (list-of-lists aligned to gaintable), e.g. "
-            "[[], [0,0,0,0], []] to fan an spw-combined table across all SPWs while "
-            "leaving per-SPW tables on identity. Empty → CASA identity (unchanged "
-            "per-SPW behaviour). Only needed when a table used combine='spw' (VLA "
-            "multiband delay)."
-        ),
+        description="Optional per-table SPW map aligned to gaintable.",
     )
     calwt: bool = Field(
         default=False,
-        description=(
-            "Calibrate the weights. Default False — VLA weights are not properly "
-            "normalised; use statwt before imaging instead."
-        ),
+        description="Calibrate weights (default False).",
     )
     applymode: str = Field(
         default="calflag",
-        description=(
-            "'calflag' (default) applies calibration and flags data whose solutions are "
-            "flagged, so uncalibrated data cannot reach CORRECTED. 'calonly' passes such "
-            "data through uncalibrated (interim applies in a flagging loop only). "
-            "'calflagstrict' also flags SpWs with no calibration in one or more tables."
-        ),
+        description="'calflag' (default), 'calonly', or 'calflagstrict'.",
     )
     parang: bool = Field(default=True, description="Apply parallactic angle correction.")
     flagbackup: bool = Field(
@@ -1911,161 +1760,70 @@ async def ms_applycal(params: ApplycalInput) -> ToolResult:
 
 class TcleanInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    ms_path: str = Field(..., description="Path to the full Measurement Set.", min_length=1)
+    ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
     imagename: str = Field(
-        ...,
-        description=(
-            "Base path for all output image products (no suffix). "
-            "Example: '/data/images/3c391_spw0'. "
-            "tclean appends .image, .psf, .residual, etc."
-        ),
-        min_length=1,
+        ..., description="Output image prefix inside workdir (no suffix).", min_length=1
     )
-    field: str = Field(
-        ...,
-        description="CASA field selection for science target(s), e.g. '2~8' or '3C391_C1'.",
-        min_length=1,
-    )
+    field: str = Field(..., description="CASA target field selection.", min_length=1)
     workdir: str = Field(
-        ..., description="Existing directory for the generated script.", min_length=1
+        ..., description="Existing directory for script and outputs.", min_length=1
     )
-    spw: str = Field(
-        default="",
-        description=(
-            "CASA SPW selection (default '' = all SPWs). Use to exclude "
-            "RFI-dominated SPWs, e.g. '0~8,10~15' to drop SPW 9."
-        ),
-    )
-    stokes: str = Field(
-        default="I",
-        description="Stokes products to image. Default 'I'. Also accepts 'IV', 'IQUV', 'RR', 'LL', etc.",
-    )
-    specmode: str = Field(
-        default="mfs",
-        description=(
-            "'mfs' for continuum (default), 'cube' for per-channel imaging, or "
-            "'mvc' for wideband awp2 imaging (awp2 lacks conjbeams; plain 'mfs' "
-            "needs several major cycles to converge flux normalization)."
-        ),
-    )
+    spw: str = Field(default="", description="CASA SpW selection (empty = all).")
+    stokes: str = Field(default="I", description="Stokes parameter(s), e.g. 'I', 'IQUV'.")
+    specmode: str = Field(default="mfs", description="'mfs' (default), 'cube', or 'mvc'.")
     deconvolver: str = Field(
         default="hogbom",
-        description=(
-            "'hogbom' (default first pass), 'mtmfs' for wideband (fractional BW > 20%), "
-            "'multiscale' for extended emission (with scales), or 'asp' (expensive; last)."
-        ),
+        description="'hogbom' (default), 'mtmfs', 'multiscale', or 'asp'.",
     )
     scales: list[int] | None = Field(
         default=None,
-        description=(
-            "Multiscale scales in pixels, 0 first (point components). Used by "
-            "deconvolver 'multiscale' and 'mtmfs'; ignored otherwise."
-        ),
+        description="Multiscale pixel scales (e.g. [0, 5, 15]) for multiscale/mtmfs.",
     )
     nterms: int | None = Field(
         default=None,
-        description="Taylor terms for mtmfs deconvolver (pass 2 for mtmfs; omit for hogbom).",
+        description="Taylor terms for mtmfs (e.g. 2; omit for hogbom).",
         ge=1,
     )
     gridder: str = Field(
         default="standard",
-        description=(
-            "'standard', 'wproject' (W-term single pointing), 'mosaic' (first-pass "
-            "mosaic), or 'awproject'/'awp2' (A-projection; a later, costlier choice)."
-        ),
+        description="'standard', 'wproject', 'mosaic', 'awproject', or 'awp2'.",
     )
     wprojplanes: int | None = Field(
         default=None,
-        description=(
-            "Number of W-projection planes. Omit when W-terms are negligible "
-            "(Fresnel number >= 0.9). Valid for both 'wproject' and 'awp2' gridders. "
-            "If omitted for those gridders, CASA silently defaults to 1 (no W-projection)."
-        ),
+        description="W-projection planes for wproject/awp2.",
         ge=1,
     )
-    cfcache: str | None = Field(
-        default=None,
-        description=(
-            "Convolution-function cache path. Only used by gridder='awproject' "
-            "(awp2 has no cfcache). Without it, awproject recomputes CFs on every "
-            "run — potentially hours."
-        ),
-    )
-    cell: str = Field(
-        default="1.0arcsec",
-        description="Cell size, e.g. '2.5arcsec'. Derive from 1/(max_baseline_lambda * 3).",
-    )
+    cfcache: str | None = Field(default=None, description="CF cache path for awproject.")
+    cell: str = Field(default="1.0arcsec", description="Pixel size, e.g. '2.5arcsec'.")
     imsize: list[int] = Field(
         default_factory=lambda: [512, 512],
-        description=(
-            "Image size in pixels [nx, ny]. Must be a composite number (2^a * 3^b * 5^c). "
-            "Derive from primary beam FWHM / cell, rounded up."
-        ),
+        description="Image dimensions [nx, ny].",
         min_length=2,
         max_length=2,
     )
-    weighting: str = Field(default="briggs", description="UV weighting scheme (default 'briggs').")
-    robust: float = Field(
-        default=0.5,
-        description="Briggs robust parameter. -2 = uniform, +2 = natural (default 0.5).",
-        ge=-2.0,
-        le=2.0,
+    weighting: str = Field(
+        default="briggs", description="'briggs' (default), 'natural', or 'uniform'."
     )
-    niter: int = Field(
-        default=50000,
-        description="Maximum clean iterations (default 50000). Use 1000 for quick diagnostic runs.",
-        ge=0,
-    )
-    threshold: str = Field(
-        default="1.0mJy",
-        description="Clean stopping threshold, e.g. '0.5mJy'. Derive from 3 * radiometer RMS.",
-    )
+    robust: float = Field(default=0.5, description="Briggs robust in [-2, 2].", ge=-2.0, le=2.0)
+    niter: int = Field(default=50000, description="Max clean iterations (0 = dirty).", ge=0)
+    threshold: str = Field(default="1.0mJy", description="Clean threshold, e.g. '0.5mJy'.")
     savemodel: str = Field(
         default="modelcolumn",
-        description="'modelcolumn' writes MODEL_DATA for self-cal (default). 'none' skips it.",
+        description="'modelcolumn' (default) or 'none'.",
     )
-    pblimit: float = Field(
-        default=-0.1,
-        description=(
-            "Primary-beam gain cutoff. Default -0.1 (negative disables PB-based "
-            "blanking, keeping low-gain regions and PB-sidelobe outliers visible). "
-            "CASA's default 0.2 blanks everything below 20% PB. The .pbcor noise "
-            "rises toward the edge of the PB."
-        ),
-    )
+    pblimit: float = Field(default=-0.1, description="Primary-beam cutoff (default -0.1).")
     pbmask: float | None = Field(
-        default=None,
-        description="Clean only where PB >= pbmask (usemask='pb'). None uses abs(pblimit).",
+        default=None, description="Clean mask PB level (None uses abs(pblimit))."
     )
     nchan: int | None = Field(
-        default=None,
-        description=(
-            "Number of output channels for a frequency cube (specmode='cube' "
-            "only; None = all). For an IQUV polarization cube, set one plane per "
-            "SPW-chunk per skill 11. Ignored for specmode='mfs'/'mvc'."
-        ),
-        ge=1,
+        default=None, description="Cube output channels (specmode='cube').", ge=1
     )
     start: str | None = Field(
-        default=None,
-        description="Cube first channel as a CASA spectral string, e.g. '1.0GHz' or '0' (specmode='cube').",
+        default=None, description="Cube start channel/freq (specmode='cube')."
     )
-    width: str | None = Field(
-        default=None,
-        description="Cube channel width, e.g. '64MHz' or '4' (specmode='cube').",
-    )
-    outframe: str | None = Field(
-        default=None,
-        description="Output spectral reference frame, e.g. 'LSRK' (specmode='cube'). None = CASA default.",
-    )
-    execute: bool = Field(
-        default=False,
-        description=(
-            "If False (default), write tclean script and return immediately. "
-            "If True, run tclean in-process (intended for test data only — "
-            "real mosaics can take hours)."
-        ),
-    )
+    width: str | None = Field(default=None, description="Cube channel width (specmode='cube').")
+    outframe: str | None = Field(default=None, description="Cube spectral frame, e.g. 'LSRK'.")
+    execute: bool = Field(default=False, description="False writes script; True runs in-process.")
     debug: bool = _debug_field()
     debug_params: dict[str, dict[str, Any]] = _debug_params_field()
 

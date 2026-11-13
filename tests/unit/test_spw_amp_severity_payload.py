@@ -103,7 +103,8 @@ class TestOverTheBound:
         assert "3000" in trunc["note"]  # the count dropped
         assert data["n_per_chan_records_dropped"] == 3000
         assert data["detail_path"]["value"] == str(sidecar)
-        assert "max_per_chan_records" in data["detail_note"]  # how to get the rest
+        assert "detail_path" in data["detail_note"]
+        assert "max_per_chan_records=0" not in data["detail_note"]
 
     def test_sidecar_holds_the_full_detail(self, tmp_path):
         sidecar = tmp_path / "out.json"
@@ -125,7 +126,9 @@ class TestOverTheBound:
         assert data["per_chan_truncated"]["value"] is True
         assert data["detail_path"]["flag"] == "UNAVAILABLE"
         assert any("Could not write per-channel sidecar" in w for w in warnings)
-        assert "max_per_chan_records=0" in data["detail_note"]
+        assert all("max_per_chan_records=0" not in w for w in warnings)
+        assert "workdir" in data["detail_note"]
+        assert "max_per_chan_records=0" not in data["detail_note"]
 
 
 class TestMalformedInputRaises:

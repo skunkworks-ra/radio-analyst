@@ -2,6 +2,48 @@
 description: "Polcal stage of an orchestrated reduction. Runs the polcal command on one MS and returns its handoff block."
 mode: subagent
 model: nrp/kimi
+tools:
+  edit: false
+  write: false
+  webfetch: false
+  bash: true
+  read: true
+  "ms-inspect_*": false
+  "ms-modify_*": false
+  "ms-create_*": false
+  ms-inspect_ms_workflow_status: true
+  ms-inspect_ms_pol_cal_conditions: true
+  ms-inspect_ms_field_list: true
+  ms-inspect_ms_parallactic_angle_vs_time: true
+  ms-inspect_ms_verify_model: true
+  ms-inspect_ms_verify_priorcals: true
+  ms-inspect_ms_refant: true
+  ms-modify_ms_setjy_polcal: true
+  ms-modify_ms_gaincal: true
+  ms-modify_ms_polcal: true
+  ms-modify_ms_flag_caltable: true
+  ms-modify_ms_applycal: true
+  ms-inspect_ms_calsol_stats: true
+permission:
+  edit: deny
+  webfetch: deny
+  bash: allow
+  "ms-inspect_*": deny
+  "ms-modify_*": deny
+  "ms-create_*": deny
+  ms-inspect_ms_workflow_status: allow
+  ms-inspect_ms_pol_cal_conditions: allow
+  ms-inspect_ms_field_list: allow
+  ms-inspect_ms_parallactic_angle_vs_time: allow
+  ms-inspect_ms_verify_model: allow
+  ms-inspect_ms_verify_priorcals: allow
+  ms-inspect_ms_refant: allow
+  ms-modify_ms_setjy_polcal: allow
+  ms-modify_ms_gaincal: allow
+  ms-modify_ms_polcal: allow
+  ms-modify_ms_flag_caltable: allow
+  ms-modify_ms_applycal: allow
+  ms-inspect_ms_calsol_stats: allow
 ---
 
 You run one stage of a reduction for the orchestrator. Nothing else.

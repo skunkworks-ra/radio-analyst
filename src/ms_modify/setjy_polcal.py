@@ -96,8 +96,17 @@ def _build_script(
     polindex: list[float],
     polangle: list[float],
     min_chunk_mhz: float,
+    workdir: str = "",
 ) -> str:
     """Return a self-contained CASA setjy script for polarization model setting."""
+    from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
+
+    record_line = (
+        f'_record_stage({workdir!r}, "setjy_polcal", ms_path, '
+        f'{{"field": {field!r}, "flux_jy": round(flux_at_ref, 4), "reffreq_ghz": reffreq_ghz}})\n'
+        if workdir
+        else ""
+    )
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -114,6 +123,8 @@ catalogue at generation time and are fixed.
 import numpy as np
 from casatools import msmetadata
 from casatasks import setjy
+
+{record}
 
 ms_path = {ms_str!r}
 field = {field!r}
@@ -206,7 +217,7 @@ setjy(
     scalebychan=True,
     usescratch=True,
 )
-print("setjy polcal complete.")
+{record_line}print("setjy polcal complete.")
 """
 
 
@@ -395,7 +406,14 @@ def run(
 
     script_path = str(workdir_path / "setjy_polcal.py")
     script_content = _build_script(
-        ms_str, field, lookup_name, reffreq_ghz, polindex, polangle, min_chunk_mhz
+        ms_str,
+        field,
+        lookup_name,
+        reffreq_ghz,
+        polindex,
+        polangle,
+        min_chunk_mhz,
+        workdir=str(workdir_path),
     )
     write_script(script_path, script_content)
     casa_calls.append(f"write_script → {script_path}")
@@ -490,6 +508,14 @@ def run(
         polangle=polangle,
         scalebychan=True,
         usescratch=True,
+    )
+    from ms_inspect.util.stage_log import record_stage
+
+    record_stage(
+        str(workdir_path),
+        "setjy_polcal",
+        ms_str,
+        {"field": field, "flux_jy": round(flux_at_ref, 4), "reffreq_ghz": reffreq_ghz},
     )
     base_data["executed"] = True
     base_data["flux_jy"] = fmt_field(round(flux_at_ref, 4))

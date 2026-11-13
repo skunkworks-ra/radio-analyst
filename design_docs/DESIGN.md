@@ -788,20 +788,19 @@ The FLAG column of a large MS (VLA wideband, MeerKAT 32k channel mode) can be te
 
 ### 7.1 All Tools
 
-Every tool response is a JSON object with this envelope:
+Every tool response on the MCP wire is a JSON object with this symmetric envelope (`data` holds bare JSON values directly; non-`COMPLETE` or annotated fields appear in `field_flags`; `provenance` is written to `events.jsonl` rather than the wire):
 
 ```json
 {
   "tool": "ms_antenna_list",
   "ms_path": "/data/obs/target.ms",
   "status": "ok",
-  "completeness_summary": "COMPLETE",
-  "data": { ... },
-  "warnings": [],
-  "provenance": {
-    "casa_calls": ["tb.open(ANTENNA)", "tb.getcol(NAME, STATION, POSITION, DISH_DIAMETER, MOUNT)"],
-    "casa_version": "6.6.1"
-  }
+  "completeness_summary": "SUSPECT",
+  "data": { "n_antennas": 27, "dish_diameter_m": 25.0, "..." : "..." },
+  "field_flags": {
+    "antennas[*].x_m": { "flag": "SUSPECT", "note": "Position is (0,0,0)" }
+  },
+  "warnings": []
 }
 ```
 
@@ -863,7 +862,7 @@ On tool error:
 **Phase 1 (Layers 1 & 2): 13 tools** — the tables above plus `ms_flag_preflight`.
 
 > **Note on scope.** This design document was originally written for Phase 1
-> (Layers 1 & 2) only. The `ms_inspect` server has since grown to **36 tools**
+> (Layers 1 & 2) only. The `ms_inspect` server has since grown to **38 tools**
 > as later calibration/imaging phases were implemented, and the read-only
 > contract now spans the whole reduction. The remaining `ms_inspect` tools are
 > catalogued below; `ms_modify` (§8b) and `ms_create` (§8c) are full MCP servers
@@ -907,12 +906,14 @@ On tool error:
 | `ms_pol_cal_conditions` | Pol calibrator identification, catalogue properties at the observed band, and per-field parallactic-angle spread ranked; no verdict |
 | `ms_residual_stats` | CORRECTED − MODEL amplitude distribution per SpW (pre-rflag threshold guide) |
 | `ms_corrected_stats` | Per-field parallel-hand amplitude + phase RMS of a data column, vector-averaged over the channel range (post-applycal sanity) |
+| `ms_vis_amp_time_stats` | Per-integration visibility amplitude summary (`median_amp`, `median_npts`, `top_outliers`) over a selected data column |
 | `ms_phase_cal_lookup` | Cross-match a sky position against the NRAO VLA phase-calibrator catalog; nearest source, flux, UV limits, per-config quality codes |
 
 ### Imaging inspection
 
 | Tool | What it returns |
 |------|----------------|
+| `ms_radiometer_estimate` | VLA OSS Eq. 1 radiometer thermal noise (`thermal_rms_jy`, `sefd_jy`, `eff_bw_hz`, `on_source_s`, `n_ant_unflagged`, `weighting_factor`) |
 | `ms_image_stats` | Robust MAD-based RMS, peak, dynamic range, restoring beam, per-plane detection verdict for cubes / IQUV |
 
 ### Pipeline / workflow
@@ -929,7 +930,7 @@ On tool error:
 | `ms_casa_task_spec` | Parameters of a CASA task, read from the checked-in task schemas (casatasks XML translated for the pinned CASA version) |
 | `ms_casa_tool_spec` | Methods of an installed casatools class (v1: `table`) by introspection, with the tier `ms_casa_tool` gives each |
 
-**Total `ms_inspect`: 36 tools.**
+**Total `ms_inspect`: 38 tools.**
 
 ---
 

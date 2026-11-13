@@ -42,11 +42,11 @@ NO_BAND_EDGE_FILES = [
     SKILLS_DIR / "02-orientation.md",
 ]
 
-SEFD_TABLE_FILES = [
+SEFD_TABLE_FILES: list[Path] = []
+
+GRIDDER_FILES = [
     SKILLS_DIR / "11-imaging.md",
 ]
-
-GRIDDER_FILES = SEFD_TABLE_FILES
 
 
 def _skill_files() -> list[Path]:

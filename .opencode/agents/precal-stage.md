@@ -2,6 +2,54 @@
 description: "Precal stage of an orchestrated reduction. Runs the precal command on one MS and returns its handoff block."
 mode: subagent
 model: nrp/kimi
+tools:
+  edit: false
+  write: false
+  webfetch: false
+  bash: true
+  read: true
+  "ms-inspect_*": false
+  "ms-modify_*": false
+  "ms-create_*": false
+  ms-inspect_ms_workflow_status: true
+  ms-inspect_ms_field_list: true
+  ms-inspect_ms_verify_import: true
+  ms-modify_ms_set_intents: true
+  ms-modify_ms_apply_preflag: true
+  ms-modify_ms_generate_priorcals: true
+  ms-inspect_ms_verify_priorcals: true
+  ms-modify_ms_setjy: true
+  ms-inspect_ms_pol_cal_conditions: true
+  ms-inspect_ms_correlator_config: true
+  ms-modify_ms_setjy_polcal: true
+  ms-inspect_ms_verify_model: true
+  ms-inspect_ms_refant: true
+  ms-modify_ms_initial_bandpass: true
+  ms-modify_ms_apply_initial_rflag: true
+  ms-inspect_ms_observation_info: true
+permission:
+  edit: deny
+  webfetch: deny
+  bash: allow
+  "ms-inspect_*": deny
+  "ms-modify_*": deny
+  "ms-create_*": deny
+  ms-inspect_ms_workflow_status: allow
+  ms-inspect_ms_field_list: allow
+  ms-inspect_ms_verify_import: allow
+  ms-modify_ms_set_intents: allow
+  ms-modify_ms_apply_preflag: allow
+  ms-modify_ms_generate_priorcals: allow
+  ms-inspect_ms_verify_priorcals: allow
+  ms-modify_ms_setjy: allow
+  ms-inspect_ms_pol_cal_conditions: allow
+  ms-inspect_ms_correlator_config: allow
+  ms-modify_ms_setjy_polcal: allow
+  ms-inspect_ms_verify_model: allow
+  ms-inspect_ms_refant: allow
+  ms-modify_ms_initial_bandpass: allow
+  ms-modify_ms_apply_initial_rflag: allow
+  ms-inspect_ms_observation_info: allow
 ---
 
 You run one stage of a reduction for the orchestrator. Nothing else.

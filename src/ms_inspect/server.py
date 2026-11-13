@@ -41,6 +41,7 @@ from ms_inspect.tools import (
     online_flags,
     pol_cal_conditions,
     priorcals_check,
+    radiometer_estimate,
     refant,
     residual_stats,
     rfi,
@@ -50,11 +51,25 @@ from ms_inspect.tools import (
     spw_amp_severity,
     verify_import,
     verify_model,
+    vis_amp_time_stats,
     workflow_status,
 )
 from ms_inspect.util import casa_task_index as _cti
 from ms_inspect.util import phase_cal_catalog as _pcc
-from ms_inspect.util.dispatch import CASA_LOG_NOTE, ToolResult, path_lock, run_tool
+from ms_inspect.util.dispatch import (
+    CASA_LOG_NOTE,
+    ToolResult,
+    envelope_result,
+    path_lock,
+    run_tool,
+)
+from ms_inspect.util.formatting import (
+    field as fmt_field,
+)
+from ms_inspect.util.formatting import (
+    response_envelope,
+    wire_envelope,
+)
 from ms_inspect.util.logs import init_server_logging
 
 # ---------------------------------------------------------------------------
@@ -84,24 +99,30 @@ mcp = FastMCP(
 
 class MSPathInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    ms_path: str = Field(
-        ...,
-        description=(
-            "Absolute path to the CASA Measurement Set directory. "
-            "Example: '/data/obs/2017_VLA_Lband.ms'"
-        ),
-        min_length=1,
+    ms_path: str = Field(..., description="Absolute path to Measurement Set.", min_length=1)
+
+
+class MSWorkdirInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Absolute path to Measurement Set.", min_length=1)
+    workdir: str = Field(
+        default="",
+        description="Optional workdir for <workdir>/sidecars/ JSON offload.",
     )
 
 
 class ElevationInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    ms_path: str = Field(..., description="Path to Measurement Set", min_length=1)
+    ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
     threshold_deg: float = Field(
         default=20.0,
-        description="Elevation warning threshold in degrees (default 20°)",
+        description="Elevation warning threshold in deg (default 20).",
         ge=0.0,
         le=90.0,
+    )
+    workdir: str = Field(
+        default="",
+        description="Optional workdir for <workdir>/sidecars/ JSON offload.",
     )
 
 
@@ -172,29 +193,35 @@ class SpwAmpSeverityInput(BaseModel):
     ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
     datacolumn: str = Field(
         default="CORRECTED_DATA",
-        description=(
-            "Column to measure: 'CORRECTED_DATA' (default), 'DATA', 'MODEL_DATA', "
-            "or 'residual' (|CORRECTED_DATA - MODEL_DATA|)."
-        ),
+        description="'CORRECTED_DATA' (default), 'DATA', 'MODEL_DATA', or 'residual'.",
     )
     field: str = Field(
         default="",
-        description="CASA field selection (empty = all fields); an unmatched token is an error.",
+        description="CASA field selection (empty = all fields).",
     )
     sigma: float = Field(
         default=5.0,
-        description="N in elevation threshold band_floor + N*robust_sigma (drives discardable-fraction estimate).",
+        description="Threshold scale band_floor + sigma*robust_sigma.",
         gt=0.0,
     )
     max_samples_per_chan: int = Field(
         default=5000,
-        description="Reservoir sample size per channel (memory knob).",
+        description="Reservoir sample size per channel.",
         ge=100,
     )
     row_chunk: int = Field(
         default=20_000,
-        description="Rows read per block (memory knob; smaller = less RAM, slower).",
+        description="Rows read per block.",
         ge=1000,
+    )
+    max_per_chan_records: int = Field(
+        default=128,
+        description="Max inline per-channel records across SpWs before offload (0 = unlimited).",
+        ge=0,
+    )
+    workdir: str = Field(
+        default="",
+        description="Optional workdir for <workdir>/sidecars/ JSON offload.",
     )
 
 
@@ -275,21 +302,22 @@ class ResidualStatsInput(BaseModel):
     )
     field_id: int = Field(
         ...,
-        description="Integer FIELD_ID of the bandpass calibrator (use ms_field_list to find it).",
+        description="Integer FIELD_ID to measure.",
         ge=0,
     )
     max_rows: int = Field(
         default=500_000,
-        description="Maximum rows to read; rows are sampled uniformly if larger (default 500 000).",
+        description="Max rows to read (uniformly sampled above cap).",
         ge=1,
     )
     max_per_chan_records: int = Field(
         default=2000,
-        description=(
-            "Bound on per-channel records across all SpWs; above it the chan_* arrays "
-            "go to a JSON sidecar (detail_path). 0 = no bound."
-        ),
+        description="Max inline per-channel records across SpWs before offload (0 = unlimited).",
         ge=0,
+    )
+    workdir: str = Field(
+        default="",
+        description="Optional workdir for <workdir>/sidecars/ JSON offload.",
     )
 
 
@@ -364,13 +392,64 @@ class VerifyModelInput(BaseModel):
 
 class BaselineLengthInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    ms_path: str = Field(..., description="Path to Measurement Set", min_length=1)
+    ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
     spw_centre_freqs_hz: list[float] | None = Field(
         default=None,
-        description=(
-            "Optional list of SpW centre frequencies in Hz for kλ / arcsec conversion. "
-            "If not provided, frequencies are read from the MS spectral window table."
-        ),
+        description="Optional SpW centre frequencies in Hz (default: read from MS).",
+    )
+    workdir: str = Field(
+        default="",
+        description="Optional workdir for <workdir>/sidecars/ JSON offload.",
+    )
+
+
+class RadiometerEstimateInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
+    field: str = Field(
+        default="",
+        description="CASA field selection (empty selects OBSERVE_TARGET fields, else all).",
+    )
+    spw: str = Field(
+        default="",
+        description="CASA SpW id/range selection (empty = all observed SpWs).",
+    )
+    stokes: str = Field(
+        default="I",
+        description="Target Stokes ('I', 'Q', 'U', 'V', 'IQUV', or single hand).",
+    )
+    weighting: str = Field(
+        default="briggs",
+        description="'briggs' (default), 'natural', or 'uniform'.",
+    )
+    robust: float = Field(
+        default=0.5,
+        description="Briggs robust parameter when weighting='briggs' (default 0.5).",
+        ge=-2.0,
+        le=2.0,
+    )
+
+
+class VisAmpTimeStatsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
+    field: str = Field(
+        default="",
+        description="CASA field selection (empty = all fields).",
+    )
+    spw: str = Field(
+        default="",
+        description="CASA SpW id/range selection (empty = all SpWs).",
+    )
+    datacolumn: str = Field(
+        default="CORRECTED_DATA",
+        description="'CORRECTED_DATA' (default), 'DATA', or 'MODEL_DATA'.",
+    )
+    top_k: int = Field(
+        default=10,
+        description="Max highest-amplitude outlier integrations to return (default 10).",
+        ge=0,
+        le=100,
     )
 
 
@@ -426,10 +505,14 @@ class CalsolStatsInput(BaseModel):
         default="compact",
         description=(
             "'compact' (default) returns per-antenna scalar summaries (averaged over "
-            "spw/field) plus outliers — sufficient for gate decisions. 'full' returns the "
+            "spw/field) plus outliers -- sufficient for gate decisions. 'full' returns the "
             "complete [n_ant, n_spw, n_field] matrices inline (large). Full detail is always "
             "written to the NPZ sidecar regardless and is queryable via ms_calsol_stats_detail."
         ),
+    )
+    workdir: str = Field(
+        default="",
+        description="Optional writable workdir for NPZ sidecar (<workdir>/sidecars/).",
     )
 
 
@@ -582,49 +665,16 @@ async def ms_observation_info(params: MSPathInput) -> ToolResult:
         "openWorldHint": False,
     },
 )
-async def ms_field_list(params: MSPathInput) -> ToolResult:
-    """
-    Layer 1, Tool 2: List all observed fields with J2000 coordinates and calibration roles.
-
-    A field's role comes from its own scan intents. Where a field has no
-    intents, the bundled calibrator catalogue answers instead, tagged INFERRED.
-    The decision is per field, not per MS.
-
-    Args:
-        params.ms_path: Path to the Measurement Set.
-
-    Returns:
-        JSON array of field records: field_id, name, ra/dec in deg and HMS/DMS,
-        intents, observing_frequency, calibrator_match, field_role,
-        catalogue_role, flux_standard, flux_standard_range_checked,
-        resolved_source.
-
-        observing_frequency gives min_ghz/max_ghz/centre_ghz/n_spw across the
-        spectral windows THIS field was observed in, so it can differ between
-        fields of one MS. ALMA water-vapour-radiometer windows are excluded.
-
-        field_role is the answer. Its vocabulary is wider than the catalogue's:
-        flux, bandpass, phase, amplitude, delay, polangle, polleakage, target,
-        check. catalogue_role is what the catalogue lists the source as
-        suitable for, retained as a cross-check. When the two contradict, the
-        intents win and a warning names both sides.
-
-        flux_standard is resolved from THIS field's observing frequency, not
-        echoed from the catalogue. A source observed outside its model's
-        validity range gets NO standard and a warning naming both the range and
-        the observed span. flux_standard_range_checked says whether that
-        frequency check actually ran: it is False for a solar-system body
-        modelled at a constant brightness temperature, which has no range to
-        check, and False when the frequency could not be read.
-    """
-    return await _run_tool(fields.run, params.ms_path)
+async def ms_field_list(params: MSWorkdirInput) -> ToolResult:
+    """List all observed fields with J2000 coordinates, intents, and calibration roles."""
+    return await _run_tool(fields.run, params.ms_path, workdir=params.workdir)
 
 
 @mcp.tool(
     name="ms_scan_list",
     description=(
-        "Time-ordered scan records with field, intents, integration time, SpW IDs. "
-        "Use for temporal structure and scan-gap detection."
+        "Time-ordered scan summary by field and intent; offloads raw per-scan records "
+        "above 32 scans to <workdir>/sidecars/."
     ),
     annotations={
         "title": "Scan List",
@@ -634,22 +684,9 @@ async def ms_field_list(params: MSPathInput) -> ToolResult:
         "openWorldHint": False,
     },
 )
-async def ms_scan_list(params: MSPathInput) -> ToolResult:
-    """
-    Layer 1, Tool 3: Return the time-ordered list of all scans.
-
-    Each scan record includes: scan number, field name, intents, start/end UTC,
-    duration in seconds, integration time, and spectral window IDs.
-
-    Warns on large scan number gaps (possible missing data).
-
-    Args:
-        params.ms_path: Path to the Measurement Set.
-
-    Returns:
-        JSON with n_scans, n_fields, and ordered array of scan records.
-    """
-    return await _run_tool(scans.run_scan_list, params.ms_path)
+async def ms_scan_list(params: MSWorkdirInput) -> ToolResult:
+    """Return time-ordered scan summary and scan records."""
+    return await _run_tool(scans.run_scan_list, params.ms_path, workdir=params.workdir)
 
 
 @mcp.tool(
@@ -770,24 +807,9 @@ async def ms_correlator_config(params: MSPathInput) -> ToolResult:
         "openWorldHint": False,
     },
 )
-async def ms_antenna_list(params: MSPathInput) -> ToolResult:
-    """
-    Layer 2, Tool 1: Return antenna inventory with ECEF positions and completeness check.
-
-    Returns per-antenna: name, station, ECEF XYZ position (metres), dish diameter,
-    mount type. Also computes array geodetic centre and cross-checks antenna IDs
-    against the MAIN table.
-
-    Raises INSUFFICIENT_METADATA if antenna names are purely numeric (UVFITS artefact)
-    or if antenna IDs in the MAIN table are absent from the ANTENNA subtable.
-
-    Args:
-        params.ms_path: Path to the Measurement Set.
-
-    Returns:
-        JSON with n_antennas, n_baselines_cross, array_centre coords, and antenna array.
-    """
-    return await _run_tool(antennas.run_antenna_list, params.ms_path)
+async def ms_antenna_list(params: MSWorkdirInput) -> ToolResult:
+    """Return antenna inventory with ECEF positions and completeness check."""
+    return await _run_tool(antennas.run_antenna_list, params.ms_path, workdir=params.workdir)
 
 
 @mcp.tool(
@@ -805,25 +827,12 @@ async def ms_antenna_list(params: MSPathInput) -> ToolResult:
     },
 )
 async def ms_baseline_lengths(params: BaselineLengthInput) -> ToolResult:
-    """
-    Layer 2, Tool 2: Compute physical baseline length statistics and derived angular scales.
-
-    Lengths are from ANTENNA ECEF positions (maximum possible baselines).
-    UV coverage from actual projected baselines is a Layer 3 tool.
-
-    Returns: min/max/median/mean baseline in metres, shortest/longest baseline antenna
-    pairs, and per-SpW derived quantities: max baseline in kλ, synthesised beam
-    resolution (arcsec, θ ≈ λ/B_max), and largest angular scale (arcsec, θ ≈ λ/B_min).
-
-    Args:
-        params.ms_path:              Path to the Measurement Set.
-        params.spw_centre_freqs_hz:  Optional list of SpW frequencies in Hz.
-
-    Returns:
-        JSON with baseline statistics and per_spw_derived array.
-    """
+    """Compute physical baseline length statistics and derived angular scales."""
     return await _run_tool(
-        antennas.run_baseline_lengths, params.ms_path, params.spw_centre_freqs_hz
+        antennas.run_baseline_lengths,
+        params.ms_path,
+        params.spw_centre_freqs_hz,
+        workdir=params.workdir,
     )
 
 
@@ -831,7 +840,7 @@ async def ms_baseline_lengths(params: BaselineLengthInput) -> ToolResult:
     name="ms_elevation_vs_time",
     description=(
         "Per-scan elevation per field via astropy AltAz. "
-        "Flags scans below threshold_deg (default 20°) for low-elevation warnings."
+        "Flags scans below threshold_deg (default 20 deg) for low-elevation warnings."
     ),
     annotations={
         "title": "Elevation vs Time",
@@ -842,24 +851,13 @@ async def ms_baseline_lengths(params: BaselineLengthInput) -> ToolResult:
     },
 )
 async def ms_elevation_vs_time(params: ElevationInput) -> ToolResult:
-    """
-    Layer 2, Tool 3: Return per-scan elevation statistics for each field.
-
-    Computed using astropy AltAz frame from field J2000 coordinates,
-    array geodetic position (from ANTENNA ECEF mean), and scan time ranges.
-
-    Warns on any scan where elevation drops below threshold_deg (default 20°).
-    Fields with invalid coordinates (§3.4) return UNAVAILABLE for elevation.
-
-    Args:
-        params.ms_path:       Path to the Measurement Set.
-        params.threshold_deg: Low-elevation warning threshold (default 20°).
-
-    Returns:
-        JSON with per-field scan elevation records: el_start, el_mid, el_end,
-        el_min, below_threshold flag.
-    """
-    return await _run_tool(geometry.run_elevation_vs_time, params.ms_path, params.threshold_deg)
+    """Return per-scan elevation statistics for each field."""
+    return await _run_tool(
+        geometry.run_elevation_vs_time,
+        params.ms_path,
+        params.threshold_deg,
+        workdir=params.workdir,
+    )
 
 
 @mcp.tool(
@@ -1185,6 +1183,8 @@ async def ms_spw_amp_severity(params: SpwAmpSeverityInput) -> ToolResult:
         params.sigma,
         params.max_samples_per_chan,
         params.row_chunk,
+        params.max_per_chan_records,
+        workdir=params.workdir,
     )
 
 
@@ -1477,6 +1477,61 @@ async def ms_residual_stats(params: ResidualStatsInput) -> ToolResult:
         params.field_id,
         params.max_rows,
         params.max_per_chan_records,
+        workdir=params.workdir,
+    )
+
+
+@mcp.tool(
+    name="ms_radiometer_estimate",
+    description=(
+        "Deterministic radiometer thermal noise estimate (thermal_rms_jy) and measured "
+        "inputs (sefd_jy, n_ant_unflagged, on_source_s, eff_bw_hz, eta_c, weighting_factor). "
+        "Read-only; zero threshold verdicts."
+    ),
+    annotations={
+        "title": "Radiometer Thermal Noise Estimate",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_radiometer_estimate(params: RadiometerEstimateInput) -> ToolResult:
+    """Compute thermal_rms_jy and exact measured inputs for an MS selection."""
+    return await _run_tool(
+        radiometer_estimate.run,
+        params.ms_path,
+        field=params.field,
+        spw=params.spw,
+        stokes=params.stokes,
+        weighting=params.weighting,
+        robust=params.robust,
+    )
+
+
+@mcp.tool(
+    name="ms_vis_amp_time_stats",
+    description=(
+        "Compact per-integration parallel-hand visibility amplitude statistics vs time "
+        "(median_amp, robust_sigma_amp, median_npts, top_outliers with npts). Read-only."
+    ),
+    annotations={
+        "title": "Visibility Amplitude vs Time Statistics",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_vis_amp_time_stats(params: VisAmpTimeStatsInput) -> ToolResult:
+    """Compute per-integration parallel-hand visibility amplitude statistics vs time."""
+    return await _run_tool(
+        vis_amp_time_stats.run,
+        params.ms_path,
+        field=params.field,
+        spw=params.spw,
+        datacolumn=params.datacolumn,
+        top_k=params.top_k,
     )
 
 
@@ -1520,6 +1575,7 @@ async def ms_calsol_stats(params: CalsolStatsInput) -> ToolResult:
         snr_min=params.snr_min,
         amp_sigma=params.amp_sigma,
         verbosity=params.verbosity,
+        workdir=params.workdir or None,
     )
 
 
@@ -1634,6 +1690,7 @@ async def ms_plot_caltable_library(params: CalsolPlotLibraryInput) -> ToolResult
         calsol_plot_library.run,
         params.caltable_paths,
         params.output_dir,
+        _lock_path=[*params.caltable_paths, params.output_dir],
     )
 
 
@@ -1801,15 +1858,8 @@ class PhaseCalLookupInput(BaseModel):
 @mcp.tool(
     name="ms_phase_cal_lookup",
     description=(
-        "Cross-match a sky position against the NRAO VLA phase calibrator catalog. "
-        "Returns the nearest qualifying source within max_sep_deg, with its position "
-        "accuracy, flux density, UV limits, and quality codes (P/S/W/C/X) per array "
-        "configuration at the requested band. A source within "
-        f"{_pcc.IDENTITY_ARCSEC:g} arcsec is the source at "
-        "the position and is returned even with no row or a low grade at the band "
-        "(position_match=true). flux_estimate: the callist row at the observed band "
-        "(COMPLETE), else a power law through the bracketing bands at freq_ghz (INFERRED). "
-        "Use to assess whether an observed field is a known usable phase calibrator."
+        "Cross-match a J2000 position against the bundled VLA phase calibrator catalog. "
+        "Returns nearest qualifying source within max_sep_deg with quality codes and flux_estimate."
     ),
     annotations={
         "title": "Phase Calibrator Lookup",
@@ -1819,7 +1869,7 @@ class PhaseCalLookupInput(BaseModel):
         "openWorldHint": False,
     },
 )
-async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
+async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> ToolResult:
     """
     Cross-match a J2000 sky position against the bundled VLA phase calibrator catalog.
 
@@ -1832,17 +1882,18 @@ async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
     Args:
         params.ra_deg:       Target RA in decimal degrees.
         params.dec_deg:      Target Dec in decimal degrees.
-        params.band_code:    VLA band code (L, C, X, …).  None = position match only.
+        params.band_code:    VLA band code (L, C, X, ...).  None = position match only.
         params.array_config: Array config (A/B/C/D).  None = skip quality filter.
         params.max_sep_deg:  Search radius in degrees (default 0.5).
         params.min_quality:  Minimum quality code (default W).
         params.freq_ghz:     Observing frequency in GHz (optional).
 
     Returns:
-        JSON envelope.  data contains: iau_name, alt_name, ra_deg, dec_deg,
+        Standard wire envelope (status='ok', completeness_summary, data, field_flags,
+        warnings). data contains: found, iau_name, alt_name, ra_deg, dec_deg,
         separation_deg, position_match, pos_accuracy, band (if requested) with
         quality_A/B/C/D, flux_jy, uvmin_kl, uvmax_kl; band_note when the band has
-        no row; flux_estimate {value, flag, note}.  status=NOT_FOUND if no match.
+        no row; bare flux_estimate (dict or None, with flag/note in field_flags).
     """
     match = _pcc.lookup_nearest(
         ra_deg=params.ra_deg,
@@ -1854,16 +1905,31 @@ async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
     )
 
     if match is None:
-        result = {
-            "status": "NOT_FOUND",
-            "data": None,
-            "warnings": [
-                f"No qualifying phase calibrator within {params.max_sep_deg}° "
-                f"of RA={params.ra_deg:.4f} Dec={params.dec_deg:.4f}"
-                + (f" at band {params.band_code}/{params.array_config}" if params.band_code else "")
-            ],
-        }
-        return json.dumps(result, separators=(",", ":"))
+        msg = (
+            f"No qualifying phase calibrator within {params.max_sep_deg} deg "
+            f"of RA={params.ra_deg:.4f} Dec={params.dec_deg:.4f}"
+            + (f" at band {params.band_code}/{params.array_config}" if params.band_code else "")
+        )
+        env = response_envelope(
+            tool_name="ms_phase_cal_lookup",
+            ms_path="",
+            data={
+                "found": False,
+                "iau_name": fmt_field(None, flag="UNAVAILABLE", note=msg),
+                "alt_name": None,
+                "ra_deg": None,
+                "dec_deg": None,
+                "separation_deg": None,
+                "position_match": False,
+                "pos_accuracy": None,
+                "band": None,
+                "band_note": None,
+                "flux_estimate": fmt_field(None, flag="UNAVAILABLE", note=msg),
+            },
+            warnings=[msg],
+            casa_calls=[],
+        )
+        return envelope_result(wire_envelope(env))
 
     e = match.entry
     band_data: dict | None = None
@@ -1901,11 +1967,13 @@ async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
         position_match=position_match,
         identity_exact=sep_arcsec < _pcc.EXACT_ARCSEC,
     )
-    flux_estimate = {"value": est, "flag": est_flag, "note": est_note}
+    flux_estimate = fmt_field(est, flag=est_flag, note=est_note)  # type: ignore[arg-type]
 
-    result = {
-        "status": "OK",
-        "data": {
+    env = response_envelope(
+        tool_name="ms_phase_cal_lookup",
+        ms_path="",
+        data={
+            "found": True,
             "iau_name": e.iau_name,
             "alt_name": e.alt_name,
             "ra_deg": e.ra_deg,
@@ -1917,9 +1985,10 @@ async def ms_phase_cal_lookup(params: PhaseCalLookupInput) -> str:
             "band_note": band_note,
             "flux_estimate": flux_estimate,
         },
-        "warnings": [],
-    }
-    return json.dumps(result, separators=(",", ":"))
+        warnings=[band_note] if band_note else [],
+        casa_calls=[],
+    )
+    return envelope_result(wire_envelope(env))
 
 
 # ---------------------------------------------------------------------------
@@ -1934,12 +2003,8 @@ class CasaTaskLookupInput(BaseModel):
 
 @mcp.tool(
     name="ms_casa_task_lookup",
-    description=(
-        "Resolve a CASA task name to its casadocs API page and its casa6 source file "
-        "(raw content, on the NRAO Bitbucket server). Returns URLs only — does not "
-        "fetch either page. Use WebFetch on the returned URL to read the actual content. "
-        "status=NOT_FOUND if the task is not in the bundled index."
-    ),
+    structured_output=False,
+    description=("Resolve a CASA task name to its casadocs API page and casa6 source URLs."),
     annotations={
         "title": "CASA Task Documentation Lookup",
         "readOnlyHint": True,

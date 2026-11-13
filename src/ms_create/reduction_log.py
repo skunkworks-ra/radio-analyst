@@ -34,6 +34,7 @@ from pathlib import Path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import response_envelope
 from ms_inspect.util.logs import write_script
+from ms_inspect.util.stage_log import read_stage_log
 
 TOOL_NAME = "ms_reduction_log"
 
@@ -80,10 +81,49 @@ _RUN_REGISTRY: dict[str, str] = {
     "ms_polcal": "ms_modify.polcal",
     "ms_applycal": "ms_modify.applycal",
     "ms_apply_rflag": "ms_modify.rflag",
+    "ms_postcal_flag": "ms_modify.postcal_flag",
     "ms_flag_caltable": "ms_modify.flag_caltable",
     "ms_flag_data": "ms_modify.flag_data",
     "ms_tclean": "ms_modify.tclean",
+    "ms_casa_task": "ms_modify.casa_task",
+    "ms_casa_tool": "ms_modify.casa_tool",
 }
+
+_STAGE_TO_TOOL: dict[str, str] = {
+    "import_asdm": "ms_import_asdm",
+    "set_intents": "ms_set_intents",
+    "intents": "ms_set_intents",
+    "preflag": "ms_apply_preflag",
+    "priorcals": "ms_generate_priorcals",
+    "initial_bandpass": "ms_initial_bandpass",
+    "initial_rflag": "ms_apply_initial_rflag",
+    "setjy": "ms_setjy",
+    "setjy_polcal": "ms_setjy_polcal",
+    "gaincal": "ms_gaincal",
+    "bandpass": "ms_bandpass",
+    "fluxscale": "ms_fluxscale",
+    "polcal": "ms_polcal",
+    "applycal": "ms_applycal",
+    "rflag": "ms_apply_rflag",
+    "postcal_flag": "ms_postcal_flag",
+    "flag_caltable": "ms_flag_caltable",
+    "flag_data": "ms_flag_data",
+    "tclean": "ms_tclean",
+}
+
+_MULTI_PRODUCT_STAGES = frozenset({"import_asdm", "preflag", "priorcals", "initial_bandpass"})
+_PRODUCT_SOLVE_STAGES = frozenset(
+    {
+        "import_asdm",
+        "priorcals",
+        "initial_bandpass",
+        "gaincal",
+        "bandpass",
+        "fluxscale",
+        "polcal",
+        "tclean",
+    }
+)
 
 
 # What append accepts: the replayable write tools, and 'manual' for off-tool work
@@ -93,6 +133,153 @@ _APPENDABLE = frozenset(_RUN_REGISTRY) | {"manual"}
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _stage_to_tool(stage: str) -> str:
+    if stage.startswith("ms_casa_task:"):
+        return "ms_casa_task"
+    if stage.startswith("ms_casa_tool:"):
+        return "ms_casa_tool"
+    return _STAGE_TO_TOOL.get(stage, stage)
+
+
+def load_effective_records(wd: Path) -> list[dict]:
+    """Derive ordered, deduplicated replay records from stage_log.jsonl + reduction_log.jsonl."""
+    manual_records = _read_records(wd / _LOG_NAME)
+    stage_entries = [e for e in read_stage_log(wd) if e.get("exists") is True and e.get("stage")]
+    if not stage_entries:
+        return manual_records
+
+    # 1. Group consecutive multi-product lines emitted by the same script/call.
+    groups: list[list[dict]] = []
+    for entry in stage_entries:
+        if groups:
+            prev = groups[-1][-1]
+            prev_products = {g.get("product") for g in groups[-1]}
+            same_script = (
+                bool(entry.get("script_path"))
+                and entry.get("script_path") == prev.get("script_path")
+                and entry.get("script_sha256") == prev.get("script_sha256")
+                and entry.get("stage") == prev.get("stage")
+                and entry.get("product") not in prev_products
+            )
+            same_inproc_multi = (
+                not entry.get("script_path")
+                and not prev.get("script_path")
+                and entry.get("stage") in _MULTI_PRODUCT_STAGES
+                and entry.get("stage") == prev.get("stage")
+                and entry.get("params") == prev.get("params")
+                and entry.get("product") not in prev_products
+            )
+            if same_script or same_inproc_multi:
+                groups[-1].append(entry)
+                continue
+        groups.append([entry])
+
+    # 2. Drop superseded solve/image attempts when a later step re-wrote the exact same product set.
+    kept_groups: list[list[dict]] = []
+    seen_solve_keys: set[tuple[str, tuple[str, ...]]] = set()
+    for grp in reversed(groups):
+        stg = str(grp[0].get("stage", ""))
+        prods = tuple(str(g.get("product", "")) for g in grp if g.get("product"))
+        if stg in _PRODUCT_SOLVE_STAGES and prods:
+            key = (stg, prods)
+            if key in seen_solve_keys:
+                continue
+            seen_solve_keys.add(key)
+        kept_groups.append(grp)
+    kept_groups.reverse()
+
+    # Track latest sha256 and kept-group count per script_path so shared/overwritten
+    # script files fall back to run(**params, execute=True) across all sharing groups.
+    latest_sha_for_script: dict[str, str | None] = {}
+    sp_counts: dict[str, int] = {}
+    for grp in kept_groups:
+        sp = grp[-1].get("script_path")
+        if isinstance(sp, str) and sp:
+            latest_sha_for_script[sp] = grp[-1].get("script_sha256")
+            sp_counts[sp] = sp_counts.get(sp, 0) + 1
+
+    derived: list[dict] = []
+    for grp in kept_groups:
+        head = grp[0]
+        tail = grp[-1]
+        stage = str(head.get("stage", ""))
+        tool = str(head.get("tool") or _stage_to_tool(stage))
+        params = dict(tail.get("params") or {})
+        prods = [str(g.get("product")) for g in grp if g.get("product")]
+        outputs: dict = {"product": prods[0]} if len(prods) == 1 else {"products": prods}
+        for g in grp:
+            meas = g.get("measurement")
+            if isinstance(meas, dict):
+                outputs.update(meas)
+
+        sp = tail.get("script_path")
+        sha = tail.get("script_sha256")
+        script_fields: dict = {}
+        if isinstance(sp, str) and sp:
+            p_obj = Path(sp)
+            disk_sha = _sha256(p_obj) if p_obj.is_file() else None
+            overwritten_later = (
+                sha is not None and latest_sha_for_script.get(sp) not in (None, sha)
+            ) or (sha is not None and disk_sha is not None and disk_sha != sha)
+            if (sp_counts.get(sp, 0) > 1 or overwritten_later) and params:
+                params = {**params, "execute": True}
+            else:
+                script_fields["script_path"] = sp
+                script_fields["script_sha256"] = sha or disk_sha
+        elif not params:
+            candidate = wd / f"{stage}.py"
+            if candidate.is_file():
+                resolved = str(candidate.resolve())
+                script_fields["script_path"] = resolved
+                script_fields["script_sha256"] = _sha256(candidate)
+
+        label = Path(prods[0]).name if prods else stage
+        rec: dict = {
+            "step": 0,
+            "ts": str(tail.get("at") or ""),
+            "tool": tool,
+            "params": params,
+            "outputs": outputs,
+            "rationale": f"{stage} -> {label}",
+            "skill_rule": "",
+            "status": "ok",
+            **script_fields,
+        }
+        derived.append(rec)
+
+    # 3. Merge manual reduction_log.jsonl records without duplicating matching steps.
+    for m in manual_records:
+        m_sp = m.get("script_path")
+        matched = None
+        for d in derived:
+            if m_sp and d.get("script_path") == m_sp:
+                matched = d
+                break
+            if (
+                not m_sp
+                and not d.get("script_path")
+                and m.get("tool") == d.get("tool")
+                and (not d.get("params") or m.get("params") == d.get("params"))
+            ):
+                matched = d
+                break
+        if matched is not None:
+            if m.get("rationale"):
+                matched["rationale"] = m["rationale"]
+            if m.get("skill_rule"):
+                matched["skill_rule"] = m["skill_rule"]
+            if m.get("params") and not matched.get("params"):
+                matched["params"] = m["params"]
+            if isinstance(m.get("outputs"), dict) and m["outputs"]:
+                matched["outputs"] = {**matched.get("outputs", {}), **m["outputs"]}
+        else:
+            derived.append(dict(m))
+
+    for idx, rec in enumerate(derived, start=1):
+        rec["step"] = idx
+    return derived
 
 
 def _validate_append(tool: str, params: dict, script_path: str, workdir: str) -> dict:
@@ -259,7 +446,7 @@ def run(
             casa_calls=[f"append → {path}"],
         )
 
-    records = _read_records(path)
+    records = load_effective_records(wd)
 
     if action == "list":
         summary = [

@@ -70,6 +70,9 @@ test-unit   = { cmd = "pytest tests/unit/ -v" }
 # Run after every CASA version bump; the unit tests fail until you do.
 gen-casa-schemas = { cmd = "python -m casa_tasks.gen_schemas" }
 
+# Regenerate .claude/skills/radio-interferometry/bundles/*.md from skill markdown.
+gen-stage-bundles = { cmd = "python -m ms_inspect.util.stage_bundles" }
+
 # Integration tests — requires a real MS.
 # Usage: RADIO_MCP_TEST_MS=/path/to/your.ms pixi run test-int
 test-int    = { cmd = "pytest tests/integration/ -v" }

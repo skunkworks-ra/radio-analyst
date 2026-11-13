@@ -8,7 +8,7 @@
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 A Claude Code plugin for reducing radio interferometric data with CASA. It
-gives Claude 59 tools across three MCP servers, the reasoning of an
+gives Claude 61 tools across three MCP servers, the reasoning of an
 experienced interferometrist (skills), and step-by-step workflows (slash
 commands) for VLA/JVLA/EVLA, MeerKAT, and uGMRT Measurement Sets, from a raw
 ASDM to a first image.
@@ -73,11 +73,10 @@ A typical first session on a new VLA dataset:
 
 ### Keep a reproducible record
 
-As a reduction proceeds, Claude records each call that actually worked, with
-its exact parameters and the reason for it, in `reduction_log.jsonl` in the
-working directory. Ask for it back at any point, as a step list or as a single
-replay script. Dead ends stay out, so the log is the clean path through your
-data, not the search for it.
+As a reduction proceeds, every write tool automatically records its script,
+parameters, and outputs in `stage_log.jsonl` in the working directory. Ask for
+the ledger back at any point as a step list or as a single replay script
+(`ms_reduction_log`), with superseded retries deduplicated automatically.
 
 At the end, `/radio-analyst:report` turns the log into `report.html`: the steps
 with a keep box each (to choose which steps go into the replay script), the
@@ -103,7 +102,7 @@ the read-only tools.
 
 **Three servers, by what they can touch:**
 
-- **ms-inspect**: read-only inspection and diagnostics (36 tools).
+- **ms-inspect**: read-only inspection and diagnostics (38 tools).
 - **ms-modify**: flagging, calibration, imaging (19 tools, script-first).
 - **ms-create**: ASDM inspection and import, the reduction log and the report (4 tools).
 
@@ -206,20 +205,20 @@ Loaded automatically when relevant. No need to invoke them yourself.
 The per-tool inventory is in [`design_docs/DESIGN.md`](design_docs/DESIGN.md)
 (§8 ms-inspect, §8b ms-modify, §8c ms-create). Summary:
 
-- **ms-inspect (34)**:
+- **ms-inspect (38)**:
   - Orientation (6): observation info, fields, scans, scan intents, SpWs, correlator setup.
   - Instrument sanity (7): antennas, baselines, elevation and parallactic angle vs. time, shadowing, flag preflight, per-antenna flag fraction.
   - Calibration inspection (6): caltable statistics and detail, single and batch caltable plots, gaincal SNR prediction, caltable checks.
   - Pre-calibration checks (5): import, model, prior caltables, online flag stats, flag summary.
-  - Instrument and RFI (7): reference antenna ranking, RFI channel stats, SpW amplitude severity, pol-cal conditions, residual and corrected-data statistics, phase-calibrator lookup.
-  - Imaging (1): image RMS, peak, dynamic range, beam.
+  - Instrument and RFI (8): reference antenna ranking, RFI channel stats, SpW amplitude severity, pol-cal conditions, residual and corrected-data statistics, visibility amplitude vs. time stats, phase-calibrator lookup.
+  - Imaging and sensitivity (2): radiometer thermal noise estimate, image RMS/peak/dynamic range/beam.
   - Workflow state (1).
-  - CASA docs lookup (1).
-- **ms-modify (17)**: intents, preflag, prior caltables, setjy / pol setjy,
+  - CASA docs and task/tool specs (3).
+- **ms-modify (19)**: intents, preflag, prior caltables, setjy / pol setjy,
   initial bandpass, gaincal (incl. KCROSS), bandpass, polcal, fluxscale,
   applycal, residual and post-cal RFI flagging, caltable autoflag, manual flag
-  of a named MS selection, tclean.
-- **ms-create (4)**: ASDM summary, ASDM → MS import, reduction log, report.
+  of a named MS selection, tclean, guarded generic CASA task and tool runners.
+- **ms-create (4)**: ASDM summary, ASDM -> MS import, reduction log, report.
 
 ### Environment variables
 
@@ -303,7 +302,7 @@ How it differs from the Claude Code plugin:
 |---|---|---|
 | Install | `claude plugin install` | `git clone` |
 | Environment | built by the hook under `~/.claude/plugins/data/` | the repo's own `.pixi/`; pixi is needed every time a server starts |
-| First start | servers report "still being built" until done | run `pixi install` first: a cold install takes longer than the 60 s server timeout in `opencode.json` |
+| First start | servers report "still being built" until done | run `pixi install` first: a cold install can exceed the 600 s server timeout in `opencode.json` |
 | Commands | `/radio-analyst:orchestrate` | `/radio-analyst-orchestrate` |
 | Python for generated scripts | given to Claude by the session-start hook | `pixi run python <script>` from the repo |
 | Working directory | anywhere | the repo directory, so opencode finds `opencode.json` and `.opencode/` |
@@ -343,9 +342,10 @@ pixi run check         # ruff lint + format check (CI gate)
 claude plugin validate .claude-plugin/plugin.json
 ```
 
-[`CLAUDE.md`](CLAUDE.md) holds the contributor contract and conventions, and
-[`design_docs/DESIGN.md`](design_docs/DESIGN.md) the architecture. Read both
-before a non-trivial change.
+[`CLAUDE.md`](CLAUDE.md) holds the core contributor contract,
+[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) the developer reference and tool
+inventory, and [`design_docs/DESIGN.md`](design_docs/DESIGN.md) the
+architecture. Read them before a non-trivial change.
 
 ---
 

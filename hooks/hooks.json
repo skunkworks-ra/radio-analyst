@@ -1,5 +1,5 @@
 {
-  "description": "Build the radio-analyst Python/CASA environment under ${CLAUDE_PLUGIN_DATA} in the background, so the MCP servers never install inside their startup timeout. At session end, write per-session tokens and cost (ms_create/accounting.py) and rebuild the report.",
+  "description": "Build the radio-analyst Python/CASA environment under ${CLAUDE_PLUGIN_DATA} in the background. On Stop and SessionEnd, build deterministic orchestrator stage audit JSONs (ms_create/audit_hook.py), write per-session tokens and cost (ms_create/accounting.py), and rebuild the report.",
   "hooks": {
     "SessionStart": [
       {
@@ -16,9 +16,31 @@
         ]
       }
     ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/plugin/audit_hook.sh"
+            ],
+            "timeout": 30
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/plugin/audit_hook.sh"
+            ],
+            "timeout": 30
+          },
           {
             "type": "command",
             "command": "bash",

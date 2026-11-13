@@ -12,17 +12,47 @@ CASA access: msmd.scansforfield(), msmd.timesforscans(),
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 from ms_inspect.util.casa_context import open_msmd, validate_ms_path
 from ms_inspect.util.conversions import mjd_seconds_to_utc, seconds_to_human
-from ms_inspect.util.formatting import field, response_envelope
+from ms_inspect.util.formatting import (
+    field,
+    offload_detail,
+    resolve_sidecar_path,
+    response_envelope,
+)
 
 TOOL_SCAN_LIST = "ms_scan_list"
 TOOL_INTENT_SUMMARY = "ms_scan_intent_summary"
+_MAX_INLINE_SCANS = 20
 
 
-def run_scan_list(ms_path: str) -> dict:
+def _compact_scan_ranges(scan_nums: list[int]) -> str:
+    """Format sorted scan numbers into compact ranges (e.g. '1~3,7,10~14')."""
+    if not scan_nums:
+        return ""
+    nums = sorted(set(scan_nums))
+    parts: list[str] = []
+    start = end = nums[0]
+    for n in nums[1:]:
+        if n == end + 1:
+            end = n
+        else:
+            parts.append(f"{start}~{end}" if end > start else str(start))
+            start = end = n
+    parts.append(f"{start}~{end}" if end > start else str(start))
+    return ",".join(parts)
+
+
+def run_scan_list(
+    ms_path: str,
+    workdir: str | None = None,
+    *,
+    _offload: bool = True,
+) -> dict:
     """
     Return the time-ordered list of all scans in the MS.
 
@@ -151,11 +181,87 @@ def run_scan_list(ms_path: str) -> dict:
     # Check for large time gaps between consecutive scans (potential missing data)
     _check_scan_gaps(scans_out, warnings)
 
-    data = {
+    # Build compact per-field and per-intent summaries so orientation never needs
+    # all 100+ raw scan dicts inline.
+    field_order: list[int] = []
+    field_agg: dict[int, dict] = {}
+    intent_agg: dict[str, dict] = {}
+    total_dur = 0.0
+    valid_starts: list[str] = []
+    valid_ends: list[str] = []
+
+    for rec in scans_out:
+        fid = int(rec["field_id"])
+        fname = str(rec["field_name"])
+        dur_v = rec["duration_s"]["value"]
+        dur_f = float(dur_v) if dur_v is not None else 0.0
+        total_dur += dur_f
+        s_utc = rec["start_utc"]["value"]
+        e_utc = rec["end_utc"]["value"]
+        if s_utc:
+            valid_starts.append(s_utc)
+        if e_utc:
+            valid_ends.append(e_utc)
+
+        if fid not in field_agg:
+            field_order.append(fid)
+            field_agg[fid] = {
+                "field_id": fid,
+                "field_name": fname,
+                "n_scans": 0,
+                "duration_s": 0.0,
+                "intents": set(),
+                "scan_nums": [],
+            }
+        fa = field_agg[fid]
+        fa["n_scans"] += 1
+        fa["duration_s"] += dur_f
+        fa["scan_nums"].append(int(rec["scan_number"]))
+        intents_list = rec["intents"]["value"] or []
+        fa["intents"].update(intents_list)
+
+        for intent_lbl in intents_list or ["UNASSIGNED"]:
+            ia = intent_agg.setdefault(
+                intent_lbl, {"intent": intent_lbl, "n_scans": 0, "duration_s": 0.0}
+            )
+            ia["n_scans"] += 1
+            ia["duration_s"] += dur_f
+
+    by_field = [
+        {
+            "field_id": field_agg[fid]["field_id"],
+            "field_name": field_agg[fid]["field_name"],
+            "n_scans": field_agg[fid]["n_scans"],
+            "duration_s": round(field_agg[fid]["duration_s"], 2),
+            "intents": sorted(field_agg[fid]["intents"]),
+            "scan_range": _compact_scan_ranges(field_agg[fid]["scan_nums"]),
+        }
+        for fid in field_order
+    ]
+    by_intent = [
+        {
+            "intent": k,
+            "n_scans": v["n_scans"],
+            "duration_s": round(v["duration_s"], 2),
+        }
+        for k, v in sorted(intent_agg.items(), key=lambda kv: -kv[1]["duration_s"])
+    ]
+
+    data: dict = {
         "n_scans": len(scans_out),
         "n_fields": len(set(s["field_name"] for s in scans_out)),
+        "total_duration_s": round(total_dur, 2),
+        "obs_start_utc": valid_starts[0] if valid_starts else None,
+        "obs_end_utc": valid_ends[-1] if valid_ends else None,
+        "by_field": by_field,
+        "by_intent": by_intent,
         "scans": scans_out,
     }
+
+    if _offload and (len(scans_out) > _MAX_INLINE_SCANS or workdir):
+        data = offload_detail(
+            data, ["scans"], resolve_sidecar_path(f"{Path(p).name}.scan_list.json", workdir)
+        )
 
     return response_envelope(
         tool_name=TOOL_SCAN_LIST,
@@ -173,8 +279,8 @@ def run_scan_intent_summary(ms_path: str) -> dict:
     Aggregates scan durations from ms_scan_list and groups by intent.
     If intents are absent, groups by field name instead.
     """
-    # Reuse scan list — all the work is aggregation
-    scan_result = run_scan_list(ms_path)
+    # Reuse scan list -- keep scans inline for internal aggregation
+    scan_result = run_scan_list(ms_path, _offload=False)
 
     warnings: list[str] = list(scan_result.get("warnings", []))
     scans: list[dict] = scan_result["data"]["scans"]

@@ -38,7 +38,7 @@ import signal
 import sys
 import time
 import weakref
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel, ConfigDict
@@ -70,15 +70,16 @@ class ToolEnvelope(BaseModel):
     ms_path: str | None = None
     completeness_summary: str | None = None
     data: Any = None
+    field_flags: dict[str, Any] | None = None
     warnings: list[Any] = []
-    provenance: dict[str, Any] | None = None
     error_type: str | None = None
     message: str | None = None
 
 
-#: Return annotation for every ``@mcp.tool`` coroutine. FastMCP reads the
-#: second argument as the output schema and validates structuredContent against it.
-ToolResult = Annotated[CallToolResult, ToolEnvelope]
+#: Return annotation for every ``@mcp.tool`` coroutine. Bare ``CallToolResult``
+#: keeps ``outputSchema`` ``None`` on ``tools/list`` (saving ~50 KB across 61
+#: tools) while preserving ``structuredContent`` and ``TextContent`` on calls.
+ToolResult = CallToolResult
 
 # ---------------------------------------------------------------------------
 # Per-resource locks
@@ -197,13 +198,17 @@ async def run_tool(
 
     started = time.monotonic()
     status, error_type = "crash", None
+    provenance: dict[str, Any] | None = None
     casa_log = call_log_path()
     drop_log = False
     try:
         async with contextlib.AsyncExitStack() as stack:
             for lock_key in sorted({os.path.realpath(k) for k in raw_keys}):
                 await stack.enter_async_context(path_lock(lock_key))
-            envelope = json.loads(await _run_in_child(tool_fn, args, kwargs, casa_log))
+            raw_json, provenance = await _run_in_child(tool_fn, args, kwargs, casa_log)
+            envelope = json.loads(raw_json)
+        if isinstance(envelope, dict) and "provenance" in envelope:
+            provenance = provenance or envelope.pop("provenance", None)
         status, error_type = envelope.get("status", "ok"), envelope.get("error_type")
         result = envelope_result(flag_casa_severe(envelope, casa_log))
         tasks, severe, _ = casa_task_log(casa_log)
@@ -224,6 +229,9 @@ async def run_tool(
             with contextlib.suppress(OSError):
                 os.unlink(casa_log)
             logged_casa_log = None
+        extra_event: dict[str, Any] = {}
+        if provenance is not None:
+            extra_event["provenance"] = provenance
         log_event(
             tool=_label
             or f"{getattr(tool_fn, '__module__', '?')}.{getattr(tool_fn, '__qualname__', '?')}",
@@ -232,6 +240,7 @@ async def run_tool(
             error_type=error_type,
             duration_s=round(time.monotonic() - started, 3),
             casa_log=logged_casa_log,
+            **extra_event,
         )
 
 
@@ -272,8 +281,10 @@ def _tool_ref(tool_fn) -> tuple[str, str]:
     return module, qualname
 
 
-async def _run_in_child(tool_fn, args: tuple, kwargs: dict, casa_log: str) -> str:
-    """Run one tool call in a fresh process (util/worker.py) and return its JSON result."""
+async def _run_in_child(
+    tool_fn, args: tuple, kwargs: dict, casa_log: str
+) -> tuple[str, dict[str, Any] | None]:
+    """Run one tool call in a fresh process (util/worker.py) and return (wire_json, provenance)."""
     module, qualname = _tool_ref(tool_fn)
     request = json.dumps({"module": module, "qualname": qualname, "args": args, "kwargs": kwargs})
 
@@ -312,4 +323,4 @@ async def _run_in_child(tool_fn, args: tuple, kwargs: dict, casa_log: str) -> st
     if "exception" in reply:
         exc = reply["exception"]
         raise RuntimeError(f"{exc['type']}: {exc['message']} (CASA log: {casa_log})")
-    return reply["result"]
+    return reply["result"], reply.get("provenance")

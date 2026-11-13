@@ -28,9 +28,12 @@ Standard library only: the worker child imports this and must not pay for mcp.
 
 from __future__ import annotations
 
+import base64
+import inspect
 import json
 import logging
 import os
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -42,6 +45,11 @@ LOGFILE_ENV = "_ANALYST_CASA_LOGFILE"
 #: log that already holds the generating call's lines; each stage-log line then
 #: moves it past what it counted. Unset means 0.
 LOGSTART_ENV = "_ANALYST_CASA_LOGSTART"
+#: Tool metadata embedded into generated scripts so _record_stage stamps replayable
+#: call metadata into stage_log.jsonl without manual ms_reduction_log appends.
+TOOL_NAME_ENV = "_ANALYST_TOOL_NAME"
+SCRIPT_PATH_ENV = "_ANALYST_SCRIPT_PATH"
+CALL_PARAMS_ENV = "_ANALYST_CALL_PARAMS"
 #: Overrides the directory whose ``logs/`` subdirectory holds everything.
 WORKDIR_ENV = "RADIO_MCP_DIR"
 
@@ -152,7 +160,40 @@ def log_event(**fields) -> None:
         pass
 
 
-def with_casa_log(script: str) -> str:
+def _extract_caller_tool_meta() -> tuple[str | None, dict | None]:
+    """Extract (TOOL_NAME, bound signature params) when called directly from a write tool."""
+    try:
+        frame = sys._getframe(2)
+    except ValueError:
+        return None, None
+    tool_name = frame.f_globals.get("TOOL_NAME")
+    if (
+        not isinstance(tool_name, str)
+        or not tool_name.startswith("ms_")
+        or tool_name == "ms_reduction_log"
+    ):
+        return None, None
+    if frame.f_code.co_name not in ("run", "set_intents"):
+        return None, None
+    fn = frame.f_globals.get(frame.f_code.co_name) or frame.f_globals.get("run")
+    if not callable(fn):
+        return tool_name, None
+    try:
+        sig = inspect.signature(fn)
+        raw = {k: frame.f_locals[k] for k in sig.parameters if k in frame.f_locals}
+        params = json.loads(json.dumps(raw, default=str))
+    except Exception:
+        params = None
+    return tool_name, params
+
+
+def with_casa_log(
+    script: str,
+    *,
+    tool_name: str | None = None,
+    script_path: str | None = None,
+    call_params: dict | None = None,
+) -> str:
     """Insert the CASA log setting into a generated script, after any shebang.
 
     The script then writes to the CASA log of the call that generated it (or
@@ -162,12 +203,23 @@ def with_casa_log(script: str) -> str:
     begin in that log (LOGSTART_ENV).
     """
     path = os.environ.get(LOGFILE_ENV) or os.devnull
+    extra = ""
+    if tool_name:
+        extra += f'_os.environ["{TOOL_NAME_ENV}"] = {tool_name!r}\n'
+    if script_path:
+        extra += f'_os.environ["{SCRIPT_PATH_ENV}"] = {script_path!r}\n'
+    if call_params is not None:
+        encoded = base64.b64encode(
+            json.dumps(call_params, separators=(",", ":"), default=str).encode("utf-8")
+        ).decode("ascii")
+        extra += f'_os.environ["{CALL_PARAMS_ENV}"] = {encoded!r}\n'
     preamble = (
         f"# CASA log: {path}\n"
         "import os as _os\n"
         f'_os.environ["{LOGFILE_ENV}"] = {path!r}\n'
         f'_os.environ["{LOGSTART_ENV}"] = str(_os.path.getsize({path!r}) '
         f"if _os.path.isfile({path!r}) else 0)\n"
+        f"{extra}"
         "try:\n"
         "    from casaconfig import config as _casaconfig\n"
         f"    _casaconfig.logfile = {path!r}\n"
@@ -180,6 +232,22 @@ def with_casa_log(script: str) -> str:
     return preamble + script
 
 
-def write_script(path, script: str) -> None:
+def write_script(
+    path,
+    script: str,
+    *,
+    tool_name: str | None = None,
+    call_params: dict | None = None,
+) -> None:
     """Write a generated Python script with the CASA log preamble."""
-    Path(path).write_text(with_casa_log(script))
+    if tool_name is None and call_params is None:
+        tool_name, call_params = _extract_caller_tool_meta()
+    resolved = str(Path(path).resolve()) if tool_name else None
+    Path(path).write_text(
+        with_casa_log(
+            script,
+            tool_name=tool_name,
+            script_path=resolved,
+            call_params=call_params,
+        )
+    )

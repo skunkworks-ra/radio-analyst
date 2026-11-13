@@ -19,8 +19,13 @@ from pathlib import Path
 import numpy as np
 
 from ms_inspect.util.casa_context import open_table
+from ms_inspect.util.formatting import (
+    CompletionFlag,
+    _collect_flags,
+    resolve_sidecar_path,
+    response_envelope,
+)
 from ms_inspect.util.formatting import field as fmt_field
-from ms_inspect.util.formatting import response_envelope
 
 TOOL_NAME = "ms_calsol_stats"
 
@@ -500,7 +505,11 @@ def _save_raw_npz(
 
 
 def run(
-    caltable_path: str, snr_min: float = 3.0, amp_sigma: float = 5.0, verbosity: str = "compact"
+    caltable_path: str,
+    snr_min: float = 3.0,
+    amp_sigma: float = 5.0,
+    verbosity: str = "compact",
+    workdir: str | None = None,
 ) -> dict:
     """
     Inspect a CASA calibration table and return per-(antenna, SPW, field) stats.
@@ -663,10 +672,10 @@ def run(
         delay_abs_max_ns = float(np.nanmax(np.abs(active_delay)))
 
     # --- build response data ---
-    def _flag(arr: np.ndarray | None) -> str:
-        if arr is None:
+    def _flag(arr: np.ndarray | None) -> CompletionFlag:
+        if arr is None or (arr.size > 0 and bool(np.all(np.isnan(arr)))):
             return "UNAVAILABLE"
-        return "PARTIAL" if np.any(np.isnan(arr)) else "COMPLETE"
+        return "PARTIAL" if bool(np.any(np.isnan(arr))) else "COMPLETE"
 
     data: dict = {
         "table_type": fmt_field(
@@ -768,45 +777,70 @@ def run(
         amp_sigma,
     )
 
-    # --- raw NPZ sidecar (always written; full uncapped detail) ---
-    npz_path = str(p.parent / f"{p.name}.calsol_stats.npz")
+    # --- raw NPZ sidecar (always written when writable; full uncapped detail) ---
+    npz_arrays = {
+        "flagged_frac": flagged_frac_arr,
+        "snr_mean": snr_mean_arr,
+        "amp_mean": amp_mean_arr,
+        "amp_std": amp_std_arr,
+        "phase_mean_deg": phase_mean_arr,
+        "phase_rms_deg": phase_rms_arr,
+        "phase_rms_deg_per_corr": phase_rms_corr_arr,
+        "amp_array": amp_array_4d,
+        "delay_ns": delay_arr,
+    }
+    npz_thresholds = {"snr_min": snr_min, "amp_sigma": amp_sigma}
+    npz_filename = f"{p.name}.calsol_stats.npz"
+    sidecar_cand = resolve_sidecar_path(npz_filename, workdir)
+    target_cand = sidecar_cand if sidecar_cand is not None else str(p.parent / npz_filename)
+
+    npz_path: str | None = None
+    npz_err: OSError | None = None
     try:
         _save_raw_npz(
-            npz_path,
+            target_cand,
             ant_names,
             spw_ids,
             field_ids,
             field_names,
-            {
-                "flagged_frac": flagged_frac_arr,
-                "snr_mean": snr_mean_arr,
-                "amp_mean": amp_mean_arr,
-                "amp_std": amp_std_arr,
-                "phase_mean_deg": phase_mean_arr,
-                "phase_rms_deg": phase_rms_arr,
-                "phase_rms_deg_per_corr": phase_rms_corr_arr,
-                "amp_array": amp_array_4d,
-                "delay_ns": delay_arr,
-            },
-            {"snr_min": snr_min, "amp_sigma": amp_sigma},
+            npz_arrays,
+            npz_thresholds,
         )
-        casa_calls.append(f"np.savez → {npz_path}")
+        npz_path = target_cand
+        casa_calls.append(f"np.savez -> {npz_path}")
     except OSError as exc:
-        warnings.append(f"Could not write raw NPZ sidecar to {npz_path}: {exc}")
-        npz_path = None
-    data["npz_path"] = fmt_field(npz_path, flag="COMPLETE" if npz_path else "UNAVAILABLE")
+        npz_err = exc
+        warnings.append(f"Could not write raw NPZ sidecar: {exc}")
+
+    if npz_path is not None:
+        data["npz_path"] = fmt_field(npz_path, flag="COMPLETE")
+    elif sidecar_cand is None and npz_err is not None:
+        data["npz_path"] = fmt_field(
+            None,
+            flag="COMPLETE",
+            note=(
+                "Caltable directory is read-only; pass workdir or set RADIO_MCP_DIR "
+                "to write NPZ sidecar."
+            ),
+        )
+    else:
+        data["npz_path"] = fmt_field(
+            None,
+            flag="UNAVAILABLE",
+            note=f"Could not write NPZ sidecar to {target_cand}: {npz_err}" if npz_err else None,
+        )
 
     # --- compact verbosity: per-antenna scalar arrays, no per-channel dumps ---
     # The full-mode output carries [n_ant, n_spw, n_field] arrays plus, for B
-    # tables, a [n_ant, n_spw, n_field, n_chan] amplitude cube — tens of
+    # tables, a [n_ant, n_spw, n_field, n_chan] amplitude cube -- tens of
     # thousands of nested floats. Compact mode collapses every quantity to one
     # value per antenna (averaged over spw/field) returned as a flat array
-    # aligned to ant_names, and drops the per-channel amp_array entirely. Use
-    # ms_calsol_plot for per-channel bandpass shape.
+    # aligned to ant_names, and drops the per-channel amp_array entirely.
+    full_flags = _collect_flags(data)
     if verbosity == "compact":
 
         def _per_ant(arr: np.ndarray | None) -> list | None:
-            """Collapse [n_ant, n_spw, field, ...] → one rounded value per antenna."""
+            """Collapse [n_ant, n_spw, field, ...] -> one rounded value per antenna."""
             if arr is None:
                 return None
             out: list = []
@@ -816,34 +850,49 @@ def run(
             return out
 
         compact_data: dict = {
-            "table_type": table_type,
-            "n_antennas": n_ant,
-            "n_spw": n_spw,
-            "n_field": n_field,
-            "ant_names": ant_names,
-            "spw_ids": spw_ids,
-            "field_ids": field_ids,
-            "field_names": field_names,
-            "overall_flagged_frac": round(overall_flagged_frac, 4),
-            "n_antennas_lost": n_antennas_lost,
-            "antennas_lost": antennas_lost,
+            "table_type": data["table_type"],
+            "n_antennas": data["n_antennas"],
+            "n_spw": data["n_spw"],
+            "n_field": data["n_field"],
+            "ant_names": data["ant_names"],
+            "spw_ids": data["spw_ids"],
+            "field_ids": data["field_ids"],
+            "field_names": data["field_names"],
+            "overall_flagged_frac": fmt_field(round(overall_flagged_frac, 4)),
+            "n_antennas_lost": data["n_antennas_lost"],
+            "antennas_lost": data["antennas_lost"],
             "per_antenna_note": (
                 "Arrays are aligned to ant_names and averaged over spw/field, except "
                 "delay_ns which reports the signed largest-|delay| per antenna across "
                 "(spw, field, active_corr) (corr 0 only for KCROSS). "
-                "Per-channel bandpass shape is omitted here: use ms_calsol_plot."
+                "Per-channel bandpass shape is omitted in compact mode (stored in npz_path)."
             ),
-            "flagged_frac": _per_ant(flagged_frac_arr),
-            "snr_mean": _per_ant(snr_mean_arr),
+            "flagged_frac": fmt_field(_per_ant(flagged_frac_arr), flag=_flag(flagged_frac_arr)),
+            "snr_mean": (
+                data["snr_mean"]
+                if _is_delay_type(table_type)
+                else fmt_field(_per_ant(snr_mean_arr), flag=_flag(snr_mean_arr))
+            ),
             "outliers": data["outliers"],
-            "npz_path": npz_path,
+            "npz_path": data["npz_path"],
         }
         if _complex:
-            compact_data["amp_median"] = round(amp_median, 5) if amp_median is not None else None
-            compact_data["amp_mean"] = _per_ant(amp_mean_arr)
-            compact_data["amp_std"] = _per_ant(amp_std_arr)
-            compact_data["phase_rms_deg"] = _per_ant(phase_rms_arr)
-            compact_data["phase_rms_axis"] = sorted(phase_rms_axes)
+            compact_data["amp_median"] = (
+                fmt_field(
+                    round(amp_median, 5),
+                    note="Median of every unflagged |CPARAM| in the table.",
+                )
+                if amp_median is not None
+                else data["amp_median"]
+            )
+            compact_data["amp_mean"] = fmt_field(_per_ant(amp_mean_arr), flag=_flag(amp_mean_arr))
+            compact_data["amp_std"] = fmt_field(_per_ant(amp_std_arr), flag=_flag(amp_std_arr))
+            compact_data["phase_rms_deg"] = fmt_field(
+                _per_ant(phase_rms_arr),
+                flag=_flag(phase_rms_arr),
+                note=data["phase_rms_deg"].get("note"),
+            )
+            compact_data["phase_rms_axis"] = data["phase_rms_axis"]
             if phase_rms_corr_arr is not None:
                 pc_ant = np.full((n_ant, phase_rms_corr_arr.shape[3]), math.nan)
                 for i in range(n_ant):
@@ -852,15 +901,41 @@ def run(
                         v = v[np.isfinite(v)]
                         if v.size:
                             pc_ant[i, c] = np.mean(v)
-                compact_data["phase_rms_deg_per_corr"] = [
+                pc_rows = [
                     [round(float(x), 4) if np.isfinite(x) else None for x in row] for row in pc_ant
                 ]
-        if _is_delay_type(table_type) and active_delay is not None:
-            compact_data["delay_ns"] = _signed_max_abs_per_ant(active_delay)
-            compact_data["delay_rms_ns"] = delay_rms_ns
-            compact_data["delay_abs_max_ns"] = (
-                round(delay_abs_max_ns, 4) if delay_abs_max_ns is not None else None
-            )
+                compact_data["phase_rms_deg_per_corr"] = fmt_field(
+                    pc_rows,
+                    flag=_flag(phase_rms_corr_arr),
+                    note=f"Shape [n_ant={n_ant}, n_corr].",
+                )
+        if _is_delay_type(table_type):
+            if active_delay is not None:
+                compact_data["delay_ns"] = fmt_field(
+                    _signed_max_abs_per_ant(active_delay),
+                    flag=_flag(active_delay),
+                    note=(
+                        "Signed largest-|delay| per antenna across (spw, field, active_corr) "
+                        "(corr 0 only for KCROSS)."
+                    ),
+                )
+                compact_data["delay_rms_ns"] = fmt_field(
+                    delay_rms_ns,
+                    flag=_flag(active_delay) if delay_abs_max_ns is not None else "UNAVAILABLE",
+                    note=data["delay_rms_ns"].get("note"),
+                )
+                compact_data["delay_abs_max_ns"] = (
+                    fmt_field(
+                        round(delay_abs_max_ns, 4),
+                        note=data["delay_abs_max_ns"].get("note"),
+                    )
+                    if delay_abs_max_ns is not None
+                    else data["delay_abs_max_ns"]
+                )
+            else:
+                compact_data["delay_ns"] = data["delay_ns"]
+                compact_data["delay_rms_ns"] = data["delay_rms_ns"]
+                compact_data["delay_abs_max_ns"] = data["delay_abs_max_ns"]
         data = compact_data
 
     return response_envelope(
@@ -869,4 +944,5 @@ def run(
         data=data,
         warnings=warnings,
         casa_calls=casa_calls,
+        extra_flags=full_flags,
     )

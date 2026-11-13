@@ -10,8 +10,11 @@ Falls back to calibrator catalogue matching when intents are absent.
 
 from __future__ import annotations
 
+import json
 import math
+import re
 from collections import Counter
+from pathlib import Path
 
 import numpy as np
 
@@ -38,7 +41,12 @@ from ms_inspect.util.conversions import (
     rad_to_dms,
     rad_to_hms,
 )
-from ms_inspect.util.formatting import field, response_envelope
+from ms_inspect.util.formatting import (
+    _collect_flags,
+    field,
+    resolve_sidecar_path,
+    response_envelope,
+)
 from ms_inspect.util.frequencies import field_frequencies
 from ms_inspect.util.phase_cal_catalog import (
     EXACT_ARCSEC,
@@ -73,7 +81,7 @@ _INTENT_COVERAGE_THRESHOLD = 0.50
 _COORD_SUSPECT_THRESHOLD_DEG = 1.0 / 60.0  # 1 arcminute
 
 
-def run(ms_path: str) -> dict:
+def run(ms_path: str, workdir: str | None = None) -> dict:
     """
     Return the list of all observed fields with positions, intents, and
     calibrator role identification.
@@ -98,7 +106,7 @@ def run(ms_path: str) -> dict:
             return response_envelope(
                 tool_name=TOOL_NAME,
                 ms_path=ms_path,
-                data={"fields": [], "n_fields": 0},
+                data={"fields": [], "mosaic_groups": [], "n_fields": 0},
                 warnings=warnings,
                 casa_calls=casa_calls,
             )
@@ -530,23 +538,53 @@ def run(ms_path: str) -> dict:
             rec["separation_deg"] = round(best_sep, 2) if best_name is not None else None
 
     # ------------------------------------------------------------------
-    # Mosaic detection: multiple fields same source_id → group them
+    # Mosaic detection and deduplication
     # ------------------------------------------------------------------
-    mosaic_groups: dict[int, list[int]] = {}
-    for fid, sid in enumerate(source_ids[:n_fields]):
-        mosaic_groups.setdefault(sid, []).append(fid)
-    mosaic_notes = [
-        f"Source ID {sid}: {len(fids)} pointings (mosaic) — fields {fids}"
-        for sid, fids in mosaic_groups.items()
-        if len(fids) > 1
-    ]
-    if mosaic_notes:
-        warnings.extend(mosaic_notes)
+    pre_slim_flags = _collect_flags({"fields": fields_out})
+    mosaic_groups_list = _detect_mosaic_groups(fields_out, source_ids[:n_fields], scans_per_field)
 
-    data = {
+    detail_path_field = None
+    has_large_mosaic = any(g["n_pointings"] >= 3 for g in mosaic_groups_list)
+    if has_large_mosaic:
+        sidecar_path = resolve_sidecar_path(f"{Path(p).name}.field_list.json", workdir)
+        if sidecar_path:
+            try:
+                with open(sidecar_path, "w") as fh:
+                    json.dump({"fields": fields_out}, fh, separators=(",", ":"), default=str)
+                detail_path_field = field(sidecar_path)
+            except OSError as exc:
+                detail_path_field = field(
+                    None,
+                    flag="UNAVAILABLE",
+                    note=f"Could not write full field list sidecar to {sidecar_path}: {exc}",
+                )
+
+    for grp in mosaic_groups_list:
+        fids = grp["field_ids"]
+        warnings.append(
+            f"Mosaic '{grp['group_name']}': {grp['n_pointings']} pointings -- fields {fids}"
+        )
+        if grp["n_pointings"] >= 3:
+            gname = grp["group_name"]
+            for fid in fids:
+                orig = fields_out[fid]
+                fields_out[fid] = {
+                    "field_id": orig["field_id"],
+                    "name": orig["name"],
+                    "source_id": orig["source_id"],
+                    "mosaic_group": gname,
+                    "ra_j2000_deg": orig["ra_j2000_deg"],
+                    "dec_j2000_deg": orig["dec_j2000_deg"],
+                    "intents": orig["intents"],
+                    "field_role": orig["field_role"],
+                    "nearest_phase_cal": orig.get("nearest_phase_cal"),
+                    "separation_deg": orig.get("separation_deg"),
+                }
+
+    data: dict = {
         "n_fields": n_fields,
         # A measurement, not a verdict. This used to be a boolean
-        # `heuristic_intents`, set from the threshold below — but once role
+        # `heuristic_intents`, set from the threshold below -- but once role
         # resolution became per field, that boolean no longer described any
         # field's role, and it was wrong in both directions: true while a field
         # with intents used them, false while a field without intents fell back
@@ -555,8 +593,11 @@ def run(ms_path: str) -> dict:
         # as it sees fit.
         "n_fields_with_intents": n_with_intents,
         "intent_coverage_fraction": round(intent_fraction, 4),
+        "mosaic_groups": mosaic_groups_list,
         "fields": fields_out,
     }
+    if detail_path_field is not None:
+        data["detail_path"] = detail_path_field
 
     return response_envelope(
         tool_name=TOOL_NAME,
@@ -564,12 +605,147 @@ def run(ms_path: str) -> dict:
         data=data,
         warnings=warnings,
         casa_calls=casa_calls,
+        extra_flags=pre_slim_flags,
     )
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+_MOSAIC_MAX_SPAN_DEG = 5.0
+
+
+def _is_mosaic_candidate(rec: dict) -> bool:
+    """True when a field is an unassigned or target-only non-calibrator field."""
+    if rec["calibrator_match"]["value"] is not None:
+        return False
+    if rec["vla_cal_match"]["value"] is not None:
+        return False
+    if rec["pol_calibrator"]["value"] is not None:
+        return False
+    role_val = rec["field_role"]["value"]
+    return role_val is None or (isinstance(role_val, list) and set(role_val) <= {"target"})
+
+
+def _mosaic_stem(name: str) -> str | None:
+    """Extract base target name from a mosaic pointing label (e.g. '3C391 C1' -> '3C391')."""
+    s = name.strip()
+    m = re.match(r"^(.+?)(?:[\s_-]+(?:[A-Za-z]{0,4}\d+))$", s)
+    if m:
+        return m.group(1).strip()
+    m2 = re.match(r"^([A-Za-z][A-Za-z0-9+.-]*?[A-Za-z])(\d+)$", s)
+    if m2:
+        return m2.group(1).strip()
+    return None
+
+
+def _detect_mosaic_groups(
+    fields_out: list[dict],
+    source_ids: list[int],
+    scans_per_field: Counter[int],
+) -> list[dict]:
+    """Group multi-pointing mosaic target fields by shared source_id or pointing stem."""
+    assigned: set[int] = set()
+    raw_groups: list[tuple[str, list[int]]] = []
+
+    # 1. Shared source_id among non-calibrator fields (>= 2 pointings)
+    by_sid: dict[int, list[int]] = {}
+    for fid, sid in enumerate(source_ids):
+        if fid < len(fields_out) and _is_mosaic_candidate(fields_out[fid]):
+            by_sid.setdefault(sid, []).append(fid)
+    for _sid, fids in by_sid.items():
+        if len(fids) >= 2:
+            stems = {_mosaic_stem(fields_out[f]["name"]) for f in fids}
+            if len(stems) == 1 and next(iter(stems)):
+                gname = str(next(iter(stems)))
+            else:
+                gname = fields_out[fids[0]]["name"]
+            raw_groups.append((gname, fids))
+            assigned.update(fids)
+
+    # 2. Stem-matched pointing names among remaining non-calibrator fields (>= 3 pointings)
+    by_stem: dict[str, list[int]] = {}
+    for fid, rec in enumerate(fields_out):
+        if fid in assigned or not _is_mosaic_candidate(rec):
+            continue
+        stem = _mosaic_stem(rec["name"])
+        if stem:
+            by_stem.setdefault(stem, []).append(fid)
+
+    for stem, fids in by_stem.items():
+        if len(fids) < 3:
+            continue
+        # Verify sky proximity so unrelated targets never merge
+        ref_ra = fields_out[fids[0]]["ra_j2000_deg"]["value"]
+        ref_dec = fields_out[fids[0]]["dec_j2000_deg"]["value"]
+        if ref_ra is not None and ref_dec is not None:
+            compact = all(
+                fields_out[f]["ra_j2000_deg"]["value"] is not None
+                and fields_out[f]["dec_j2000_deg"]["value"] is not None
+                and _angular_sep_deg(
+                    ref_ra,
+                    ref_dec,
+                    fields_out[f]["ra_j2000_deg"]["value"],
+                    fields_out[f]["dec_j2000_deg"]["value"],
+                )
+                <= _MOSAIC_MAX_SPAN_DEG
+                for f in fids[1:]
+            )
+            if not compact:
+                continue
+        raw_groups.append((stem, fids))
+        assigned.update(fids)
+
+    raw_groups.sort(key=lambda item: item[1][0])
+    groups_out: list[dict] = []
+    for gname, fids in raw_groups:
+        sids = sorted({int(fields_out[f]["source_id"]) for f in fids})
+        fnames = [fields_out[f]["name"] for f in fids]
+        ras = [
+            fields_out[f]["ra_j2000_deg"]["value"]
+            for f in fids
+            if fields_out[f]["ra_j2000_deg"]["value"] is not None
+        ]
+        decs = [
+            fields_out[f]["dec_j2000_deg"]["value"]
+            for f in fids
+            if fields_out[f]["dec_j2000_deg"]["value"] is not None
+        ]
+        seps = [
+            fields_out[f]["separation_deg"]
+            for f in fids
+            if fields_out[f].get("separation_deg") is not None
+        ]
+        pcals = list(
+            dict.fromkeys(
+                fields_out[f]["nearest_phase_cal"]
+                for f in fids
+                if fields_out[f].get("nearest_phase_cal") is not None
+            )
+        )
+        nearest_pcal = pcals[0] if len(pcals) == 1 else (pcals or None)
+        first = fields_out[fids[0]]
+        groups_out.append(
+            {
+                "group_name": gname,
+                "source_ids": sids,
+                "n_pointings": len(fids),
+                "field_ids": fids,
+                "field_names": fnames,
+                "ra_range_deg": [round(min(ras), 6), round(max(ras), 6)] if ras else None,
+                "dec_range_deg": [round(min(decs), 6), round(max(decs), 6)] if decs else None,
+                "intents": first["intents"],
+                "field_role": first["field_role"],
+                "observing_frequency": first["observing_frequency"],
+                "nearest_phase_cal": nearest_pcal,
+                "separation_deg_range": [round(min(seps), 2), round(max(seps), 2)]
+                if seps
+                else None,
+                "n_scans_total": int(sum(scans_per_field[f] for f in fids)),
+            }
+        )
+    return groups_out
 
 
 def _extract_coords(

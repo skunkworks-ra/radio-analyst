@@ -662,7 +662,8 @@ def _patch_all_for_k(tbl_path):
 
 
 class TestRunKSnr:
-    def test_zero_snr_delay_table_reports_no_low_snr(self, tmp_path):
+    def test_zero_snr_delay_table_reports_no_low_snr(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("RADIO_MCP_DIR", raising=False)
         tbl = tmp_path / "delay.k"
         tbl.mkdir()
         ot = _patch_all_for_k(tbl)
@@ -714,7 +715,8 @@ class TestTableScalars:
         tbl.mkdir()
         with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=_patch_all_for_g(tbl)):
             d = calsol_stats.run(str(tbl))["data"]
-        assert d["amp_median"] == pytest.approx(1.0)
+        assert d["amp_median"]["value"] == pytest.approx(1.0)
+        assert d["amp_median"]["flag"] == "COMPLETE"
 
     def test_delay_abs_max_in_full_and_compact(self, tmp_path):
         tbl = tmp_path / "delay.k"
@@ -803,9 +805,9 @@ class TestKcrossAndSignedCompactDelay:
                 full = calsol_stats.run(str(tbl), verbosity="full")["data"]
 
             # No 0.5x compact dilution and no 1/sqrt(2) RMS dilution!
-            assert compact["delay_ns"] == pytest.approx([10.69, 10.69, 10.69])
-            assert compact["delay_rms_ns"] == [[pytest.approx(10.69)]]
-            assert compact["delay_abs_max_ns"] == pytest.approx(10.69)
+            assert compact["delay_ns"]["value"] == pytest.approx([10.69, 10.69, 10.69])
+            assert compact["delay_rms_ns"]["value"] == [[pytest.approx(10.69)]]
+            assert compact["delay_abs_max_ns"]["value"] == pytest.approx(10.69)
             assert full["delay_rms_ns"]["value"] == [[pytest.approx(10.69)]]
             assert full["delay_abs_max_ns"]["value"] == pytest.approx(10.69)
 
@@ -818,7 +820,7 @@ class TestKcrossAndSignedCompactDelay:
         ot = self._mock_delay_table(tbl, "Kcross Jones", {0: f0, 1: f1})
         with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=ot):
             compact = calsol_stats.run(str(tbl), verbosity="compact")["data"]
-        assert compact["delay_ns"] == pytest.approx([10.69, 10.69, 10.69])
+        assert compact["delay_ns"]["value"] == pytest.approx([10.69, 10.69, 10.69])
 
         # Flip magnitudes so negative SPW dominates: sign of -10.69 must be preserved!
         f0_neg = np.array([[[6.68, 6.68, 6.68]], [[0.0, 0.0, 0.0]]], dtype=float)
@@ -826,7 +828,7 @@ class TestKcrossAndSignedCompactDelay:
         ot_neg = self._mock_delay_table(tbl, "Kcross Jones", {0: f0_neg, 1: f1_neg})
         with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=ot_neg):
             compact_neg = calsol_stats.run(str(tbl), verbosity="compact")["data"]
-        assert compact_neg["delay_ns"] == pytest.approx([-10.69, -10.69, -10.69])
+        assert compact_neg["delay_ns"]["value"] == pytest.approx([-10.69, -10.69, -10.69])
 
     def test_standard_k_table_retains_both_parallel_hands(self, tmp_path):
         tbl = tmp_path / "delay.K"
@@ -835,8 +837,8 @@ class TestKcrossAndSignedCompactDelay:
         ot = self._mock_delay_table(tbl, "K Jones", {0: fparam})
         with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=ot):
             compact = calsol_stats.run(str(tbl), verbosity="compact")["data"]
-        assert compact["delay_ns"] == pytest.approx([1.1, -2.5, 3.0])
-        assert compact["delay_abs_max_ns"] == pytest.approx(3.0)
+        assert compact["delay_ns"]["value"] == pytest.approx([1.1, -2.5, 3.0])
+        assert compact["delay_abs_max_ns"]["value"] == pytest.approx(3.0)
         # Both corr 0 and corr 1 contribute to K-table RMS (including legitimate 0.0 on ant 2 corr 1)
         expected_rms = math.sqrt(np.mean(np.array([1.0, 2.0, 3.0, 1.1, -2.5, 0.0]) ** 2))
-        assert compact["delay_rms_ns"] == [[pytest.approx(expected_rms)]]
+        assert compact["delay_rms_ns"]["value"] == [[pytest.approx(expected_rms)]]

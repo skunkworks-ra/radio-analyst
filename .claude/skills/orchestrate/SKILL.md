@@ -8,8 +8,6 @@ description: >
   reduction, or to run the stages with stage agents.
 allowed-tools: Agent,
                Read,
-               Write,
-               Bash,
                mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
                mcp__plugin_radio-analyst_ms-inspect__ms_verify_priorcals,
                mcp__plugin_radio-analyst_ms-inspect__ms_verify_caltables,
@@ -23,7 +21,8 @@ allowed-tools: Agent,
                mcp__plugin_radio-analyst_ms-inspect__ms_residual_stats,
                mcp__plugin_radio-analyst_ms-inspect__ms_spw_amp_severity,
                mcp__plugin_radio-analyst_ms-inspect__ms_pol_cal_conditions,
-               mcp__plugin_radio-analyst_ms-modify__ms_casa_task,
+               mcp__plugin_radio-analyst_ms-inspect__ms_radiometer_estimate,
+               mcp__plugin_radio-analyst_ms-inspect__ms_vis_amp_time_stats,
                mcp__plugin_radio-analyst_ms-create__ms_report
 ---
 
@@ -34,52 +33,44 @@ optionally `stokes=I|IQUV`. If one of the first three is missing, stop and ask
 for it. `stokes` defaults to `I`. `IQUV` adds the polcal stage and an IQUV cube;
 every Stokes I stage and check runs as for `I`.
 
-You do not run CASA and you do not write to the MS. Two write tools are
-granted for narrow uses: `ms_casa_task` only for `visstat` (read-only), and
-`ms_report` only for the report at the end. Stage agents do the work;
-you hand each one its inputs, read its handoff, check the result with the
-read-only tools above, and decide what happens next. Every MCP tool takes one
-argument, `params`.
+You do not run CASA, you do not run Bash, and you do not write files directly.
+Only one write tool is granted: `ms_report`, for the HTML report at the end.
+Stage agents do the work; you hand each one its inputs, read its handoff, check
+the result with the read-only tools above, and decide what happens next. Every
+MCP tool takes one argument, `params` (and returns bare values under `data` plus
+non-`COMPLETE` entries in `field_flags`).
 
 **Retry cap: 5 attempts per stage.** On the 5th failed attempt, stop and ask
-the user, with the record files of every attempt.
+the user, summarizing every attempt's deciding check.
 
-## The record: one JSON file per stage attempt
+## The record: one `<stage_decision>` block per stage attempt
 
-Before each next step, Write `{workdir}/orchestrator/{n:02d}_{stage}_try{k}.json`
-(`n` counts every stage attempt from 01; `k` is the attempt number for that
-stage). The files are the audit of your reasoning; write them even when the
-stage fails. Keys:
+Before each next step (and on any failed or stopped stage), emit one compact
+JSON object wrapped in `<stage_decision>...</stage_decision>` in your assistant
+text (`seq` counts every stage attempt starting at `1`; `try` is the attempt
+number `1..5` for that stage; use `"stage": "image_iquv"` for stage 6 so its
+attempt counter stays separate from Stokes I `image`). The `Stop` / `SessionEnd`
+audit hook (`scripts/plugin/audit_hook.sh`) deterministically extracts each
+block into `{workdir}/orchestrator/{seq:02d}_{stage}_try{try}.json` alongside
+`<workdir>/events.jsonl` and `<workdir>/stage_log.jsonl` -- you do NOT call
+`Write` yourself:
 
-```json
-{
-  "n": 1, "stage": "precal", "attempt": 1,
-  "prompt": "<the exact prompt you gave the stage agent>",
-  "handoff": "<the stage agent's handoff block, verbatim and whole; never abridged>",
-  "checks": [
-    {"criterion": "<the condition, as the source states it>",
-     "source": "<skill file:line>",
-     "tool": "<tool you called>", "tool_args": {"<the params you passed>": "..."},
-     "field": "<field you read>",
-     "value": "<value, copied from the tool output>",
-     "result": "pass | fail | not_checked", "note": "<why not_checked>"}
-  ],
-  "decision": "next | retry | stop_ask_user",
-  "reason": "<one or two sentences: which check decided it>",
-  "change": "<on a retry: what the next attempt does differently>",
-  "debug_params": {},
-  "agent_id": "<the agent id the Agent tool returned, if it shows one>",
-  "excerpts": ["<each excerpt command you ran for this prompt>"],
-  "png_reviewed": "<image stage and selfcal: what the PNG shows, after you Read it; `not_viewed` if the image did not reach you>",
-  "agent_usage": "<the usage the Agent tool reported for this call, verbatim>"
-}
+```
+<stage_decision>
+{"seq": 1, "stage": "precal", "try": 1, "workdir": "<workdir>", "decision": "next", "deciding_metric": "ms_workflow_status.next_recommended_step = delay_bandpass_gain (commands/calibrate.md:48)", "reason": "Priorcals, BP0.b, and bandpass model verified.", "debug_directive": null, "png_reviewed": null}
+</stage_decision>
 ```
 
-Copy values from tool output; never retype a number from memory. A check you
-could not run is a row with `"result": "not_checked"` and the reason, never
-left out. Token, cost
-and time accounting is also extracted from the session transcript after the
-run; `agent_usage` here is what you saw.
+Required keys in every `<stage_decision>` JSON object:
+- `seq`: integer `1, 2, ...` across all stage attempts in this run
+- `stage`: `"inspect" | "precal" | "calibrate" | "polcal" | "image" | "postcal" | "selfcal" | "image_iquv"`
+- `try`: integer attempt counter (`1..5`) for this `stage`
+- `workdir`: exact `workdir` path string
+- `decision`: `"next" | "retry" | "stop_ask_user"`
+- `deciding_metric`: exact `"<tool>.<field> = <value> vs <threshold> (<source>)"` copied from tool output (never retyped from memory; list any `not_checked` checks in `reason` and for final `caveats`)
+- `reason`: 1 to 2 sentences stating which check decided it (and on a retry, what changes next)
+- `debug_directive`: `null`, or `{"call": "<tool>", "params": {...}}` when `debug: allowed` on a retry
+- `png_reviewed`: `null` on non-imaging stages; on `image`, `selfcal`, and `image_iquv`, 1 sentence stating what the PNG shows after you `Read` it (`"not_viewed"` if the image did not reach you)
 
 ## Stages
 
@@ -89,8 +80,9 @@ line), then the values you hand it, one per line as `name: value`. Scope values
 are fixed here from `stokes`, not left to the stage.
 
 Every stage prompt also carries `python: <path>`: the interpreter that runs the
-generated scripts (the one this session's context names, or `pixi run python`
-in a clone). Find it once; the stages do not search for it.
+generated scripts (the one this session's context names, or
+`.pixi/envs/default/bin/python` in a clone). Find it once from context; the
+stages do not search for it.
 
 | # | Stage | Agent | Arguments |
 |---|---|---|---|
@@ -103,44 +95,33 @@ in a clone). Find it once; the stages do not search for it.
 | 5 | selfcal (when section 4 says so) | `radio-analyst:selfcal-stage` | `<ms_path> workdir=<workdir> imagename=<prefix of the image to improve>`; with `stokes=IQUV`, `pol_tables: <kcross.K, dterms.D, and polangle.X if solved, full paths>` |
 | 6 | image, IQUV cube (`stokes=IQUV` only, last) | `radio-analyst:image-stage` | `<ms_path> workdir=<workdir>`, `stokes: IQUV`, `imagename: <prefix of the last target image>` |
 
-## Skill excerpts: the stage gets only the lines it needs
+## Skill excerpts: static stage bundles
 
-A stage agent does not load the radio-interferometry skill. You cut the
-sections its command uses into files and send it the file paths. `{ri}` is the
-radio-interferometry skill directory: the sibling `radio-interferometry/` of
-this skill's base directory. Bash is for this command only:
+A stage agent does not load the full `radio-interferometry` skill. Pre-built
+single-file bundles live under `{ri}/bundles/`, where `{ri}` is the sibling
+`radio-interferometry/` directory of this skill's base directory. Do **not**
+`Read` the bundle files yourself in the orchestrator -- pass the static path
+at the end of each stage prompt (`inspect` takes none):
 
-```
-awk -v H='<heading 1>|<heading 2>|...' 'BEGIN{n=split(H,a,"|")} /^## /{p=0; for(i=1;i<=n;i++) if(index($0,a[i])==1) p=1} p' {ri}/<file>
-```
+| Stage | Bundle path |
+|---|---|
+| precal | `{ri}/bundles/precal.md` |
+| calibrate | `{ri}/bundles/calibrate.md` |
+| polcal | `{ri}/bundles/polcal.md` |
+| image | `{ri}/bundles/image.md` |
+| postcal | `{ri}/bundles/postcal.md` |
+| selfcal | `{ri}/bundles/selfcal.md` |
+| image, IQUV cube | `{ri}/bundles/image_iquv.md` |
 
-Each heading is the start of a `## ` line; the section runs to the next `## `.
-Redirect the output of each `awk` or `cat` to
-`{workdir}/orchestrator/ex_<stage>_<file stem>.txt` (for example
-`ex_calibrate_07-calibration-execution.txt`; never under `/tmp`). Do not Read
-the excerpt files yourself.
+Note: `07b-gaincal-recovery.md` is deferred by design -- `bundles/calibrate.md`
+instructs `calibrate-stage` to `Read` `{ri}/07b-gaincal-recovery.md` only when a
+Step 4b post-flight check fails.
 
-| Stage | File | Headings |
-|---|---|---|
-| precal | `10-precal-workflow.md` | `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 5 —`, `## Step 6 —`, `## Step 8 —`, `## Decision gate` |
-| precal, calibrate, polcal | `ledger.md` | the whole file (`cat`) |
-| calibrate | `07b-gaincal-recovery.md` | the whole file (`cat`; Step 4b sends the stage there) |
-| calibrate | `07-calibration-execution.md` | `## Execution protocol`, `## Placeholder reference`, `## Field selection`, `## solint guidance`, `## Calibration table naming`, `## Caltable solution flagging`, `## Drilling into`, `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 4b —`, `## Step 5 —`, `## Step 6 —`, `## Decision gate`, `## Antenna-set consistency`, `## Step 7 —`, `## Post-applycal assessment`, `## parang parameter` |
-| polcal | `09-polcal-execution.md` | `## Purpose`, `## Reading the conditions`, `## Tool API reference`, `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 5 —`, `## Calibration table naming convention`, `## Placeholder reference`, `## Decision summary` |
-| image | `11-imaging.md` | `## Placeholder reference`, `## Step 0 —`, `## Step 0.5 —`, `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 5 —`, `## Step 6 —`, `## Step 7 —`, `## Step 8 —`, `## Step 9 —` |
-| image, IQUV cube | `11-imaging.md` | `## Placeholder reference`, `## Step 0 —`, `## Step 3 —`, `## Step 4 —`, `## Step 5 —`, `## Step 6 —`, `## Step 7 —`, `## Polarization frequency cubes` |
-| selfcal | `12-selfcal.md` | `## Prerequisites`, `## Step 0 —`, `## Step 1 —`, `## Step 2 —`, `## Step 3 —`, `## Step 4 —`, `## Step 5 —` |
-| selfcal, postcal | `ledger.md` | the whole file (`cat`) |
-| precal, calibrate, polcal, image, selfcal, postcal | `SKILL.md` | `## Running generated scripts` |
-
-Put one line per file at the end of the stage prompt, after the arguments and
-values:
+Put one line at the end of the stage prompt, after the arguments and values:
 
 ```
-SKILL EXCERPT FILE: <path> (<file>, sections: <headings>)
+SKILL EXCERPT FILE: <path>
 ```
-
-Record the exact command(s) in the attempt's JSON under `"excerpts"`.
 
 ## Checks after each stage
 
@@ -173,12 +154,12 @@ re-run on the same MS without undoing its flags, so a failed precal check stops.
 | Pre-calibration complete (commands/calibrate.md step 1) | `ms_workflow_status({ms}, workdir)` `next_recommended_step` | `delay_bandpass_gain` | stop |
 | Polarisation scope (`stokes=IQUV` only; commands/precal.md step 6) | handoff `pol_scope:` and `angle_cal:` lines | `pol_scope: on` with an `angle_cal` | line missing: stop. `off`: stop and ask the user whether a Stokes I only reduction is acceptable, with the reason from the line. On yes, continue with `stokes=I`; record the user's answer in `reason` |
 
-### 3. calibrate (07-calibration-execution.md:647-664, decision gate; 11-imaging.md:54-68, coherence gate)
+### 3. calibrate (07-calibration-execution.md:647-664, decision gate; 11-imaging.md:55-69, coherence gate)
 
 Read the phase calibrator fields from `ms_field_list({cal})`, the target fields
 from `ms_field_list({ms})`, and the channel range from
 `ms_spectral_window_list({cal})` `suggested.center_channels_string` (the same
-in-band range the solves used, 11:57-58). That string is per SpW, e.g.
+in-band range the solves used, 11:58-59). That string is per SpW, e.g.
 `0:5~58,1:5~58`; `ms_corrected_stats` takes one `chan_start`/`chan_end`. When
 every SpW has the same range, pass it. When they differ, mark the three
 coherence rows `not_checked` with the string as the reason.
@@ -190,18 +171,17 @@ coherence rows `not_checked` with the string as the reason.
 | Antennas lost (07:655) | `ms_calsol_stats` `n_antennas_lost` on `initial_phase.G0`, `delay.K`, `bandpass.B`, `gain.G` | <= 3 each | stop (07:663) |
 | fluxscale done, `gain.fluxscaled` written (07:658) | `ms_workflow_status({ms}, workdir)` `final_solves_completed` | contains `"fluxscale"` | retry |
 | CORRECTED on the target (commands/image.md step 1) | same, `corrected_populated_target` | true | retry |
-| Phase cal coherence (11:66) | `ms_corrected_stats({cal}, field=<phase cals>, chan_start, chan_end)` `phase_rms_deg` | < 30 | retry, re-solve |
-| Phase cal gains (11:67) | same, `amp_robust_std` vs `amp_median` | < ~20% | retry |
-| Target not decorrelated (11:68) | `ms_corrected_stats({ms}, field=<targets>, chan_start, chan_end)` `amp_median`, `amp_robust_std` | `amp_median` > 0, std not >> median | retry |
+| Phase cal coherence (11:67) | `ms_corrected_stats({cal}, field=<phase cals>, chan_start, chan_end)` `phase_rms_deg` | < 30 | retry, re-solve |
+| Phase cal gains (11:68) | same, `amp_robust_std` vs `amp_median` | < ~20% | retry |
+| Target not decorrelated (11:69) | `ms_corrected_stats({ms}, field=<targets>, chan_start, chan_end)` `amp_median`, `amp_robust_std` | `amp_median` > 0, std not >> median | retry |
 
-Record the target's `phase_rms_deg` per pointing beside that row. 11:68 gives no
+Record the target's `phase_rms_deg` per pointing beside that row. 11:69 gives no
 phase criterion for the target (a resolved source has structure phase), so it
 is a number to report, not a pass/fail.
 
-Record as `not_checked` with the reason: 07:656 (lost antennas flagged on both
+Note as `not_checked` for final `caveats`: 07:656 (lost antennas flagged on both
 MSs: no read-only tool measures it) and 07:657 (fluxscale flux vs
-`flux_estimate`: copy the stage's value from the handoff into `value` and say
-it is the stage's).
+`flux_estimate`: note the stage's reported value from the handoff).
 
 ### 3b. polcal (09-polcal-execution.md, "Decision summary")
 
@@ -216,69 +196,68 @@ it is the stage's).
 | PA coverage of the leakage cal (09 "PA coverage for a `Df+QU` solve") | `ms_pol_cal_conditions({cal})` `leakage_calibrator.pa_spread_deg` | report it | none |
 | Xf solved | same `ms_workflow_status` call, `polcal_solves_completed` | report whether it holds `Xf` | none |
 
-Record as `not_checked`, with the reason that no tool measures them: the Xf PA
-residual and the `Df+QU` recovered Q/U (09 "Decision summary").
+Note as `not_checked` for `caveats`, with the reason that no tool measures them:
+the Xf PA residual and the `Df+QU` recovered Q/U (09 "Decision summary").
 
-### 4. image (11-imaging.md:324-362, quality gates)
+### 4. image (11-imaging.md:327-365, quality gates)
 
 The image stage makes two images: a `hogbom` first pass and a `multiscale`
 second pass (commands/image.md steps 4-5, 11-imaging.md Step 2). Run the checks
-on the second-pass image; record the first-pass numbers beside them. The
-radiometer estimate is the image stage's own number (commands/image.md step 4);
-record that it comes from the handoff.
+on the second-pass image; report the first-pass numbers beside them. Compute
+the radiometer prediction directly with
+`ms_radiometer_estimate({ms}, field=<targets>, stokes='I', weighting='briggs', robust=0.5)`
+(`thermal_rms_jy`).
 
 | Check | Tool, field | Pass | On fail |
 |---|---|---|---|
 | Image measures | `ms_image_stats(<imagename>.image.pbcor, psf_path, pb_level)` | status ok | retry |
-| `residual_rms_jy` vs the radiometer estimate (11:355) | `ms_image_stats` | within 2x | over 2x: "When noise is not met" below |
-| `residual_dynamic_range` (11:356) | `ms_image_stats` | > 20 for a target | retry |
-| `detection` label (11:364) | `ms_image_stats` | report it; not a pass/fail | none |
+| `residual_rms_jy` vs `thermal_rms_jy` (11:358) | `ms_image_stats` vs `ms_radiometer_estimate` | within 2x | over 2x: "When noise is not met" below |
+| `residual_dynamic_range` (11:359) | `ms_image_stats` | > 20 for a target | retry |
+| `detection` label (11:367) | `ms_image_stats` | report it; not a pass/fail | none |
 
-Record as `not_checked`: `beam_major_arcsec` and `peak_jy` (11:357-358) unless
-the handoff gives the expected beam.
+Note as `not_checked` unless the handoff gives the expected beam:
+`beam_major_arcsec` and `peak_jy` (11:360-361).
 
 #### When noise is not met
 
 A dirty or lightly cleaned image of filled, extended emission cannot be at the
 noise level: the residual comes down as cleaning goes deeper. So a residual over
-2x the radiometer estimate is not, by itself, a calibration failure. Rule out
-the sources of error first, in this order, then work on the image. Record each
-step's numbers as checks. Run A, B and C in that order, each one even when it is
-slow; a later step never stands in for an earlier one.
+2x `thermal_rms_jy` is not, by itself, a calibration failure. Rule out the
+sources of error first, in this order, then work on the image. Run A, B and C in
+that order, each one even when it is slow; a later step never stands in for an
+earlier one.
 
 A. **Noise on the calibrator.** A point-source calibrator images to the noise
    when the calibration is good, so it is the representative noise test. Run the
    image stage on the phase calibrator: arguments `<ms_path> workdir=<workdir>`,
    `field: <phase cal>`, `stokes: I`, `passes: 1`, `imagename: <phase cal>_noise`
-   (its own name, so the target images are not overwritten). Its `residual_rms_jy` within
-   2x its own radiometer estimate (11:355) rules the calibration out. Over 2x:
-   the calibration is suspect; stop and ask.
+   (its own name, so the target images are not overwritten). Compare its
+   `residual_rms_jy` against `ms_radiometer_estimate({ms}, field=<phase cal>,
+   stokes='I', weighting='briggs', robust=0.5)` `thermal_rms_jy` (11:358):
+   within 2x rules the calibration out. Over 2x: the calibration is suspect;
+   stop and ask.
 B. **Target amplitude against frequency.** `ms_spw_amp_severity({ms},
    datacolumn='CORRECTED_DATA', field=<targets>)`. Its per-channel
    `robust_sigma` is the 13 Step 3 measure (13:101-106, :143-148). The floor is
-   the median `robust_sigma` of the SpWs with the lowest `severity`. Record, per
+   the median `robust_sigma` of the SpWs with the lowest `severity`. Note, per
    SpW, the channels and half-SpWs over 13 Step 3's cut values; those values
-   are the 24A-376 starting values (13:109-112), not a rule, so record the
+   are the 24A-376 starting values (13:109-112), not a rule, so note the
    numbers and say so; note any residual RFI on that reading, then run C.
-C. **Target amplitude against time.** `ms_casa_task(task='visstat', params={vis:
-   {ms}, field: <targets>, axis: 'amp', datacolumn: 'corrected', useflags: true,
-   reportingaxes: 'integration'}, workdir, execute=True)`; Read the file at its
-   `data.result_path.value`. Record the median over integrations of the
-   per-integration mean amplitude and of `npts`, and the five integrations with
-   the largest mean, each with its time, its ratio to that median and its
-   `npts` against the median `npts` (a mostly flagged integration's mean rests
-   on few points). If B found residual RFI or integrations stand apart here,
-   go to D.
+C. **Target amplitude against time.** `ms_vis_amp_time_stats({ms},
+   field=<targets>, datacolumn='CORRECTED_DATA', top_k=5)`. Read `median_amp`,
+   `median_npts`, and the `top_outliers` entries (`utc`, `amp_mean`,
+   `ratio_to_median`, and `npts` against `median_npts` -- a mostly flagged
+   integration's mean rests on few points). If B found residual RFI or
+   integrations stand apart here, go to D.
 D. **Flag, then check again.** Run stage 4b (postcal: rflag only on the
-   target's CORRECTED data, no clip; his call, 2026-11-06) with `field: <target
-   fields>`. Then run B and C again and record both. Then re-run the image
-   stage with `imagename: <target>_rflag`, so the earlier images stay for
-   comparison. Postcal flags once per reduction (one successful run; a retry
-   after a non-zero `.rc` counts against the cap of 5 like any stage); if B or
-   C still finds outliers after it, stop and ask. From here on, "the image" in
-   the steps below is the `_rflag` set. No skill rule gives a
-   cutoff: say so in the record. Note in the record that ms_casa_task was used
-   for visstat only.
+   target's CORRECTED data, no clip) with `field: <target fields>`. Then run B
+   and C again and note both. Then re-run the image stage with
+   `imagename: <target>_rflag`, so the earlier images stay for comparison.
+   Postcal flags once per reduction (one successful run; a retry after a
+   non-zero `.rc` counts against the cap of 5 like any stage); if B or C still
+   finds outliers after it, stop and ask. From here on, "the image" in the
+   steps below is the `_rflag` set. No skill rule gives a cutoff: say so in
+   `reason`.
 
 With A to C clear, the calibration and the data are ruled out, and the
 remaining gap is the imaging. Work down this order, one step per attempt:
@@ -291,9 +270,9 @@ remaining gap is the imaging. Work down this order, one step per attempt:
    expensive, say so in `reason`).
 2. **Look at the image.** Read the PNG (`<prefix>.png`, the one `ms_image_stats`
    wrote) with the Read tool before deciding anything further. Write what you
-   see into the record's `png_reviewed`: is the source structure clean, or are
-   there stripes, rings or negative bowls around it?
-3. **Selfcal, if the model is good.** This also covers 11:360 (over 3x: escalate
+   see into `<stage_decision>`'s `png_reviewed`: is the source structure clean,
+   or are there stripes, rings or negative bowls around it?
+3. **Selfcal, if the model is good.** This also covers 11:363 (over 3x: escalate
    rather than re-imaging with different imaging parameters). Apply 12 Step 0 (12:36-62): `dynamic_range`
    from `ms_image_stats` (< 30: selfcal unlikely to help, stop and ask; 30 and
    up: proceed), and `ms_residual_stats` on each target pointing (any SpW with
@@ -365,8 +344,9 @@ parameter the stage tool does not expose (its own parameters come first).
 
 After the last stage (or a stop), build the report with
 `ms_report(workdir, summary, decisions, caveats, image_path=<last .image.pbcor>)`.
-It embeds every PNG in the workdir. Summary: each stage, its attempts and the
-deciding check of each. Decisions: each retry, debug use and selfcal decision
-with the numbers it rests on. Caveats: every `not_checked` row. Use backticks
-only around short `name = value` items. Then say in chat where the report is.
-Do not judge the science beyond the checks.
+It embeds every PNG in the workdir and derives replay steps from `stage_log.jsonl`.
+Summary: each stage, its attempts and the deciding check of each. Decisions:
+each retry, debug use and selfcal decision with the numbers it rests on.
+Caveats: every `not_checked` row. Use backticks only around short
+`name = value` items. Then say in chat where the report is. Do not judge the
+science beyond the checks.

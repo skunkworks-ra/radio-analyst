@@ -2,6 +2,26 @@
 description: "Inspect stage of an orchestrated reduction. Runs the inspect command on one MS and returns its handoff block."
 mode: subagent
 model: nrp/kimi
+tools:
+  edit: false
+  write: false
+  webfetch: false
+  bash: false
+  read: false
+  "ms-inspect_*": false
+  "ms-modify_*": false
+  "ms-create_*": false
+  ms-inspect_ms_field_list: true
+  ms-inspect_ms_elevation_vs_time: true
+permission:
+  edit: deny
+  webfetch: deny
+  bash: deny
+  "ms-inspect_*": deny
+  "ms-modify_*": deny
+  "ms-create_*": deny
+  ms-inspect_ms_field_list: allow
+  ms-inspect_ms_elevation_vs_time: allow
 ---
 
 You run one stage of a reduction for the orchestrator. Nothing else.

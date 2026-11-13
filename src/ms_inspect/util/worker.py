@@ -36,26 +36,39 @@ def _resolve(module: str, qualname: str):
     return obj
 
 
+def _run_tool_with_provenance(tool_fn, *args, **kwargs) -> tuple[str, dict | None]:
+    """Run `tool_fn`, returning `(wire_json, provenance)`."""
+    from ms_inspect.exceptions import RadioMSError
+    from ms_inspect.util.formatting import wire_envelope
+
+    try:
+        result = tool_fn(*args, **kwargs)
+        provenance = result.get("provenance") if isinstance(result, dict) else None
+        return (
+            json.dumps(wire_envelope(result), separators=(",", ":"), default=str),
+            provenance,
+        )
+    except RadioMSError as e:
+        return (
+            json.dumps(
+                {**e.to_dict(), "log_path": os.environ.get(LOGFILE_ENV)},
+                separators=(",", ":"),
+                default=str,
+            ),
+            None,
+        )
+
+
 def run_tool_sync(tool_fn, *args, **kwargs) -> str:
     """
-    Run `tool_fn` and JSON-encode its result.
+    Run `tool_fn` and JSON-encode its symmetric wire envelope.
 
     Here rather than in util/dispatch.py so the child never imports mcp or
     pydantic (about 0.3 s per call). RadioMSError is converted to the
     documented error envelope. Any other exception is re-raised.
     """
-    from ms_inspect.exceptions import RadioMSError
-    from ms_inspect.util.formatting import compact_fields
-
-    try:
-        result = tool_fn(*args, **kwargs)
-        return json.dumps(compact_fields(result), separators=(",", ":"), default=str)
-    except RadioMSError as e:
-        return json.dumps(
-            {**e.to_dict(), "log_path": os.environ.get(LOGFILE_ENV)},
-            separators=(",", ":"),
-            default=str,
-        )
+    wire_json, _ = _run_tool_with_provenance(tool_fn, *args, **kwargs)
+    return wire_json
 
 
 def main() -> int:
@@ -67,7 +80,12 @@ def main() -> int:
 
     try:
         tool_fn = _resolve(request["module"], request["qualname"])
-        reply = {"result": run_tool_sync(tool_fn, *request["args"], **request["kwargs"])}
+        wire_json, provenance = _run_tool_with_provenance(
+            tool_fn, *request["args"], **request["kwargs"]
+        )
+        reply: dict = {"result": wire_json}
+        if provenance is not None:
+            reply["provenance"] = provenance
     except Exception as exc:  # noqa: BLE001 - every error is returned to the parent
         reply = {"exception": {"type": type(exc).__name__, "message": str(exc)}}
 

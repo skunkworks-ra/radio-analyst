@@ -19,11 +19,17 @@ the cross-validation test case (ref VLA observation) confirms the offset.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Any
 
 from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
 from ms_inspect.util.conversions import bundled_iers, ecef_to_geodetic, mjd_seconds_to_unix
-from ms_inspect.util.formatting import field, offload_detail, response_envelope
+from ms_inspect.util.formatting import (
+    field,
+    offload_detail,
+    resolve_sidecar_path,
+    response_envelope,
+)
 
 TOOL_EL = "ms_elevation_vs_time"
 TOOL_PA = "ms_parallactic_angle_vs_time"
@@ -226,7 +232,11 @@ def _compute_el_pa(
     return el_deg, pa_sky
 
 
-def run_elevation_vs_time(ms_path: str, threshold_deg: float = DEFAULT_EL_THRESHOLD_DEG) -> dict:
+def run_elevation_vs_time(
+    ms_path: str,
+    threshold_deg: float = DEFAULT_EL_THRESHOLD_DEG,
+    workdir: str | None = None,
+) -> dict:
     """
     Return per-scan elevation statistics for each field.
 
@@ -351,7 +361,9 @@ def run_elevation_vs_time(ms_path: str, threshold_deg: float = DEFAULT_EL_THRESH
         "fields_summary": fields_summary,
         "fields": fields_out,
     }
-    data = offload_detail(data, ["fields"], ms_str + ".elevation_vs_time.json")
+    data = offload_detail(
+        data, ["fields"], resolve_sidecar_path(f"{Path(p).name}.elevation_vs_time.json", workdir)
+    )
 
     return response_envelope(
         tool_name=TOOL_EL,

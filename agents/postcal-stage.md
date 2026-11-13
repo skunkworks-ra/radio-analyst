@@ -2,7 +2,7 @@
 name: postcal-stage
 description: Postcal stage of an orchestrated reduction. Runs rflag only on the target's CORRECTED data and returns a STAGE HANDOFF block.
 model: haiku
-tools: mcp__plugin_radio-analyst_ms-inspect__ms_field_list, mcp__plugin_radio-analyst_ms-inspect__ms_flag_summary, mcp__plugin_radio-analyst_ms-modify__ms_apply_rflag, mcp__plugin_radio-analyst_ms-create__ms_reduction_log, Bash, Read, Skill
+tools: mcp__plugin_radio-analyst_ms-inspect__ms_field_list, mcp__plugin_radio-analyst_ms-inspect__ms_flag_summary, mcp__plugin_radio-analyst_ms-modify__ms_apply_rflag, Bash, Read, Skill
 ---
 
 You run one stage of a reduction for the orchestrator. Nothing else.

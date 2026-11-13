@@ -2,6 +2,54 @@
 description: "Calibrate stage of an orchestrated reduction. Runs the calibrate command on one MS and returns its handoff block."
 mode: subagent
 model: nrp/kimi
+tools:
+  edit: false
+  write: false
+  webfetch: false
+  bash: true
+  read: true
+  "ms-inspect_*": false
+  "ms-modify_*": false
+  "ms-create_*": false
+  ms-inspect_ms_workflow_status: true
+  ms-inspect_ms_field_list: true
+  ms-inspect_ms_spectral_window_list: true
+  ms-inspect_ms_antenna_list: true
+  ms-inspect_ms_verify_priorcals: true
+  ms-inspect_ms_refant: true
+  ms-modify_ms_gaincal: true
+  ms-modify_ms_bandpass: true
+  ms-modify_ms_fluxscale: true
+  ms-modify_ms_applycal: true
+  ms-inspect_ms_calsol_stats: true
+  ms-inspect_ms_calsol_stats_detail: true
+  ms-inspect_ms_flag_summary: true
+  ms-inspect_ms_phase_cal_lookup: true
+  ms-modify_ms_flag_caltable: true
+  ms-modify_ms_flag_data: true
+permission:
+  edit: deny
+  webfetch: deny
+  bash: allow
+  "ms-inspect_*": deny
+  "ms-modify_*": deny
+  "ms-create_*": deny
+  ms-inspect_ms_workflow_status: allow
+  ms-inspect_ms_field_list: allow
+  ms-inspect_ms_spectral_window_list: allow
+  ms-inspect_ms_antenna_list: allow
+  ms-inspect_ms_verify_priorcals: allow
+  ms-inspect_ms_refant: allow
+  ms-modify_ms_gaincal: allow
+  ms-modify_ms_bandpass: allow
+  ms-modify_ms_fluxscale: allow
+  ms-modify_ms_applycal: allow
+  ms-inspect_ms_calsol_stats: allow
+  ms-inspect_ms_calsol_stats_detail: allow
+  ms-inspect_ms_flag_summary: allow
+  ms-inspect_ms_phase_cal_lookup: allow
+  ms-modify_ms_flag_caltable: allow
+  ms-modify_ms_flag_data: allow
 ---
 
 You run one stage of a reduction for the orchestrator. Nothing else.

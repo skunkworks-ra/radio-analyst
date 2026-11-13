@@ -2,6 +2,28 @@
 description: "Postcal stage of an orchestrated reduction. Runs the postcal command on one MS and returns its handoff block."
 mode: subagent
 model: nrp/kimi
+tools:
+  edit: false
+  write: false
+  webfetch: false
+  bash: true
+  read: true
+  "ms-inspect_*": false
+  "ms-modify_*": false
+  "ms-create_*": false
+  ms-inspect_ms_field_list: true
+  ms-inspect_ms_flag_summary: true
+  ms-modify_ms_apply_rflag: true
+permission:
+  edit: deny
+  webfetch: deny
+  bash: allow
+  "ms-inspect_*": deny
+  "ms-modify_*": deny
+  "ms-create_*": deny
+  ms-inspect_ms_field_list: allow
+  ms-inspect_ms_flag_summary: allow
+  ms-modify_ms_apply_rflag: allow
 ---
 
 You run one stage of a reduction for the orchestrator. Nothing else.

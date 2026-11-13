@@ -21,12 +21,13 @@ All placeholders are populated from Phase 1–2 tool outputs before calling `ms_
 | `{STOKES}` | Step 0 | `'IQUV'` if polcal ran, else `'I'` |
 | `{POINTING_CENTERS}` | `ms_field_list` | RA/Dec of each target pointing (mosaic only) |
 | `{MAX_BASELINE_M}` | `ms_baseline_lengths` | `max_baseline_m` |
-| `{CENTER_FREQ_HZ}` | `ms_observation_info` | centre frequency in Hz |
-| `{BANDWIDTH_HZ}` | `ms_spectral_window_list` | total bandwidth in Hz |
-| `{DISH_DIAMETER_M}` | `ms_antenna_list` | dish diameter (all antennas same for connected arrays) |
-| `{TELESCOPE}` | `ms_observation_info` | `telescope_name` |
-| `{N_ANT}` | `ms_antenna_list` | number of unflagged antennas |
-| `{T_ON_SOURCE_S}` | `ms_scan_list` | on-source time in seconds; for a mosaic, per pointing (Step 7) |
+| `{CENTER_FREQ_HZ}` | `ms_radiometer_estimate` | `center_freq_hz` |
+| `{BANDWIDTH_HZ}` | `ms_radiometer_estimate` | `total_bw_hz` (`eff_bw_hz` is unflagged effective bandwidth) |
+| `{DISH_DIAMETER_M}` | `ms_antenna_list` | `dish_diameter_m` (all antennas same for connected arrays) |
+| `{TELESCOPE}` | `ms_radiometer_estimate` | `telescope_name` (also in `ms_observation_info`) |
+| `{N_ANT}` | `ms_radiometer_estimate` | `n_ant_unflagged` |
+| `{T_ON_SOURCE_S}` | `ms_radiometer_estimate` | `on_source_s` (median per pointing for a mosaic; Step 7) |
+| `{THERMAL_RMS_JY}` | `ms_radiometer_estimate` | `thermal_rms_jy` (Step 7) |
 | `{WORKDIR}` | provided | directory for image output |
 
 ---
@@ -212,13 +213,13 @@ memory_bytes ≈ 5.5 × nterms × nscales × (imsize_x × imsize_y × 4 bytes)
 ```
 
 where 4 bytes is one float pixel, `nterms` is 1 unless `mtmfs`, and `nscales`
-is 1 for hogbom. Compare this with the machine's free memory (`free -b` via
+is 1 for hogbom. Compare this with the machine's available memory (`free -b` via
 Bash). If it does not fit, do not start tclean: report the estimate and the
 memory, and image fewer pointings, a smaller region, or on a larger machine.
 This is a T3 or user decision, not a default.
 
 Match the telescope against the **canonical** name returned by `ms_inspect`
-(`telescope` field) — `VLA`, not the raw `MS::OBSERVATION::TELESCOPE_NAME`
+(`telescope_name` field) -- `VLA`, not the raw `MS::OBSERVATION::TELESCOPE_NAME`
 string, which may be `EVLA` or `JVLA`. Name normalization happens in the
 telescope profile (`src/ms_inspect/data/telescopes/*.yaml`, `aliases`).
 
@@ -228,58 +229,60 @@ be primary-beam corrected as a mosaic.
 
 ---
 
-## Step 7 — Estimate cleaning threshold
+## Step 7 -- Estimate cleaning threshold
 
-Thermal image noise, VLA OSS "Sensitivity", equation 1 (natural weighting):
+Compute the radiometer thermal noise directly with `ms_radiometer_estimate` (do
+not hand-derive SEFD, unflagged antennas, effective bandwidth, or per-pointing
+time in chat):
+
 ```
-sigma_natural = SEFD / (eta_c * sqrt(n_pol * {N_ANT} * ({N_ANT} - 1) * t_int * {BANDWIDTH_HZ}))
-sigma_jy      = w * sigma_natural
-threshold     = 3 * sigma_jy
+ms_radiometer_estimate(
+    ms_path   = {VIS},
+    field     = {TARGET_FIELD},
+    spw       = '',
+    stokes    = {STOKES},
+    weighting = 'briggs',
+    robust    = 0.5,
+)
 ```
 
-| Term | Value |
+Read `thermal_rms_jy` (along with `sefd_jy`, `eta_c`, `n_pol`, `n_ant_unflagged`,
+`on_source_s`, `eff_bw_hz`, and `weighting_factor` for reporting) and set:
+
+```
+threshold = 3 * thermal_rms_jy
+```
+
+If `thermal_rms_jy` is marked `UNAVAILABLE` in `field_flags` (for example an
+unmodelled telescope or band), report that explicitly rather than substituting
+a guessed SEFD. For an IQUV cube plane of width `W_plane_hz`, call
+`ms_radiometer_estimate` with the plane's `spw` or scale
+`thermal_rms_jy * sqrt(eff_bw_hz / W_plane_hz)`.
+
+`ms_radiometer_estimate` evaluates VLA OSS "Sensitivity" equation 1:
+```
+sigma_natural = SEFD / (eta_c * sqrt(n_pol * n_ant_unflagged * (n_ant_unflagged - 1) * on_source_s * eff_bw_hz))
+thermal_rms_jy = weighting_factor * sigma_natural
+```
+
+| Term | Value returned by `ms_radiometer_estimate` |
 |---|---|
-| `SEFD` | the telescope profile's `sefd_jy` for the band (table below) |
-| `eta_c` | correlator efficiency: 0.93 with 8-bit samplers; 0.78–0.83 with 3-bit (a further 10–15% loss). If the sampler is not known, use 0.93 and say so |
-| `n_pol` | 2 for Stokes I, Q, U or V; 1 for a single hand (RR or LL) |
-| `t_int` | on-source time in seconds. **For a mosaic, the time on one pointing**, not the total over all pointings: each pointing's noise follows its own time (overlaps are lower) |
-| `w` | weighting: 1.0 natural; ≈ 1.2 for robust weighting (OSS), which the template below uses |
+| `sefd_jy` | telescope profile's `sefd_jy` for the observed band (`src/ms_inspect/data/telescopes/<telescope>.yaml`) |
+| `eta_c` | correlator efficiency (0.93 with 8-bit samplers; 0.78 to 0.83 with 3-bit when known) |
+| `n_pol` | 2 for Stokes I, Q, U, V, or IQUV; 1 for a single hand (RR or LL) |
+| `on_source_s` | unflagged on-source integration time in seconds; **for a mosaic, median per pointing** rather than summed across all pointings |
+| `eff_bw_hz` | unflagged effective bandwidth across selected SPWs (`total_bw_hz * unflagged_fraction`) |
+| `weighting_factor` | 1.0 natural; ~1.2 for `briggs` `robust=0.5` |
 
-Two contributions are not in the equation. **Confusion** from sources within the
-beam adds in quadrature: the OSS gives D-configuration robust-weighted values
-(P 5330, L 74, S 12, C 2 µJy/beam; negligible at X and above), roughly 10×
-lower in C-configuration. **Galactic synchrotron** at P-band raises the SEFD by
-2–3× in the plane and ≥ 5× near the Galactic centre.
+Two sky contributions are not in the thermal equation and must be considered
+by scientific judgment when interpreting `residual_rms_jy`:
+- **Confusion** from sources within the beam adds in quadrature: VLA OSS gives
+  D-configuration robust-weighted values (P 5330, L 74, S 12, C 2 uJy/beam;
+  negligible at X and above), roughly 10x lower in C-configuration.
+- **Galactic synchrotron** at P-band raises the effective SEFD by 2x to 3x in
+  the Galactic plane and >= 5x near the Galactic centre.
 
-SEFD reference values (Jy). VLA values from the OSS "Sensitivity" Table 3.2.1.
-Band codes are **per telescope** — uGMRT numbers its own bands and they do not
-map onto VLA band letters:
-
-| Telescope | Band | SEFD (Jy) |
-|---|---|---|
-| VLA | P | 2790 |
-| VLA | L | 420 |
-| VLA | S | 370 |
-| VLA | C | 310 |
-| VLA | X | 250 |
-| VLA | Ku | 320 |
-| VLA | K | 500 |
-| VLA | Ka | 600 |
-| VLA | Q | 1300 |
-| MeerKAT | L | 400 |
-| MeerKAT | S | 380 |
-| uGMRT | 2 (125–250 MHz) | 1500 |
-| uGMRT | 3 (250–500 MHz) | 350 |
-| uGMRT | 4 (550–850 MHz) | 285 |
-| uGMRT | 5 (1000–1460 MHz) | 300 |
-
-> **Authoritative source:** `src/ms_inspect/data/telescopes/<telescope>.yaml`,
-> key `sefd_jy`. This table is a cross-telescope comparison view only. Read the
-> profile for the value you actually put into the calculation above, and use its
-> band code — bands absent from `sefd_jy` yield SEFD UNAVAILABLE by design, which
-> you must report rather than substitute a guess.
-
-Express `threshold` in mJy, e.g. `'0.5mJy'`. This is a starting estimate —
+Express `threshold` in mJy, e.g. `'0.5mJy'`. This is a starting estimate --
 tclean will stop at this level or at `niter`, whichever comes first.
 
 Set `niter=50000` as the default upper bound. Adjust down for quick diagnostic
@@ -315,9 +318,9 @@ ms_tclean(
 
 `savemodel='modelcolumn'`: writes MODEL_DATA into the MS, required for self-cal (Phase 4).
 
-Generate the script first (`execute=False`), review it, then run it as a
-background job. Wait for completion however long it takes — tclean on a
-real mosaic can run for hours.
+Generate the script (`execute=False`), then run it via `run-step.sh` (`--wait 240`,
+SKILL.md "Running generated scripts"), re-running on `status=running` until
+`status=done` -- tclean on a real mosaic can run for hours.
 
 ---
 
@@ -370,7 +373,7 @@ it as a continuum, and say which level you are at when you report a flux:
 
 | `detection` | `dynamic_range` | What it means, and what you may claim |
 |---|---|---|
-| `undetected` | ≤ 5 | The peak is consistent with a residual or sidelobe spike. Do not report a flux. Cross-check Step 0.5: at this level the usual cause is calibration decorrelation, not imaging parameters. |
+| `undetected` | <= 5 | The peak is consistent with a residual or sidelobe spike. Do not report a flux. At this level the usual cause is calibration decorrelation on `CORRECTED_DATA`, not imaging parameters. |
 | `marginal` | > 5, < 10 | A source is probably there. A flux may be quoted with the peak-to-noise stated alongside it; do not quote a spectral index, a polarization fraction, or any second-order quantity. |
 | `detection` | ≥ 10 | Report the flux normally. Note that 10 is a floor for *existence*, not for precision — calibrator and self-cal work wants > 100. |
 | `unknown` | not computable | `rms_jy` was zero or negative. Something is wrong with the image, not with the source; check the warnings. |
@@ -408,9 +411,9 @@ and the polarization spectrum.
 ### Channelization
 
 Default to **per-SPW-chunk** planes, not per-native-channel. One plane per SPW
-(or per N-MHz chunk) gives enough λ² sampling for RM synthesis without the cost
+(or per N-MHz chunk) gives enough lambda^2 sampling for RM synthesis without the cost
 and per-plane noise of full spectral resolution. This mirrors the chunking
-`ms_setjy_polcal` already uses to fit the polarization model.
+precal's polarization model fit already uses.
 
 - Derive `width` from the chunk size: e.g. a 1 GHz SPW split into 64 MHz
   planes → `width='64MHz'`, `nchan=16`. Match the chunking you used in polcal

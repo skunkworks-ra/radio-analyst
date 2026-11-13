@@ -548,12 +548,19 @@ def run(
         for kw in flag_calls:
             casa_calls.append(f"flagdata(mode={kw['mode']!r}, field={field!r}, action='apply')")
             flagdata(vis=ms_str, action="apply", flagbackup=False, **kw)
+        summary = flagdata(vis=ms_str, mode="summary")
+        flagged_frac = (
+            float(summary["flagged"]) / float(summary["total"]) if summary.get("total") else None
+        )
     except Exception as exc:
         raise ComputationError(
             f"post-cal flagging failed: {exc}",
             ms_path=ms_path,
         ) from exc
 
+    from ms_inspect.util.stage_log import record_stage
+
+    record_stage(str(workdir_path), "postcal_flag", ms_str, {"flagged_fraction": flagged_frac})
     base_data["flags_applied"] = fmt_field(True)
     return response_envelope(
         tool_name=TOOL_NAME,

@@ -151,9 +151,9 @@ def test_ci_tool_manifest_covers_every_registered_tool():
     assert probed == _registered_tools()
 
 
-@pytest.mark.parametrize("doc", ["CLAUDE.md", "design_docs/DESIGN.md"])
+@pytest.mark.parametrize("doc", ["docs/CONTRIBUTING.md", "design_docs/DESIGN.md"])
 def test_tool_inventories_list_every_registered_tool(doc: str):
-    # CLAUDE.md "Adding a new tool", step 8: update the inventory in both files.
+    # docs/CONTRIBUTING.md "Adding a new tool", step 8: update the inventory in both files.
     text = (REPO_ROOT / doc).read_text()
     missing = sorted(t for ts in _registered_tools().values() for t in ts if f"`{t}`" not in text)
     assert not missing, f"{doc} does not list {missing}"
@@ -161,11 +161,14 @@ def test_tool_inventories_list_every_registered_tool(doc: str):
 
 def test_documented_tool_counts_match_registrations():
     counts = {server: len(tools) for server, tools in _registered_tools().items()}
-    claude_md = (REPO_ROOT / "CLAUDE.md").read_text()
+    assert counts == {"ms-inspect": 38, "ms-modify": 19, "ms-create": 4}
+    claude_path = REPO_ROOT / "CLAUDE.md"
+    assert len(claude_path.read_bytes()) <= 4096
+    claude_md = claude_path.read_text()
     readme = (REPO_ROOT / "README.md").read_text()
     design = (REPO_ROOT / "design_docs" / "DESIGN.md").read_text()
     for server, n in counts.items():
-        assert re.search(rf"\*\*{server}\*\* — .*\({n} tools", claude_md), (server, n)
+        assert re.search(rf"\*\*{server}\*\* -- .*\({n} tools", claude_md), (server, n)
         assert re.search(rf"\*\*{server}\*\*: .*\({n} tools", readme), (server, n)
     assert f"**Total `ms_inspect`: {counts['ms-inspect']} tools.**" in design
 
@@ -220,13 +223,19 @@ def test_orchestrator_grants_registered_read_only_tools_and_calls_each_stage():
     path = REPO_ROOT / ".claude" / "skills" / "orchestrate" / "SKILL.md"
     fm = _frontmatter(path)
     registered = _registered_tools()
-    for t in _tools(fm["allowed-tools"]):
+    allowed = _tools(fm["allowed-tools"])
+    assert "Write" not in allowed
+    assert "Bash" not in allowed
+    assert "mcp__plugin_radio-analyst_ms-modify__ms_casa_task" not in allowed
+    assert "mcp__plugin_radio-analyst_ms-inspect__ms_radiometer_estimate" in allowed
+    assert "mcp__plugin_radio-analyst_ms-inspect__ms_vis_amp_time_stats" in allowed
+    for t in allowed:
         m = _ORCH_TOOL_RE.match(t)
         if not m:
-            assert t in ("Agent", "Read", "Write", "Bash"), t
+            assert t in ("Agent", "Read"), t
             continue
         server, tool = m.groups()
-        assert server == "ms-inspect" or t.endswith(("__ms_report", "__ms_casa_task")), (
+        assert server == "ms-inspect" or t.endswith("__ms_report"), (
             f"orchestrator must not hold write tools: {t}"
         )
         assert tool in registered[server], t
@@ -236,22 +245,31 @@ def test_orchestrator_grants_registered_read_only_tools_and_calls_each_stage():
     assert body.count("Retry cap: 5") == 1
 
 
-def test_orchestrator_excerpt_headings_exist_in_their_files():
-    # The orchestrator cuts skill sections by heading; a renamed heading would
-    # silently drop that section from the stage's prompt.
-    ri = REPO_ROOT / ".claude" / "skills" / "radio-interferometry"
+def test_orchestrator_stage_bundles_synced_and_grant_clean():
+    from ms_inspect.util.stage_bundles import check_stage_bundles
+
+    problems = check_stage_bundles(REPO_ROOT)
+    assert not problems, "\n".join(problems)
+
+    bundles_dir = REPO_ROOT / ".claude" / "skills" / "radio-interferometry" / "bundles"
     body = (REPO_ROOT / ".claude" / "skills" / "orchestrate" / "SKILL.md").read_text()
-    table = body.split("| Stage | File | Headings |", 1)[1].split("\n\n", 1)[0]
-    n = 0
-    for row in table.splitlines()[2:]:
-        cells = [c.strip() for c in row.strip("|").split("|")]
-        fname = cells[1].strip("`")
-        heads = re.findall(r"`(## [^`]+)`", cells[2])
-        lines = (ri / fname).read_text().splitlines()
-        for h in heads:
-            assert sum(line.startswith(h) for line in lines) == 1, (fname, h)
-            n += 1
-    assert n > 0
+    referenced = set(re.findall(r"\{ri\}/bundles/([\w-]+\.md)", body))
+    assert referenced == {
+        "precal.md",
+        "calibrate.md",
+        "polcal.md",
+        "image.md",
+        "image_iquv.md",
+        "postcal.md",
+        "selfcal.md",
+    }
+    for name in referenced:
+        assert (bundles_dir / name).is_file(), name
+
+    assert (bundles_dir / "image.md").read_text() != (bundles_dir / "image_iquv.md").read_text()
+    cal_bundle = (bundles_dir / "calibrate.md").read_text()
+    assert "07b-gaincal-recovery.md" in cal_bundle
+    assert "## Recovery Tree 1" not in cal_bundle
 
 
 @pytest.mark.parametrize("stage", STAGES)
@@ -336,3 +354,86 @@ def test_section3_command_and_skill_argument_and_grant_fixes():
     orch = (REPO_ROOT / ".claude" / "skills" / "orchestrate" / "SKILL.md").read_text()
     assert ":123 opacity row" in orch
     assert "(12:217-224)" in orch
+
+
+def test_all_61_tools_suppress_output_schema():
+    """Wave 5: every @mcp.tool returns bare ToolResult (CallToolResult) so outputSchema is None."""
+    import asyncio
+
+    import ms_create.server as create_srv
+    import ms_inspect.server as inspect_srv
+    import ms_modify.server as modify_srv
+
+    async def _list_all():
+        return (
+            await inspect_srv.mcp.list_tools(),
+            await modify_srv.mcp.list_tools(),
+            await create_srv.mcp.list_tools(),
+        )
+
+    ins_tools, mod_tools, crt_tools = asyncio.run(_list_all())
+    assert len(ins_tools) == 38
+    assert len(mod_tools) == 19
+    assert len(crt_tools) == 4
+    for srv_name, tools in (
+        ("ms-inspect", ins_tools),
+        ("ms-modify", mod_tools),
+        ("ms-create", crt_tools),
+    ):
+        for tool in tools:
+            assert tool.outputSchema is None, f"{srv_name}:{tool.name} leaked outputSchema"
+
+
+@pytest.mark.parametrize("stage", STAGES)
+def test_opencode_stage_agents_enforce_per_stage_mcp_whitelists(stage: str):
+    """Wave 5: .opencode/agents/*-stage.md mirror per-stage MCP whitelists with edit/write disabled."""
+    oc_fm = _frontmatter(REPO_ROOT / ".opencode" / "agents" / f"{stage}-stage.md")
+    cmd_fm = _frontmatter(REPO_ROOT / ".claude" / "commands" / f"{stage}.md")
+    cmd_tools = _tools(cmd_fm["allowed-tools"])
+
+    want_mcp = sorted(
+        f"{m.group(1)}_{m.group(2)}" for t in cmd_tools if (m := _ORCH_TOOL_RE.match(t)) is not None
+    )
+    want_bash = "Bash" in cmd_tools
+    want_read = "Read" in cmd_tools
+
+    tools_map = oc_fm["tools"]
+    perm_map = oc_fm["permission"]
+    assert tools_map["edit"] is False
+    assert tools_map["write"] is False
+    assert tools_map["bash"] is want_bash
+    assert tools_map["read"] is want_read
+    assert tools_map["ms-inspect_*"] is False
+    assert tools_map["ms-modify_*"] is False
+    assert tools_map["ms-create_*"] is False
+
+    enabled_mcp = sorted(
+        k
+        for k, v in tools_map.items()
+        if k.startswith(("ms-inspect_", "ms-modify_", "ms-create_"))
+        and not k.endswith("_*")
+        and v is True
+    )
+    assert enabled_mcp == want_mcp
+
+    assert perm_map["edit"] == "deny"
+    assert perm_map["webfetch"] == "deny"
+    assert perm_map["bash"] == ("allow" if want_bash else "deny")
+    assert perm_map["ms-inspect_*"] == "deny"
+    assert perm_map["ms-modify_*"] == "deny"
+    assert perm_map["ms-create_*"] == "deny"
+    allowed_perm_mcp = sorted(
+        k
+        for k, v in perm_map.items()
+        if k.startswith(("ms-inspect_", "ms-modify_", "ms-create_"))
+        and not k.endswith("_*")
+        and v == "allow"
+    )
+    assert allowed_perm_mcp == want_mcp
+
+
+def test_opencode_json_timeout_is_600s():
+    cfg = json.loads((REPO_ROOT / "opencode.json").read_text())
+    assert set(cfg["mcp"]) == set(SERVER_MODULES)
+    for srv, entry in cfg["mcp"].items():
+        assert entry["timeout"] == 600000, srv

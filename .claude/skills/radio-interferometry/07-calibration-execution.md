@@ -10,11 +10,11 @@ Sequence: initial phase → delay → bandpass → gain (flux) → gain (phase, 
 
 ## Execution protocol
 
-Every `execute=False` tool call generates a CASA script. Run it detached and
-poll it as SKILL.md "Running generated scripts" says. **Wait for it to finish,
-however long it takes** — do not impose timeouts or retry counters; CASA solves
-on real data are long-running. Confirm success by the
-expected output (caltable on disk, return code 0) after the job exits.
+Every `execute=False` tool call generates a CASA script and records it in
+`stage_log.jsonl`. Run it via `run-step.sh` (`--wait 240`) as SKILL.md "Running
+generated scripts" says, re-running on `status=running` until `status=done` --
+do not impose retry caps on running CASA solves. Confirm success by `rc=0` and
+the expected caltable on disk after the job exits.
 
 ---
 
@@ -159,8 +159,8 @@ on any field: it is dead for this observation. If more than 3 antennas are in
 both, stop and report; do not flag. Otherwise, before the bandpass solve, flag
 each one on `{VIS}` and on `{FULL_MS}`, all fields and times:
 `ms_flag_data(ms_path=<each>, workdir={WORKDIR}, antenna=<name>,
-reason="<name> in antennas_lost of G0 and K", execute=True)`, and record both
-calls in the ledger. Do not re-solve.
+reason="<name> in antennas_lost of G0 and K", execute=True)` (both calls record
+automatically to `stage_log.jsonl`). Do not re-solve.
 
 An antenna lost in only some tables (G0 or K alone, or first at B or G) is not
 flagged here: applycal (`applymode='calflag'`) flags its data where it has no
@@ -198,8 +198,8 @@ Procedure:
    MS. Read `selection_flagged_after` against `selection_total`. A selection
    matching 0 visibilities means the selection is wrong, not that the data is
    clean.
-3. Append the call to the ledger (`ms_reduction_log`), reason included. The
-   reason is the only record of why the data went.
+3. Put the exact measurement in `reason`: `stage_log.jsonl` records the call
+   and its `reason` automatically as the audit record of why the data went.
 4. Re-solve the table that showed the fault, and every table downstream of it
    that was solved with it as a prior.
 5. Re-run `ms_calsol_stats` on the new table. The outlier should be gone and
@@ -477,18 +477,18 @@ caltable and never changes the MS flags; the flag check is at applycal (Step 7,
 ms_calsol_stats(caltable_path={WORKDIR}/gain.G)
 ```
 Look for:
-- `n_total_solutions` > 0 (solutions were actually computed)
-- `n_flagged_solutions` / `n_total_solutions` < 0.5 (at least 50% coverage)
-- If either fails → **Recovery 1: Caltable Not Produced**
+- `n_antennas_lost` < `n_antennas` and `antennas_lost` reviewed (unflagged solutions exist)
+- `overall_flagged_frac` < 0.5 (at least 50% unflagged solution coverage; per-antenna `flagged_frac`)
+- If empty/missing -> **Recovery 1: Caltable Not Produced**; if `overall_flagged_frac` >= 0.5 -> **Recovery 4: Low Coverage**
 
 **Check 2: SNR quality**
 ```
 # From ms_calsol_stats output, inspect:
-overall_snr_mean                 # Should be > 3.0, ideally > 5.0
+snr_mean                         # Per-antenna mean SNR; typical > 3.0, ideally > 5.0
 outliers.low_snr                 # List of {antenna, spw, field, snr} entries below snr_min
 ```
-- If `snr_mean < 3.0` → **Recovery 2: Low SNR**
-- If `outliers.low_snr` is non-empty and covers > 20% of antennas → **Recovery 2: Low SNR** (refant retry)
+- If typical `snr_mean < 3.0` -> **Recovery 2: Low SNR**
+- If `outliers.low_snr` is non-empty and covers > 20% of antennas -> **Recovery 2: Low SNR** (refant retry)
 
 **Check 3: Solution distribution (outlier check)**
 ```
@@ -507,9 +507,9 @@ in one SpW with no antenna outliers points to wideband RFI in that SpW.
   (refant dependency issue) OR **Recovery 4: Low Coverage**
 
 **If a post-flight check above routed you to a Recovery Tree, or to Escalation,
-read `07b-gaincal-recovery.md`** — it holds the diagnostic procedures for Recovery
-Trees 1–4 (Caltable Not Produced, Low SNR, Excessive Flag Jump, Low Coverage) and
-the hard-stop Escalation criteria. The happy path does not need it.
+Read `07b-gaincal-recovery.md` (sibling of `07-calibration-execution.md`, or
+`../07b-gaincal-recovery.md` relative to `bundles/calibrate.md`)** -- Recovery
+Trees 1-4 and hard-stop Escalation criteria live there; the happy path skips it.
 
 ---
 
@@ -587,14 +587,14 @@ difference over 20% as a prompt to check the prior caltables and the flux
 calibrator model, then proceed; an order-of-magnitude difference is the `usescratch` signature
 below. Quote the derived flux, the estimate and its inputs in the report.
 
-**An order-of-magnitude-low flux (e.g. ~10× low) is the signature of a mixed
+**An order-of-magnitude-low flux (e.g. ~10x low) is the signature of a mixed
 `usescratch` MODEL_DATA collision, not a calibration problem.** It happens when
-`ms_setjy_polcal` (always `usescratch=True`) created the physical `MODEL_DATA`
-column while the flux/bandpass cals were set with `ms_setjy(usescratch=False)`
-(virtual) — leaving their `MODEL_DATA` at the default 1 Jy. fluxscale then
+precal's polarized `setjy` (always `usescratch=True`) created physical `MODEL_DATA`
+while the flux/bandpass cals were set with `setjy(usescratch=False)`
+(virtual) -- leaving their `MODEL_DATA` at the default 1 Jy. fluxscale then
 bootstraps off a 1 Jy reference instead of the true model flux. If you see this,
 do not retune the solve. STOP and report: the fix is a precal step (re-run
-`ms_setjy` with `usescratch=True` for the flux cal, skill 10) so the whole MS
+flux `setjy` with `usescratch=True` for the flux cal, skill 10) so the whole MS
 uses one consistent physical model; then redo the gain solve and fluxscale here. The rule: all setjy calls on one MS must share the same
 `usescratch` (see skill 09 Step 1).
 
@@ -835,8 +835,8 @@ Every solve and apply in the final chain needs `parang=True`. It costs nothing,
 and is required for correct polarization calibration later: a chain solved
 without it forces a full recalibration from scratch once polcal is added.
 
-`ms_gaincal`, `ms_bandpass`, `ms_polcal` and `ms_applycal` default to
+`ms_gaincal`, `ms_bandpass`, and `ms_applycal` (plus polarisation `polcal`) default to
 `parang=True`, so the templates in this file leave it out. Never pass
-`parang=False`. `ms_initial_bandpass` does not set it, which is fine: its
+`parang=False`. Precal's initial bandpass bootstrap does not set it, which is fine: its
 tables (`init_gain.g`, `BP0.b`) only drive the residual rflag, and the final
 solves replace them.

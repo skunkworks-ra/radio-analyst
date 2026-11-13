@@ -205,6 +205,19 @@ def run(
             f"flagdata manual flag on the MS failed: {exc}", ms_path=ms_path
         ) from exc
 
+    from ms_inspect.util.stage_log import record_stage
+
+    record_stage(
+        str(workdir_path),
+        "flag_data",
+        ms_str,
+        {
+            "selection": sel,
+            "selection_flagged_before": int(before.get("flagged", 0)),
+            "selection_flagged_after": int(after.get("flagged", 0)),
+            "selection_total": int(after.get("total", 0)),
+        },
+    )
     base_data["selection_flagged_before"] = fmt_field(int(before.get("flagged", 0)))
     base_data["selection_flagged_after"] = fmt_field(int(after.get("flagged", 0)))
     base_data["selection_total"] = fmt_field(int(after.get("total", 0)))
