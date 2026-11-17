@@ -19,6 +19,7 @@ from ms_inspect.util.formatting import normalize_field_sel, normalize_spw_sel, r
 from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import record_stage
 from ms_modify import debug_mode
+from ms_modify.pathguard import NEXT_FLAG_VERSION_SNIPPET, next_flag_version, next_script_path
 
 TOOL_NAME = "ms_apply_rflag"
 #: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
@@ -46,15 +47,16 @@ Run with: python apply_rflag.py
 from casatasks import flagdata, flagmanager
 
 {record}
-
+{NEXT_FLAG_VERSION_SNIPPET}
 ms_path = {ms_str!r}
 workdir = {workdir!r}
 
 # Save a flag backup before applying
+_ver = _next_flag_version(ms_path, "before_rflag")
 flagmanager(
     vis=ms_path,
     mode="save",
-    versionname="before_rflag",
+    versionname=_ver,
     comment="Flag state before ms_apply_rflag",
 )
 
@@ -128,7 +130,7 @@ def run(
             ms_path=ms_path,
         )
 
-    script_path = str(workdir_path / "apply_rflag.py")
+    script_path = str(next_script_path(workdir_path, "apply_rflag.py"))
 
     # Always write script
     script_content = _build_script(
@@ -184,13 +186,14 @@ def run(
 
     # Save flag backup before applying
     try:
+        _ver = next_flag_version(ms_str, "before_rflag")
         flagmanager(
             vis=ms_str,
             mode="save",
-            versionname="before_rflag",
+            versionname=_ver,
             comment="Flag state before ms_apply_rflag",
         )
-        casa_calls.append("casatasks.flagmanager(vis=..., mode='save', versionname='before_rflag')")
+        casa_calls.append(f"casatasks.flagmanager(vis=..., mode='save', versionname={_ver!r})")
     except Exception as exc:
         warnings.append(f"Could not save flag backup: {exc}. Proceeding without backup.")
 

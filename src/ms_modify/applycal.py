@@ -33,6 +33,7 @@ from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import pol_types, record_stage
 from ms_modify import debug_mode
 from ms_modify.exceptions import ApplycalFailedError
+from ms_modify.pathguard import next_script_path
 
 TOOL_NAME = "ms_applycal"
 #: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
@@ -56,7 +57,7 @@ def _safe_stem(text: str, limit: int = 40) -> str:
 def _script_path(workdir: Path, field: str, ms_str: str = "") -> Path:
     ms_stem = _safe_stem(Path(ms_str).name.removesuffix(".ms")) if ms_str else ""
     prefix = f"applycal_{ms_stem}_" if ms_stem else "applycal_"
-    return workdir / f"{prefix}{_safe_stem(field)}.py"
+    return next_script_path(workdir, f"{prefix}{_safe_stem(field)}.py")
 
 
 def _build_script(
@@ -133,7 +134,7 @@ def run(
     calwt: bool = False,
     applymode: str = "calflag",
     parang: bool = True,
-    flagbackup: bool = False,
+    flagbackup: bool = True,
     execute: bool = False,
     debug: bool = False,
     debug_params: dict | None = None,
@@ -167,8 +168,9 @@ def run(
                     SpWs with no calibration in one or more tables (calflag
                     passes those through uncalibrated).
         parang:     Apply parallactic angle correction (default True).
-        flagbackup: Save a flag backup before applying (default False; set True
-                    for the first applycal call on the flux calibrator).
+        flagbackup: Save a flag backup before applying (default True; pass False
+                    on subsequent per-field calls to the same MS when one backup
+                    before the batch suffices).
         execute:    If False (default), write script and return.
                     If True, run applycal in-process.
 

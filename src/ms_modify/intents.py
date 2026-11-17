@@ -23,8 +23,9 @@ from ms_inspect.util.phase_cal_catalog import cone_search as vla_cone_search
 from ms_inspect.util.pol_calibrators import effective_role_at_band, lookup_pol
 from ms_inspect.util.stage_log import record_stage
 from ms_modify.exceptions import IntentsAlreadyPopulatedError
+from ms_modify.pathguard import next_script_path
 
-TOOL_NAME = "set_intents"
+TOOL_NAME = "ms_set_intents"
 
 # If this fraction or more of fields already have intents, refuse to overwrite.
 _ALREADY_POPULATED_THRESHOLD = 0.50
@@ -225,6 +226,8 @@ def _build_set_intents_script(
     from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
     from ms_inspect.util.stage_log import TABLE_PROBE_SNIPPET as probe
 
+    ms_resolved = str(Path(ms_path).expanduser().resolve())
+    wd_resolved = str(Path(workdir).expanduser().resolve()) if workdir else ""
     obs_modes_repr = repr(obs_modes)
     field_to_state = {m["field_id"]: obs_modes[";".join(sorted(m["intents"]))] for m in intent_map}
     field_to_state_repr = repr(field_to_state)
@@ -240,7 +243,7 @@ from casatools import table as _tbtool
 {record}
 {probe}
 
-ms_path = {ms_path!r}
+ms_path = {ms_resolved!r}
 
 # Mapping: obs_mode_string -> state_row_index
 obs_modes = {obs_modes_repr}
@@ -276,7 +279,7 @@ tb.close()
 # that the writes above went through.
 _state_rows = _table_rows(ms_path + "/STATE")
 _record_stage(
-    {workdir!r},
+    {wd_resolved!r},
     "set_intents",
     ms_path,
     {{"state_rows": _state_rows, "main_rows_updated": len(field_ids)}},
@@ -347,16 +350,21 @@ def set_intents(
         execute = not dry_run
 
     p = validate_ms_path(ms_path)
+    ms_str = str(p)
     casa_calls: list[str] = []
     warnings: list[str] = []
 
     # Refuse before any MS write: the execute path records to workdir only after
     # it has rewritten STATE, so a missing workdir must not be discovered there.
-    if workdir and not Path(workdir).is_dir():
-        raise ComputationError(
-            f"workdir does not exist: {workdir}. Create it before calling this tool.",
-            ms_path=ms_path,
-        )
+    wd_resolved = ""
+    if workdir:
+        wd_p = Path(workdir).expanduser()
+        if not wd_p.is_dir():
+            raise ComputationError(
+                f"workdir does not exist: {workdir}. Create it before calling this tool.",
+                ms_path=ms_path,
+            )
+        wd_resolved = str(wd_p.resolve())
 
     # ------------------------------------------------------------------
     # Step 1: Read fields, positions, existing intents
@@ -468,14 +476,13 @@ def set_intents(
     # ------------------------------------------------------------------
     if not execute:
         script_path: str | None = None
-        if workdir:
-            from pathlib import Path as _Path
-
-            script_path = str(_Path(workdir) / "set_intents.py")
+        if wd_resolved:
+            script_path = str(next_script_path(Path(wd_resolved), "set_intents.py"))
             write_script(
-                script_path, _build_set_intents_script(ms_path, intent_map, obs_modes, workdir)
+                script_path,
+                _build_set_intents_script(ms_str, intent_map, obs_modes, wd_resolved),
             )
-            casa_calls.append(f"write_script → {script_path}")
+            casa_calls.append(f"write_script -> {script_path}")
 
         data = {
             "n_fields": n_fields,
@@ -565,11 +572,11 @@ def set_intents(
     # stage log gets a line only when the caller gave one.
     with open_table(state_path) as tb:
         n_state_rows = tb.nrows()
-    if workdir:
+    if wd_resolved:
         record_stage(
-            workdir,
+            wd_resolved,
             "set_intents",
-            str(p),
+            ms_str,
             {"state_rows": n_state_rows, "main_rows_updated": n_main_rows},
         )
 

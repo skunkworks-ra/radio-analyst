@@ -761,7 +761,7 @@ ms_applycal(
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'linear'],
     calwt      = False,
     applymode  = 'calflag',
-    flagbackup = False,
+    flagbackup = True,
     workdir    = {WORKDIR},
     execute    = False,
 )

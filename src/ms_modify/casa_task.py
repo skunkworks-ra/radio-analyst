@@ -355,19 +355,38 @@ def _build_script(
     result_path: str,
     flag_backup_vis: str,
     measurement: dict,
+    *,
+    should_record: bool = True,
 ) -> str:
     from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
-    from ms_modify.pathguard import SAFE_RM_TABLE_SNIPPET as safe_rm
+    from ms_modify.pathguard import (
+        NEXT_FLAG_VERSION_SNIPPET as next_fv,
+    )
+    from ms_modify.pathguard import (
+        SAFE_RM_TABLE_SNIPPET as safe_rm,
+    )
 
     rm_lines = "".join(f"_safe_rm_table({p!r})\n" for p in caltables)
     backup = ""
+    fv_def = ""
     if flag_backup_vis:
+        fv_def = f"{next_fv}\n"
         backup = (
             "from casatasks import flagmanager as _flagmanager\n"
+            f"_flag_ver = _next_flag_version({flag_backup_vis!r}, 'before_ms_casa_task_{task}')\n"
             f"_flagmanager(vis={flag_backup_vis!r}, mode='save', "
-            f"versionname='before_ms_casa_task_{task}', "
+            "versionname=_flag_ver, "
             "comment='saved by ms_casa_task before a flag change')\n"
         )
+    record_def = f"{record}\n" if should_record else ""
+    record_block = (
+        f"_product = {product!r}\n"
+        "if not os.path.exists(_product):\n"
+        "    _product = (sorted(glob.glob(glob.escape(_product) + '.*')) or [_product])[0]\n"
+        f"_record_stage({workdir!r}, 'ms_casa_task:{task}', _product, {measurement!r})\n"
+        if should_record
+        else ""
+    )
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -379,17 +398,12 @@ import os
 from casatasks import {task}
 
 {safe_rm}
-{record}
-{_JSON_DEFAULT_SNIPPET}
+{fv_def}{record_def}{_JSON_DEFAULT_SNIPPET}
 {rm_lines}{backup}PARAMS = {params!r}
 _result = {task}(**PARAMS)
 with open({result_path!r}, "w") as _fh:
     json.dump(_json_safe(_result), _fh, default=_json_default)
-_product = {product!r}
-if not os.path.exists(_product):
-    _product = (sorted(glob.glob(glob.escape(_product) + ".*")) or [_product])[0]
-_record_stage({workdir!r}, "ms_casa_task:{task}", _product, {measurement!r})
-print("Done: {task}. Return value in {result_path}")
+{record_block}print("Done: {task}. Return value in {result_path}")
 """
 
 
@@ -484,7 +498,9 @@ def run(task: str, params: dict[str, Any], workdir: str, execute: bool = False) 
         if isinstance(v, str) and v and (k in outputs or (k in INPUT_PARAMS and _abs(v) in inputs)):
             run_params[k] = _abs(v)
 
-    in_place = mutated_targets or ([] if outputs else inputs)
+    is_pure_read_only = bool(is_read_only and not outputs and mutated_key is None)
+    should_record = not is_pure_read_only
+    in_place = [] if is_pure_read_only else (mutated_targets or ([] if outputs else inputs))
     flag_backup_vis = ""
     if task in FLAG_WRITERS and isinstance(run_params.get("vis"), str):
         if task == "flagcmd":
@@ -496,9 +512,11 @@ def run(task: str, params: dict[str, Any], workdir: str, execute: bool = False) 
             if mode not in ("list", "save"):
                 flag_backup_vis = run_params["vis"]
 
+    from ms_modify.pathguard import next_flag_version, next_script_path
+
     product = next(iter(outputs.values()), "") or data_in or str(workdir_path)
     measurement = {"modifies_in_place": in_place} if in_place else {}
-    script = workdir_path / f"casa_task_{task}.py"
+    script = next_script_path(workdir_path, f"casa_task_{task}.py")
     result_path = str(script) + ".result.json"
     write_script(
         script,
@@ -511,6 +529,7 @@ def run(task: str, params: dict[str, Any], workdir: str, execute: bool = False) 
             result_path,
             flag_backup_vis,
             measurement,
+            should_record=should_record,
         ),
     )
     casa_calls = [f"write_script → {script}"]
@@ -564,19 +583,21 @@ def run(task: str, params: dict[str, Any], workdir: str, execute: bool = False) 
     for ct in caltables:
         ns["_safe_rm_table"](ct)
     if flag_backup_vis:
-        casatasks.flagmanager(
-            vis=flag_backup_vis, mode="save", versionname=f"before_ms_casa_task_{task}"
+        ver_name = next_flag_version(flag_backup_vis, f"before_ms_casa_task_{task}")
+        casatasks.flagmanager(vis=flag_backup_vis, mode="save", versionname=ver_name)
+        casa_calls.append(
+            f"casatasks.flagmanager(mode='save', versionname={ver_name!r}) on {flag_backup_vis}"
         )
-        casa_calls.append(f"casatasks.flagmanager(mode='save') on {flag_backup_vis}")
     casa_calls.append(f"casatasks.{task}(**params)")
     try:
         result = getattr(casatasks, task)(**run_params)
         Path(result_path).write_text(
             json.dumps(ns["_json_safe"](result), default=ns["_json_default"])
         )
-        if not Path(product).exists():
-            product = (sorted(glob.glob(glob.escape(product) + ".*")) or [product])[0]
-        record_stage(str(workdir_path), f"ms_casa_task:{task}", product, measurement or None)
+        if should_record:
+            if not Path(product).exists():
+                product = (sorted(glob.glob(glob.escape(product) + ".*")) or [product])[0]
+            record_stage(str(workdir_path), f"ms_casa_task:{task}", product, measurement or None)
     except Exception as e:
         raise ComputationError(f"{task} failed: {e}", ms_path=data_in) from e
     data["result_path"] = fmt_field(result_path)

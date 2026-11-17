@@ -47,6 +47,7 @@ from ms_inspect.util.polcal_setjy_fit import (
     fit_stokes_i_adaptive,
     resolve_epoch,
 )
+from ms_modify.pathguard import next_script_path
 
 TOOL_NAME = "ms_setjy_polcal"
 
@@ -404,7 +405,7 @@ def run(
     except ValueError as exc:
         raise ComputationError(f"Polarization fitting failed: {exc}", ms_path=ms_path) from exc
 
-    script_path = str(workdir_path / "setjy_polcal.py")
+    script_path = str(next_script_path(workdir_path, "setjy_polcal.py"))
     script_content = _build_script(
         ms_str,
         field,

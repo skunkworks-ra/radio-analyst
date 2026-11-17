@@ -53,6 +53,7 @@ from ms_inspect.util.formatting import response_envelope
 from ms_inspect.util.logs import write_script
 from ms_modify import debug_mode
 from ms_modify.manual_selection import validate_manual_selection
+from ms_modify.pathguard import next_script_path
 
 TOOL_NAME = "ms_flag_caltable"
 #: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
@@ -381,7 +382,7 @@ def run(
     if interval_warn:
         warnings.append(interval_warn)
 
-    script_path = str(workdir_path / "flag_caltable.py")
+    script_path = str(next_script_path(workdir_path, "flag_caltable.py"))
     script_content = _build_script(
         caltable_str=caltable_str,
         mode=resolved_mode,

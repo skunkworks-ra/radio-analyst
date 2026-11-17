@@ -102,3 +102,56 @@ def _safe_rm_table(path):
         n += 1
     os.rename(path, f"{path}.attempt{n}")
 '''
+
+
+def next_script_path(workdir: str | Path, filename: str) -> Path:
+    """Return ``workdir / filename`` if unused, else ``<stem>_2.py``, ``_3.py``, ...
+
+    Preserves the canonical base filename on the first call in ``workdir`` while
+    preventing a second call in the same workdir from overwriting an earlier
+    script, its ``.log``/``.rc``, or its ``.result.json``.
+    """
+    wd = Path(workdir)
+    cand = wd / filename
+    if not cand.exists():
+        return cand
+    stem, suffix = cand.stem, cand.suffix
+    n = 2
+    while (wd / f"{stem}_{n}{suffix}").exists():
+        n += 1
+    return wd / f"{stem}_{n}{suffix}"
+
+
+# Runtime helper embedded in flag-writing scripts so retries never overwrite the
+# initial clean flag backup in <vis>.flagversions.
+NEXT_FLAG_VERSION_SNIPPET = '''\
+def _next_flag_version(vis, base_name):
+    """Return base_name if unused in <vis>.flagversions, else base_name_2, _3, ..."""
+    import os
+
+    fv_dir = str(vis).rstrip("/") + ".flagversions"
+    listed = set()
+    list_file = os.path.join(fv_dir, "FLAG_VERSION_LIST")
+    if os.path.isfile(list_file):
+        try:
+            with open(list_file, errors="replace") as _fh:
+                for _ln in _fh:
+                    if ":" in _ln:
+                        listed.add(_ln.split(":", 1)[0].strip())
+        except OSError:
+            pass
+
+    def _taken(name):
+        return name in listed or os.path.exists(os.path.join(fv_dir, f"flags.{name}"))
+
+    if not _taken(base_name):
+        return base_name
+    n = 2
+    while _taken(f"{base_name}_{n}"):
+        n += 1
+    return f"{base_name}_{n}"
+'''
+
+_fv_ns: dict = {}
+exec(NEXT_FLAG_VERSION_SNIPPET, _fv_ns)  # noqa: S102 - our own source, defined above
+next_flag_version = _fv_ns["_next_flag_version"]

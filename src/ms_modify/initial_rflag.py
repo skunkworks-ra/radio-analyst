@@ -27,6 +27,7 @@ from ms_inspect.util.formatting import response_envelope
 from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import record_stage
 from ms_modify import debug_mode
+from ms_modify.pathguard import NEXT_FLAG_VERSION_SNIPPET, next_flag_version
 
 TOOL_NAME = "ms_apply_initial_rflag"
 #: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
@@ -70,12 +71,13 @@ avoids redundant per-call backups.
 from casatasks import flagdata, flagmanager
 
 {record}
-
+{NEXT_FLAG_VERSION_SNIPPET}
 ms_path = {ms_str!r}
 field = {field!r}
 
 # One versioned backup of the pre-rflag FLAG state.
-flagmanager(vis=ms_path, mode="save", versionname={_FLAG_VERSION!r})
+_ver = _next_flag_version(ms_path, {_FLAG_VERSION!r})
+flagmanager(vis=ms_path, mode="save", versionname=_ver)
 
 # Pass 1: rflag on the residual column.
 flagdata(
@@ -244,8 +246,9 @@ def run(
     from ms_inspect.exceptions import ComputationError
 
     try:
-        casa_calls.append(f"flagmanager(mode='save', versionname={_FLAG_VERSION!r})")
-        flagmanager(vis=ms_str, mode="save", versionname=_FLAG_VERSION)
+        _ver = next_flag_version(ms_str, _FLAG_VERSION)
+        casa_calls.append(f"flagmanager(mode='save', versionname={_ver!r})")
+        flagmanager(vis=ms_str, mode="save", versionname=_ver)
 
         casa_calls.append(
             f"flagdata(mode='rflag', field={field!r}, datacolumn='residual', action='apply')"

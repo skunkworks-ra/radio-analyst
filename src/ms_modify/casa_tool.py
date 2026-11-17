@@ -412,6 +412,7 @@ def run(
     spilled: list[str] = []
     failed: dict[str, Any] | None = None
     created: list[dict[str, Any]] = []
+    mutated_steps: list[tuple[str, str]] = []
 
     inst = _new_instance(tool)
     try:
@@ -447,12 +448,29 @@ def run(
             if pc.method in COPY_MAKES_TABLE:
                 created.extend(c for c in pl.new_copies if c["path"] == pc.written)
                 _save_manifest(workdir_path, [*manifest, *created])
-            if pc.tier in (COPY, EDIT):
-                record_stage(str(workdir_path), f"ms_casa_tool:{pc.method}", pc.written, None)
+            if pc.tier in (COPY, EDIT) and pc.written:
+                mutated_steps.append((pc.method, pc.written))
     finally:
         for closer in ("close", "done"):
             with contextlib.suppress(Exception):  # best effort; the lock is what matters
                 getattr(inst, closer)()
+
+    if mutated_steps:
+        if failed is not None:
+            # Snapshot only the executed prefix in local `calls` so stage_log.py
+            # records the exact mutating calls that ran on disk without replaying
+            # the step that failed.
+            calls = list(calls[: failed["index"]])
+        written_paths = list(dict.fromkeys(w for _, w in mutated_steps))
+        record_stage(
+            str(workdir_path),
+            "ms_casa_tool",
+            written_paths[-1],
+            {
+                "written_paths": written_paths,
+                "methods": [m for m, _ in mutated_steps],
+            },
+        )
 
     record = {"tool": tool, "allow_write": allow_write, "results": results, "failed": failed}
     record_path.write_text(json.dumps(record, indent=1))

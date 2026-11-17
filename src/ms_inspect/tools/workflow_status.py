@@ -207,7 +207,7 @@ def run(ms_path: str, workdir: str, stokes: str = "I") -> dict:
         next_step = "probe_failed_intents"
     elif _INTENTS not in done and not intents_populated:
         next_step = _INTENTS
-    elif _PREFLAG not in done:
+    elif _PREFLAG not in done or (not calibrators_ms_present and _PRIORCALS not in done):
         next_step = "apply_preflag"
     elif _PRIORCALS not in done:
         next_step = "generate_priorcals"
@@ -251,6 +251,10 @@ def run(ms_path: str, workdir: str, stokes: str = "I") -> dict:
     # The log is history and the MS is now. Where they disagree, say so rather
     # than pick a winner: a stage recorded complete whose product no longer
     # shows in the MS is a real event the next reader needs to see.
+    if _PREFLAG in done and not calibrators_ms_present and _PRIORCALS not in done:
+        warnings.append(
+            f"preflag is recorded complete in the stage log, but calibrators.ms is not present in {wd}."
+        )
     if _APPLYCAL in done and corrected_target is False:
         warnings.append(
             "applycal is recorded complete in the stage log, but CORRECTED_DATA is not"

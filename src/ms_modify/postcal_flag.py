@@ -44,6 +44,7 @@ from ms_inspect.util.formatting import normalize_field_sel, normalize_spw_sel, r
 from ms_inspect.util.logs import write_script
 from ms_inspect.util.selection import match_field_names, parallel_corr_by_ddid
 from ms_modify import debug_mode
+from ms_modify.pathguard import NEXT_FLAG_VERSION_SNIPPET, next_flag_version, next_script_path
 
 TOOL_NAME = "ms_postcal_flag"
 #: CASA tasks this tool calls; the valid debug_params keys (debug_mode.py).
@@ -327,11 +328,12 @@ redundant per-call backups.
 from casatasks import flagdata, flagmanager
 
 {record}
-
+{NEXT_FLAG_VERSION_SNIPPET}
 ms_path = {ms_str!r}
 
 # One versioned backup of the pre-flag FLAG state.
-flagmanager(vis=ms_path, mode="save", versionname={_FLAG_VERSION!r})
+_ver = _next_flag_version(ms_path, {_FLAG_VERSION!r})
+flagmanager(vis=ms_path, mode="save", versionname=_ver)
 
 {call_blocks}
 
@@ -434,7 +436,7 @@ def run(
             ms_path=ms_path,
         )
 
-    script_path = str(workdir_path / "postcal_flag.py")
+    script_path = str(next_script_path(workdir_path, "postcal_flag.py"))
 
     from ms_inspect.exceptions import ComputationError
 
@@ -541,10 +543,11 @@ def run(
         ) from None
 
     try:
-        # One versioned backup, then a direct action='apply' pass per command —
+        # One versioned backup, then a direct action='apply' pass per command --
         # never mode='list' (CASA 6.7.5 aborts it with KeyError 'nreport').
-        casa_calls.append(f"flagmanager(mode='save', versionname={_FLAG_VERSION!r})")
-        flagmanager(vis=ms_str, mode="save", versionname=_FLAG_VERSION)
+        _ver = next_flag_version(ms_str, _FLAG_VERSION)
+        casa_calls.append(f"flagmanager(mode='save', versionname={_ver!r})")
+        flagmanager(vis=ms_str, mode="save", versionname=_ver)
         for kw in flag_calls:
             casa_calls.append(f"flagdata(mode={kw['mode']!r}, field={field!r}, action='apply')")
             flagdata(vis=ms_str, action="apply", flagbackup=False, **kw)

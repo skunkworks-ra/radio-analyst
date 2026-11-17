@@ -24,9 +24,21 @@ _STAGE_DECISION_RE = re.compile(
     r"<stage_decision>\s*(\{.*?\})\s*</stage_decision>",
     re.DOTALL,
 )
-_AGENT_ID_RE = re.compile(r"agentId:\s*([A-Za-z0-9_-]+)")
+_AGENT_ID_RE = re.compile(r"(?:agentId|session_id|task_id):\s*([A-Za-z0-9_-]+)")
 _USAGE_TAG_RE = re.compile(r"<usage>\s*(.*?)\s*</usage>", re.DOTALL)
-_WORKDIR_ARG_RE = re.compile(r"workdir\s*[=:]\s*([^\s,'\"\}]+)")
+_WORKDIR_ARG_RE = re.compile(r"workdir['\"]?\s*[=:]\s*['\"]?([^\s,'\"\}]+)")
+
+_KNOWN_STAGE_SLUGS = frozenset(
+    {"inspect", "precal", "calibrate", "polcal", "image", "postcal", "selfcal"}
+)
+_OPENCODE_MCP_PREFIXES = (
+    "radio-analyst_ms-inspect_",
+    "radio-analyst_ms-modify_",
+    "radio-analyst_ms-create_",
+    "ms-inspect_",
+    "ms-modify_",
+    "ms-create_",
+)
 
 
 def _extract_text(content: object) -> str:
@@ -44,9 +56,16 @@ def _extract_text(content: object) -> str:
     return ""
 
 
+def _is_mcp_tool(raw_name: str) -> bool:
+    return raw_name.startswith("mcp__") or raw_name.startswith(_OPENCODE_MCP_PREFIXES)
+
+
 def _short_tool_name(raw_name: str) -> str:
     if "__" in raw_name:
         return raw_name.rsplit("__", 1)[-1]
+    for pfx in _OPENCODE_MCP_PREFIXES:
+        if raw_name.startswith(pfx):
+            return raw_name[len(pfx) :]
     return raw_name
 
 
@@ -59,12 +78,12 @@ def _unwrap_params(raw_input: object) -> dict:
     return dict(raw_input)
 
 
-def _stage_from_subagent_type(subagent_type: str) -> str:
-    # e.g. "radio-analyst:precal-stage" -> "precal"
+def _stage_from_subagent_type(subagent_type: str) -> str | None:
+    # e.g. "radio-analyst:precal-stage" or "precal-stage" -> "precal"
     tail = subagent_type.split(":")[-1].strip()
-    if tail.endswith("-stage"):
-        tail = tail[: -len("-stage")]
-    return tail
+    if tail.endswith("-stage") and tail[:-6] in _KNOWN_STAGE_SLUGS:
+        return tail[:-6]
+    return None
 
 
 def _safe_stage_slug(stage: str) -> str:
@@ -86,24 +105,60 @@ def parse_stage_decisions(text: str) -> list[dict]:
     return out
 
 
-def build_audit_records_from_transcript(
-    transcript_path: str | Path,
-    *,
-    default_workdir: str | Path | None = None,
-) -> list[Path]:
-    """
-    Parse ``transcript_path`` and write ``{workdir}/orchestrator/{n:02d}_{stage}_try{k}.json``
-    for every ``<stage_decision>`` block whose ``workdir`` exists on disk.
+def _load_normalized_items(
+    raw_text: str,
+) -> list[tuple[str, object, str, dict, str, dict | None]]:
+    """Normalize Claude Code JSONL, OpenCode export JSON, and OpenCode JSONL into a stream.
 
-    Idempotent: re-running on the same or an extended transcript produces identical files.
-    Returns the list of audit JSON paths written or verified.
+    Returns tuples of:
+      - ("tool", tool_call_id, raw_tool_name, input_dict, output_text, metadata_dict_or_None)
+      - ("text", dedup_key, text_str, {}, "", None)
     """
-    tpath = Path(transcript_path)
-    if not tpath.is_file():
-        return []
+    items: list[tuple[str, object, str, dict, str, dict | None]] = []
+
+    stripped = raw_text.lstrip()
+    if stripped.startswith("{"):
+        with contextlib.suppress(json.JSONDecodeError):
+            doc = json.loads(raw_text)
+            if isinstance(doc, dict) and isinstance(doc.get("messages"), list):
+                for m_idx, msg_entry in enumerate(doc["messages"]):
+                    if not isinstance(msg_entry, dict):
+                        continue
+                    info = msg_entry.get("info") if isinstance(msg_entry.get("info"), dict) else {}
+                    role = info.get("role") or msg_entry.get("role")
+                    if role != "assistant":
+                        continue
+                    mid = str(info.get("id") or msg_entry.get("id") or f"_oc_msg_{m_idx}")
+                    for p_idx, part in enumerate(msg_entry.get("parts") or []):
+                        if not isinstance(part, dict):
+                            continue
+                        ptype = part.get("type")
+                        if ptype == "tool":
+                            call_id = str(
+                                part.get("callID") or part.get("id") or f"{mid}_t_{p_idx}"
+                            )
+                            raw_name = str(part.get("tool") or part.get("name") or "")
+                            state = part.get("state") if isinstance(part.get("state"), dict) else {}
+                            inp = state.get("input") if isinstance(state.get("input"), dict) else {}
+                            out_val = state.get("output")
+                            res_text = (
+                                out_val
+                                if isinstance(out_val, str)
+                                else (json.dumps(out_val) if out_val is not None else "")
+                            )
+                            meta = (
+                                state.get("metadata")
+                                if isinstance(state.get("metadata"), dict)
+                                else None
+                            )
+                            items.append(("tool", call_id, raw_name, inp, res_text, meta))
+                        elif ptype == "text":
+                            tkey = ("oc_export", mid, p_idx)
+                            items.append(("text", tkey, str(part.get("text") or ""), {}, "", None))
+                return items
 
     events: list[dict] = []
-    for line in tpath.read_text(errors="replace").splitlines():
+    for line in raw_text.splitlines():
         line = line.strip()
         if not line:
             continue
@@ -114,7 +169,7 @@ def build_audit_records_from_transcript(
         if isinstance(ev, dict):
             events.append(ev)
 
-    # First pass: index all tool_results by tool_use_id so streaming assistant/user pairs correlate cleanly.
+    # First pass for Claude Code JSONL: index tool_results by tool_use_id.
     tool_results: dict[str, tuple[str, dict | None]] = {}
     for ev in events:
         if ev.get("type") != "user":
@@ -128,52 +183,120 @@ def build_audit_records_from_transcript(
                 if isinstance(tuid, str) and tuid:
                     tool_results[tuid] = (_extract_text(block.get("content")), tur_dict)
 
-    seen_msg_tool_ids: set[str] = set()
-    seen_msg_text_ids: set[tuple[str, int]] = set()
-    inferred_workdir: str | None = str(default_workdir) if default_workdir else None
+    for ev_idx, ev in enumerate(events):
+        etype = ev.get("type")
+        if etype == "assistant":
+            msg = ev.get("message") or {}
+            mid = str(msg.get("id") or f"_cc_msg_{ev_idx}")
+            content = msg.get("content") or []
+            if not isinstance(content, list):
+                continue
+            for b_idx, block in enumerate(content):
+                if not isinstance(block, dict):
+                    continue
+                btype = block.get("type")
+                if btype == "tool_use":
+                    tuid = str(block.get("id") or "")
+                    if not tuid:
+                        continue
+                    raw_name = str(block.get("name") or "")
+                    inp = block.get("input") if isinstance(block.get("input"), dict) else {}
+                    res_text, tur_meta = tool_results.get(tuid, ("", None))
+                    items.append(("tool", tuid, raw_name, inp, res_text, tur_meta))
+                elif btype == "text":
+                    items.append(
+                        ("text", ("cc", mid, b_idx), str(block.get("text") or ""), {}, "", None)
+                    )
+        elif etype == "tool_use" and isinstance(ev.get("part"), dict):
+            part = ev["part"]
+            call_id = str(part.get("callID") or part.get("id") or f"_oc_tool_{ev_idx}")
+            raw_name = str(part.get("tool") or part.get("name") or "")
+            state = part.get("state") if isinstance(part.get("state"), dict) else {}
+            inp = state.get("input") if isinstance(state.get("input"), dict) else {}
+            out_val = state.get("output")
+            res_text = (
+                out_val
+                if isinstance(out_val, str)
+                else (json.dumps(out_val) if out_val is not None else "")
+            )
+            meta = state.get("metadata") if isinstance(state.get("metadata"), dict) else None
+            items.append(("tool", call_id, raw_name, inp, res_text, meta))
+        elif etype == "text" and isinstance(ev.get("part"), dict):
+            part = ev["part"]
+            pid = part.get("id")
+            tkey = ("oc_run", str(pid)) if pid else ("oc_run_idx", ev_idx)
+            items.append(("text", tkey, str(part.get("text") or ""), {}, "", None))
 
-    # Active pending stage windows (populated when Agent tool_use is seen).
+    return items
+
+
+def build_audit_records_from_transcript(
+    transcript_path: str | Path,
+    *,
+    default_workdir: str | Path | None = None,
+) -> list[Path]:
+    """
+    Parse ``transcript_path`` and write ``{workdir}/orchestrator/{n:02d}_{stage}_try{k}.json``
+    for every ``<stage_decision>`` block whose ``workdir`` exists on disk.
+
+    Supports Claude Code JSONL transcripts, ``opencode export`` JSON files, and
+    ``opencode run --format json`` JSONL transcripts.
+    Idempotent: re-running on the same or an extended transcript produces identical files.
+    Returns the list of audit JSON paths written or verified.
+    """
+    tpath = Path(transcript_path)
+    if not tpath.is_file():
+        return []
+
+    items = _load_normalized_items(tpath.read_text(errors="replace"))
+
+    seen_msg_tool_ids: set[str] = set()
+    seen_msg_text_ids: set[object] = set()
+    default_wd_path: Path | None = (
+        Path(str(default_workdir).strip()).expanduser()
+        if default_workdir and str(default_workdir).strip()
+        else None
+    )
+    inferred_workdir: str | None = (
+        str(default_wd_path) if default_wd_path is not None and default_wd_path.is_dir() else None
+    )
+
+    # Active pending stage windows (populated only when a known *-stage subagent runs).
     pending_windows: list[dict] = []
     stage_attempt_counts: dict[str, int] = {}
     auto_seq = 0
     written_paths: list[Path] = []
 
-    for ev in events:
-        if ev.get("type") != "assistant":
-            continue
-        msg = ev.get("message") or {}
-        mid = str(msg.get("id") or f"_idx_{len(seen_msg_text_ids)}")
-        content = msg.get("content") or []
-        if not isinstance(content, list):
-            continue
-
-        for b_idx, block in enumerate(content):
-            if not isinstance(block, dict):
+    for kind, item_id, str_val, inp, res_text, tur_meta in items:
+        if kind == "tool":
+            tuid = str(item_id or "")
+            if not tuid or tuid in seen_msg_tool_ids:
                 continue
-            btype = block.get("type")
+            seen_msg_tool_ids.add(tuid)
+            raw_name = str_val
 
-            if btype == "tool_use":
-                tuid = str(block.get("id") or "")
-                if not tuid or tuid in seen_msg_tool_ids:
-                    continue
-                seen_msg_tool_ids.add(tuid)
-                raw_name = str(block.get("name") or "")
-                inp = block.get("input") if isinstance(block.get("input"), dict) else {}
-                res_text, tur_meta = tool_results.get(tuid, ("", None))
+            if raw_name in ("Agent", "Task", "task"):
+                prompt_str = str(inp.get("prompt") or "")
+                sub_type = str(inp.get("subagent_type") or inp.get("agent") or "")
+                stage_hint = _stage_from_subagent_type(sub_type)
 
-                if raw_name in ("Agent", "Task"):
-                    prompt_str = str(inp.get("prompt") or "")
-                    sub_type = str(inp.get("subagent_type") or "")
-                    stage_hint = _stage_from_subagent_type(sub_type)
+                if stage_hint is not None:
                     m_wd = _WORKDIR_ARG_RE.search(prompt_str)
-                    if m_wd and not inferred_workdir:
-                        inferred_workdir = m_wd.group(1)
+                    if m_wd:
+                        cand_wd = Path(m_wd.group(1)).expanduser()
+                        if cand_wd.is_dir():
+                            inferred_workdir = str(cand_wd)
 
                     agent_id = None
                     agent_usage = None
                     if tur_meta:
-                        agent_id = tur_meta.get("agentId") or agent_id
-                        agent_usage = tur_meta.get("usage") or agent_usage
+                        agent_id = (
+                            tur_meta.get("agentId")
+                            or tur_meta.get("sessionId")
+                            or tur_meta.get("session_id")
+                            or agent_id
+                        )
+                        agent_usage = tur_meta.get("usage") or tur_meta.get("tokens") or agent_usage
                     m_aid = _AGENT_ID_RE.search(res_text)
                     if m_aid and not agent_id:
                         agent_id = m_aid.group(1)
@@ -194,98 +317,128 @@ def build_audit_records_from_transcript(
                             "consumed": False,
                         }
                     )
-                else:
-                    params = _unwrap_params(inp)
-                    if isinstance(params.get("workdir"), str) and params["workdir"]:
-                        inferred_workdir = params["workdir"]
-                    if raw_name == "Read":
-                        fp = str(inp.get("file_path") or "")
-                        if fp.lower().endswith(".png") and pending_windows:
-                            pending_windows[-1]["png_paths_read"].append(fp)
-                    elif raw_name.startswith("mcp__") and pending_windows:
-                        parsed_out: object = res_text
-                        with contextlib.suppress(ValueError, TypeError):
-                            parsed_out = json.loads(res_text)
-                        pending_windows[-1]["checks"].append(
-                            {
-                                "tool": _short_tool_name(raw_name),
-                                "tool_args": params,
-                                "output": parsed_out,
-                            }
-                        )
-
-            elif btype == "text":
-                text_key = (mid, b_idx)
-                if text_key in seen_msg_text_ids:
-                    continue
-                txt = str(block.get("text") or "")
-                decisions = parse_stage_decisions(txt)
-                if not decisions:
-                    continue
-                seen_msg_text_ids.add(text_key)
-
-                for dec in decisions:
-                    auto_seq += 1
-                    stage = str(dec.get("stage") or "").strip()
-                    safe_stage = _safe_stage_slug(stage)
-                    seq = int(dec.get("seq") or dec.get("n") or auto_seq)
-                    stage_attempt_counts[safe_stage] = stage_attempt_counts.get(safe_stage, 0) + 1
-                    attempt = int(
-                        dec.get("try") or dec.get("attempt") or stage_attempt_counts[safe_stage]
+            else:
+                params = _unwrap_params(inp)
+                if (
+                    _is_mcp_tool(raw_name)
+                    and isinstance(params.get("workdir"), str)
+                    and params["workdir"]
+                ):
+                    cand_wd = Path(params["workdir"]).expanduser()
+                    if cand_wd.is_dir():
+                        inferred_workdir = str(cand_wd)
+                active_win = next(
+                    (w for w in reversed(pending_windows) if not w["consumed"]),
+                    None,
+                )
+                if raw_name in ("Read", "read"):
+                    fp = str(inp.get("file_path") or inp.get("filePath") or "")
+                    if fp.lower().endswith(".png") and active_win is not None:
+                        active_win["png_paths_read"].append(fp)
+                elif _is_mcp_tool(raw_name) and active_win is not None:
+                    parsed_out: object = res_text
+                    with contextlib.suppress(ValueError, TypeError):
+                        parsed_out = json.loads(res_text)
+                    active_win["checks"].append(
+                        {
+                            "tool": _short_tool_name(raw_name),
+                            "tool_args": params,
+                            "output": parsed_out,
+                        }
                     )
-                    wd_str = str(dec.get("workdir") or inferred_workdir or "").strip()
-                    if not wd_str:
-                        continue
-                    wd_path = Path(wd_str)
-                    if not wd_path.is_dir():
-                        continue
 
-                    # Match the latest unconsumed pending window (preferring matching stage prefix).
-                    win: dict | None = None
-                    for cand in reversed(pending_windows):
-                        if not cand["consumed"] and (
-                            cand["stage_hint"] == stage or stage.startswith(cand["stage_hint"])
-                        ):
-                            win = cand
-                            break
-                    if win is None:
-                        for cand in reversed(pending_windows):
-                            if not cand["consumed"]:
-                                win = cand
-                                break
-                    if win is not None:
-                        win["consumed"] = True
+        elif kind == "text":
+            text_key = item_id
+            if text_key in seen_msg_text_ids:
+                continue
+            txt = str_val
+            decisions = parse_stage_decisions(txt)
+            if not decisions:
+                continue
+            seen_msg_text_ids.add(text_key)
 
-                    png_reviewed = dec.get("png_reviewed")
-                    if png_reviewed is None and win is not None and win["png_paths_read"]:
-                        png_reviewed = f"viewed: {', '.join(win['png_paths_read'])}"
+            for dec in decisions:
+                auto_seq += 1
+                stage = str(dec.get("stage") or "").strip()
+                safe_stage = _safe_stage_slug(stage)
+                seq = int(dec.get("seq") or dec.get("n") or auto_seq)
+                stage_attempt_counts[safe_stage] = stage_attempt_counts.get(safe_stage, 0) + 1
+                attempt = int(
+                    dec.get("try") or dec.get("attempt") or stage_attempt_counts[safe_stage]
+                )
 
-                    record = {
-                        "n": seq,
-                        "stage": stage,
-                        "attempt": attempt,
-                        "workdir": str(wd_path.resolve()),
-                        "prompt": win["prompt"] if win is not None else "",
-                        "handoff": win["handoff"] if win is not None else "",
-                        "checks": win["checks"] if win is not None else [],
-                        "decision": dec.get("decision"),
-                        "deciding_metric": dec.get("deciding_metric"),
-                        "reason": dec.get("reason", ""),
-                        "debug_directive": dec.get("debug_directive"),
-                        "agent_id": win["agent_id"] if win is not None else None,
-                        "png_reviewed": png_reviewed,
-                        "agent_usage": win["agent_usage"] if win is not None else None,
-                    }
+                dec_wd = str(dec.get("workdir") or "").strip()
+                wd_path: Path | None = None
+                if dec_wd:
+                    p_dec = Path(dec_wd).expanduser()
+                    if p_dec.is_dir():
+                        wd_path = p_dec
+                    elif default_wd_path is not None and default_wd_path.is_dir():
+                        wd_path = default_wd_path
+                elif inferred_workdir and Path(inferred_workdir).is_dir():
+                    wd_path = Path(inferred_workdir)
+                elif default_wd_path is not None and default_wd_path.is_dir():
+                    wd_path = default_wd_path
+                if wd_path is None:
+                    continue
 
-                    orch_dir = wd_path / "orchestrator"
-                    orch_dir.mkdir(parents=True, exist_ok=True)
-                    out_file = orch_dir / f"{seq:02d}_{safe_stage}_try{attempt}.json"
-                    payload = json.dumps(record, indent=2) + "\n"
-                    if not out_file.is_file() or out_file.read_text(errors="replace") != payload:
-                        tmp_file = out_file.with_suffix(".json.tmp")
-                        tmp_file.write_text(payload)
-                        tmp_file.replace(out_file)
-                    written_paths.append(out_file)
+                matching = [
+                    cand
+                    for cand in pending_windows
+                    if not cand["consumed"]
+                    and (
+                        cand["stage_hint"] == stage
+                        or (cand["stage_hint"] == "image" and stage == "image_iquv")
+                    )
+                ]
+                for w in matching:
+                    w["consumed"] = True
+
+                primary = matching[0] if matching else None
+                all_checks = [c for w in matching for c in w["checks"]]
+                all_pngs = [p for w in matching for p in w["png_paths_read"]]
+
+                png_reviewed = dec.get("png_reviewed")
+                if png_reviewed is None and all_pngs:
+                    png_reviewed = f"viewed: {', '.join(all_pngs)}"
+
+                record: dict[str, object] = {
+                    "n": seq,
+                    "stage": stage,
+                    "attempt": attempt,
+                    "workdir": str(wd_path.resolve()),
+                    "prompt": primary["prompt"] if primary is not None else "",
+                    "handoff": primary["handoff"] if primary is not None else "",
+                    "checks": all_checks,
+                    "decision": dec.get("decision"),
+                    "deciding_metric": dec.get("deciding_metric"),
+                    "reason": dec.get("reason", ""),
+                    "debug_directive": dec.get("debug_directive"),
+                    "agent_id": primary["agent_id"] if primary is not None else None,
+                    "png_reviewed": png_reviewed,
+                    "agent_usage": primary["agent_usage"] if primary is not None else None,
+                }
+                if len(matching) > 1:
+                    record["aux_runs"] = [
+                        {
+                            "subagent_type": w["subagent_type"],
+                            "prompt": w["prompt"],
+                            "handoff": w["handoff"],
+                            "agent_id": w["agent_id"],
+                            "agent_usage": w["agent_usage"],
+                        }
+                        for w in matching[1:]
+                    ]
+
+                orch_dir = wd_path / "orchestrator"
+                orch_dir.mkdir(parents=True, exist_ok=True)
+                out_file = orch_dir / f"{seq:02d}_{safe_stage}_try{attempt}.json"
+                payload = json.dumps(record, indent=2) + "\n"
+                if not out_file.is_file() or out_file.read_text(errors="replace") != payload:
+                    tmp_file = out_file.with_suffix(".json.tmp")
+                    tmp_file.write_text(payload)
+                    tmp_file.replace(out_file)
+                written_paths.append(out_file)
 
     return written_paths
 

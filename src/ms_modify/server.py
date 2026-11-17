@@ -1421,8 +1421,8 @@ class ApplycalInput(BaseModel):
     )
     parang: bool = Field(default=True, description="Apply parallactic angle correction.")
     flagbackup: bool = Field(
-        default=False,
-        description="Save a flag backup before applying. Set True for the first applycal call.",
+        default=True,
+        description="Save a flag backup before applying (default True).",
     )
     execute: bool = Field(
         default=False,
@@ -1728,7 +1728,7 @@ async def ms_applycal(params: ApplycalInput) -> ToolResult:
         params.calwt:      Calibrate weights (default False for VLA).
         params.applymode:  'calflag' (default), 'calonly', or 'calflagstrict'.
         params.parang:     Parallactic angle correction (default True).
-        params.flagbackup: Save flag backup first (default False).
+        params.flagbackup: Save flag backup first (default True).
         params.execute:    Generate script only (False) or run in-process (True).
 
     Returns:
