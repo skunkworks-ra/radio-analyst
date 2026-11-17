@@ -31,11 +31,23 @@ def test_spw_stats_all_flagged():
 def test_run_parallel_hands_per_spw(real_ms_calibrated):
     from ms_inspect.tools.residual_stats import run
 
+    # Default (max_per_chan_records=0) offloads chan_* while keeping per-SpW aggregates.
     out = run(real_ms_calibrated, field_id=0)
     assert out["status"] == "ok"
+    assert out["data"]["per_chan_truncated"]["value"] is True
     spws = out["data"]["per_spw"]
     assert [s["spw_id"] for s in spws] == [0, 1]
     for s in spws:
+        assert s["correlations_used"] == ["RR", "LL"]
+        assert s["n_chan_omitted"] == 64
+        assert "chan_median_amp" not in s
+        assert s["median_amp"]["value"] is not None
+
+    # Explicit max_per_chan_records=-1 disables the bound and keeps chan_* inline.
+    out_inline = run(real_ms_calibrated, field_id=0, max_per_chan_records=-1)
+    assert out_inline["status"] == "ok"
+    assert out_inline["data"]["per_chan_truncated"]["value"] is False
+    for s in out_inline["data"]["per_spw"]:
         assert s["correlations_used"] == ["RR", "LL"]
         assert len(s["chan_median_amp"]) == 64
 
@@ -77,8 +89,17 @@ def test_bound_over_limit_drops_all_and_writes_sidecar(tmp_path):
     assert len(full["per_spw"][0]["chan_median_amp"]) == 4
 
 
-def test_bound_zero_disables(tmp_path):
-    from ms_inspect.tools.residual_stats import _bound_chan_payload
+def test_bound_zero_offloads_and_minus_one_disables(tmp_path):
+    from ms_inspect.tools.residual_stats import _CHAN_KEYS, _bound_chan_payload
 
-    out = _bound_chan_payload(_payload(n_chan=5000), 0, str(tmp_path / "s.json"), [])
-    assert out["per_chan_truncated"]["value"] is False
+    side = tmp_path / "s.json"
+    out_zero = _bound_chan_payload(_payload(n_chan=64), 0, str(side), [])
+    assert out_zero["per_chan_truncated"]["value"] is True
+    assert side.is_file()
+    assert not any(k in out_zero["per_spw"][0] for k in _CHAN_KEYS)
+
+    side_unlim = tmp_path / "unlim.json"
+    out_unlim = _bound_chan_payload(_payload(n_chan=5000), -1, str(side_unlim), [])
+    assert out_unlim["per_chan_truncated"]["value"] is False
+    assert len(out_unlim["per_spw"][0]["chan_median_amp"]) == 5000
+    assert not side_unlim.exists()

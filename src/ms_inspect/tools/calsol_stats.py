@@ -14,6 +14,7 @@ No interpretation — numbers and flags only.
 from __future__ import annotations
 
 import math
+import warnings as _pywarnings
 from pathlib import Path
 
 import numpy as np
@@ -48,17 +49,17 @@ def _is_kcross_type(table_type: str) -> bool:
     return "KCROSS" in table_type.upper()
 
 
-def _signed_max_abs_per_ant(active_delay: np.ndarray) -> list[float | None]:
-    """Per-antenna signed delay with largest |delay| across (spw, field, active_corr)."""
+def _signed_max_abs_per_ant(arr: np.ndarray, decimals: int = 3) -> list[float | None]:
+    """Per-antenna signed value with largest |value| across (spw, field[, active_corr])."""
     out: list[float | None] = []
-    for i in range(active_delay.shape[0]):
-        vals = active_delay[i]
+    for i in range(arr.shape[0]):
+        vals = arr[i]
         vals = vals[np.isfinite(vals)]
         if vals.size == 0:
             out.append(None)
         else:
             best = float(vals[int(np.argmax(np.abs(vals)))])
-            out.append(round(best, 3))
+            out.append(round(best, decimals))
     return out
 
 
@@ -256,12 +257,21 @@ def _process_slice(
             phase = np.angle(p_f)  # radians
 
             amp_flat = amp.ravel()
-            phase_flat = phase.ravel()
+            corr_phase_means = np.array(
+                [_phase_mean_deg(phase[c].ravel()) for c in range(phase.shape[0])],
+                dtype=float,
+            )
+            finite_cm = corr_phase_means[np.isfinite(corr_phase_means)]
+            slice_phase_mean = (
+                float(finite_cm[int(np.argmax(np.abs(finite_cm)))])
+                if finite_cm.size > 0
+                else math.nan
+            )
 
             entry["amp_mean"] = _safe_mean(amp_flat)
             entry["amp_values"] = amp_flat[np.isfinite(amp_flat)]
             entry["amp_std"] = _safe_std(amp_flat)
-            entry["phase_mean_deg"] = _phase_mean_deg(phase_flat)
+            entry["phase_mean_deg"] = slice_phase_mean
             per_corr, axes = _phase_scatter_deg(phase)
             entry["phase_rms_deg_per_corr"] = per_corr.tolist()
             entry["phase_rms_axes"] = [a for a in axes if a]
@@ -642,22 +652,32 @@ def run(
                     n_corr = delay_data.shape[0]
                     if delay_arr is None:
                         delay_arr = np.full((n_ant, n_spw, n_field, n_corr), math.nan)
-                    delay_arr[a_idx, si, fi, :] = np.nanmean(delay_data, axis=1)
+                    with _pywarnings.catch_warnings():
+                        _pywarnings.simplefilter("ignore", category=RuntimeWarning)
+                        delay_arr[a_idx, si, fi, :] = np.nanmean(delay_data, axis=1)
 
     # --- scalar summaries ---
-    overall_flagged_frac = float(np.nanmean(flagged_frac_arr))
+    with _pywarnings.catch_warnings():
+        _pywarnings.simplefilter("ignore", category=RuntimeWarning)
+        overall_flagged_frac = float(np.nanmean(flagged_frac_arr))
     lost_mask = np.all(flagged_frac_arr == 1.0, axis=(1, 2))  # [n_ant]
     antennas_lost = [ant_names[i] for i in range(n_ant) if lost_mask[i]]
     n_antennas_lost = len(antennas_lost)
 
-    delay_rms_ns = None
+    delay_rms_arr: np.ndarray | None = None
+    delay_rms_ns: list[list[float | None]] | None = None
     active_delay: np.ndarray | None = None
     if _is_delay_type(table_type) and delay_arr is not None:
         # For KCROSS tables, corr 0 holds the cross-hand delay and corr 1 is
         # CASA's structural 0.0 placeholder -- exclude corr 1 from summaries.
         active_delay = delay_arr[..., :1] if _is_kcross_type(table_type) else delay_arr
         # RMS across antennas and active correlations per (spw, field) -> [n_spw, n_field]
-        delay_rms_ns = np.sqrt(np.nanmean(active_delay**2, axis=(0, 3))).tolist()
+        with _pywarnings.catch_warnings(), np.errstate(invalid="ignore"):
+            _pywarnings.simplefilter("ignore", category=RuntimeWarning)
+            delay_rms_arr = np.sqrt(np.nanmean(active_delay**2, axis=(0, 3)))
+        delay_rms_ns = [
+            [float(x) if np.isfinite(x) else None for x in row] for row in delay_rms_arr
+        ]
 
     # Table-wide scalars, so a check copies one number instead of reducing an
     # array by hand. amp_median is over every unflagged solution, not over the
@@ -667,6 +687,9 @@ def run(
     if _complex and amp_values:
         all_amp = np.concatenate(amp_values)
         amp_median = float(np.median(all_amp)) if all_amp.size else None
+    phase_mean_abs_max_deg = None
+    if _complex and phase_mean_arr is not None and np.any(np.isfinite(phase_mean_arr)):
+        phase_mean_abs_max_deg = float(np.nanmax(np.abs(phase_mean_arr)))
     delay_abs_max_ns = None
     if active_delay is not None and np.any(np.isfinite(active_delay)):
         delay_abs_max_ns = float(np.nanmax(np.abs(active_delay)))
@@ -701,9 +724,24 @@ def run(
             if amp_median is not None
             else fmt_field(None, flag="UNAVAILABLE", note="No unflagged solutions.")
         )
+        data["phase_mean_abs_max_deg"] = (
+            fmt_field(
+                phase_mean_abs_max_deg,
+                note="Largest |phase_mean_deg| over every antenna/SPW/field slice.",
+            )
+            if phase_mean_abs_max_deg is not None
+            else fmt_field(None, flag="UNAVAILABLE", note="No unflagged solutions.")
+        )
         data["amp_mean"] = fmt_field(amp_mean_arr.tolist(), flag=_flag(amp_mean_arr))
         data["amp_std"] = fmt_field(amp_std_arr.tolist(), flag=_flag(amp_std_arr))
-        data["phase_mean_deg"] = fmt_field(phase_mean_arr.tolist(), flag=_flag(phase_mean_arr))
+        data["phase_mean_deg"] = fmt_field(
+            phase_mean_arr.tolist(),
+            flag=_flag(phase_mean_arr),
+            note=(
+                f"Shape [n_ant={n_ant}, n_spw={n_spw}, n_field={n_field}]. Signed "
+                "largest-|circular mean phase| across correlations in degrees."
+            ),
+        )
         data["phase_rms_deg"] = fmt_field(
             phase_rms_arr.tolist(),
             flag=_flag(phase_rms_arr),
@@ -731,15 +769,15 @@ def run(
         )
 
     if _is_delay_type(table_type):
-        if delay_arr is not None:
+        if delay_arr is not None and active_delay is not None:
             data["delay_ns"] = fmt_field(
                 delay_arr.tolist(),
-                flag=_flag(delay_arr),
+                flag=_flag(active_delay),
                 note=f"Shape [n_ant={n_ant}, n_spw={n_spw}, n_field={n_field}, n_corr]. Mean delay per antenna/SPW/field/corr.",
             )
             data["delay_rms_ns"] = fmt_field(
                 delay_rms_ns,
-                flag="COMPLETE",
+                flag=_flag(delay_rms_arr),
                 note=(
                     f"Shape [n_spw={n_spw}, n_field={n_field}]. RMS across antennas "
                     "(and active correlations; corr 0 only for KCROSS) per SPW/field."
@@ -863,8 +901,8 @@ def run(
             "antennas_lost": data["antennas_lost"],
             "per_antenna_note": (
                 "Arrays are aligned to ant_names and averaged over spw/field, except "
-                "delay_ns which reports the signed largest-|delay| per antenna across "
-                "(spw, field, active_corr) (corr 0 only for KCROSS). "
+                "phase_mean_deg and delay_ns which report the signed largest-|value| "
+                "per antenna across (spw, field[, active_corr]) (corr 0 only for KCROSS). "
                 "Per-channel bandpass shape is omitted in compact mode (stored in npz_path)."
             ),
             "flagged_frac": fmt_field(_per_ant(flagged_frac_arr), flag=_flag(flagged_frac_arr)),
@@ -885,8 +923,24 @@ def run(
                 if amp_median is not None
                 else data["amp_median"]
             )
+            compact_data["phase_mean_abs_max_deg"] = (
+                fmt_field(
+                    round(phase_mean_abs_max_deg, 4),
+                    note="Largest |phase_mean_deg| over every antenna/SPW/field slice.",
+                )
+                if phase_mean_abs_max_deg is not None
+                else data["phase_mean_abs_max_deg"]
+            )
             compact_data["amp_mean"] = fmt_field(_per_ant(amp_mean_arr), flag=_flag(amp_mean_arr))
             compact_data["amp_std"] = fmt_field(_per_ant(amp_std_arr), flag=_flag(amp_std_arr))
+            compact_data["phase_mean_deg"] = fmt_field(
+                _signed_max_abs_per_ant(phase_mean_arr, decimals=4),
+                flag=_flag(phase_mean_arr),
+                note=(
+                    "Signed largest-|phase_mean_deg| per antenna across (spw, field) "
+                    "(circular mean per slice; avoids cross-field/SpW sign cancellation)."
+                ),
+            )
             compact_data["phase_rms_deg"] = fmt_field(
                 _per_ant(phase_rms_arr),
                 flag=_flag(phase_rms_arr),
@@ -921,7 +975,7 @@ def run(
                 )
                 compact_data["delay_rms_ns"] = fmt_field(
                     delay_rms_ns,
-                    flag=_flag(active_delay) if delay_abs_max_ns is not None else "UNAVAILABLE",
+                    flag=_flag(delay_rms_arr),
                     note=data["delay_rms_ns"].get("note"),
                 )
                 compact_data["delay_abs_max_ns"] = (

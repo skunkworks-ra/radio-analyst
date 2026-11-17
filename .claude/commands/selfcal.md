@@ -33,12 +33,13 @@ Every write step is recorded automatically in `<workdir>/stage_log.jsonl`.
 One pass only; do not iterate (12 Step 5).
 
 1. `ms_workflow_status(ms_path, workdir)`: confirm the 12 Prerequisites.
-2. Step 0: `ms_residual_stats` on each target pointing (IDs from
-   `ms_field_list(ms_path)`). Report `p95_amp / median_amp` per SpW.
+2. Step 0: `ms_residual_stats(ms_path, field_id, workdir=workdir)` on each
+   target pointing (IDs from `ms_field_list(ms_path)`). Report
+   `p95_amp / median_amp` per SpW.
 3. Step 1: `ms_gaincal` phase-only against MODEL_DATA, with the full target
    stack and `gainfield`/`interp` exactly as 12 Step 1 gives them
    (`caltable=workdir/pcal1.g`, `execute=False`) -> run. Then
-   `ms_calsol_stats(pcal1.g, verbosity='full')` and
+   `ms_calsol_stats(pcal1.g, workdir=workdir)` and
    `ms_plot_caltable_library([pcal1.g], workdir)`. Apply 12 Step 1's checks:
    if `abs(phase_mean_deg)` < 1 and `phase_rms_deg` < 1 on every antenna, stop
    here and report (no phase error to correct).

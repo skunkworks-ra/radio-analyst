@@ -437,3 +437,76 @@ def test_opencode_json_timeout_is_600s():
     assert set(cfg["mcp"]) == set(SERVER_MODULES)
     for srv, entry in cfg["mcp"].items():
         assert entry["timeout"] == 600000, srv
+
+
+def test_orchestrator_agents_sync_with_skill_grants():
+    """Root orchestrate agents (Claude Code + OpenCode) enforce the exact 16-tool whitelist."""
+    expected_agent_files = sorted([f"{s}-stage.md" for s in STAGES] + ["orchestrate.md"])
+    assert sorted(p.name for p in (REPO_ROOT / "agents").glob("*.md")) == expected_agent_files
+    assert (
+        sorted(p.name for p in (REPO_ROOT / ".opencode" / "agents").glob("*.md"))
+        == expected_agent_files
+    )
+
+    skill_fm = _frontmatter(REPO_ROOT / ".claude" / "skills" / "orchestrate" / "SKILL.md")
+    skill_tools = _tools(skill_fm["allowed-tools"])
+
+    # 1. Claude Code agents/orchestrate.md
+    cc_fm = _frontmatter(REPO_ROOT / "agents" / "orchestrate.md")
+    assert cc_fm["name"] == "orchestrate"
+    assert cc_fm["model"] == "inherit"
+    assert _tools(cc_fm["tools"]) == skill_tools + ["Skill"]
+
+    # 2. OpenCode .opencode/commands/radio-analyst-orchestrate.md binds agent: orchestrate
+    oc_cmd_fm = _frontmatter(REPO_ROOT / ".opencode" / "commands" / "radio-analyst-orchestrate.md")
+    assert oc_cmd_fm.get("agent") == "orchestrate"
+
+    # 3. OpenCode .opencode/agents/orchestrate.md primary agent whitelist
+    oc_fm = _frontmatter(REPO_ROOT / ".opencode" / "agents" / "orchestrate.md")
+    assert oc_fm["mode"] == "primary"
+    assert "model" not in oc_fm, "primary orchestrate agent must inherit CLI --model"
+
+    want_mcp = sorted(
+        f"{m.group(1)}_{m.group(2)}"
+        for t in skill_tools
+        if (m := _ORCH_TOOL_RE.match(t)) is not None
+    )
+    assert len(want_mcp) == 16
+    assert sum(1 for t in want_mcp if t.startswith("ms-inspect_")) == 15
+    assert [t for t in want_mcp if not t.startswith("ms-inspect_")] == ["ms-create_ms_report"]
+
+    tools_map = oc_fm["tools"]
+    perm_map = oc_fm["permission"]
+    for denied_tool in ("edit", "write", "webfetch", "bash", "glob", "grep"):
+        assert tools_map[denied_tool] is False, denied_tool
+    assert tools_map["read"] is True
+    assert tools_map["task"] is True
+    assert tools_map["ms-inspect_*"] is False
+    assert tools_map["ms-modify_*"] is False
+    assert tools_map["ms-create_*"] is False
+
+    enabled_mcp = sorted(
+        k
+        for k, v in tools_map.items()
+        if k.startswith(("ms-inspect_", "ms-modify_", "ms-create_"))
+        and not k.endswith("_*")
+        and v is True
+    )
+    assert enabled_mcp == want_mcp
+
+    for denied_perm in ("edit", "webfetch", "bash", "glob", "grep"):
+        assert perm_map[denied_perm] == "deny", denied_perm
+    assert perm_map["read"] == "allow"
+    assert perm_map["task"] == "allow"
+    assert perm_map["ms-inspect_*"] == "deny"
+    assert perm_map["ms-modify_*"] == "deny"
+    assert perm_map["ms-create_*"] == "deny"
+
+    allowed_perm_mcp = sorted(
+        k
+        for k, v in perm_map.items()
+        if k.startswith(("ms-inspect_", "ms-modify_", "ms-create_"))
+        and not k.endswith("_*")
+        and v == "allow"
+    )
+    assert allowed_perm_mcp == want_mcp

@@ -311,9 +311,12 @@ class ResidualStatsInput(BaseModel):
         ge=1,
     )
     max_per_chan_records: int = Field(
-        default=2000,
-        description="Max inline per-channel records across SpWs before offload (0 = unlimited).",
-        ge=0,
+        default=0,
+        description=(
+            "Max inline per-channel records across SpWs before sidecar offload "
+            "(default 0 = offload chan_* arrays; -1 = unlimited inline)."
+        ),
+        ge=-1,
     )
     workdir: str = Field(
         default="",
@@ -505,9 +508,10 @@ class CalsolStatsInput(BaseModel):
         default="compact",
         description=(
             "'compact' (default) returns per-antenna scalar summaries (averaged over "
-            "spw/field) plus outliers -- sufficient for gate decisions. 'full' returns the "
-            "complete [n_ant, n_spw, n_field] matrices inline (large). Full detail is always "
-            "written to the NPZ sidecar regardless and is queryable via ms_calsol_stats_detail."
+            "spw/field, with signed max-abs phase_mean_deg and delay_ns) plus outliers -- "
+            "sufficient for gate decisions. 'full' returns the complete [n_ant, n_spw, n_field] "
+            "matrices inline (large). Full detail is always written to the NPZ sidecar regardless "
+            "and is queryable via ms_calsol_stats_detail."
         ),
     )
     workdir: str = Field(
@@ -2057,6 +2061,10 @@ class CasaTaskSpecInput(BaseModel):
         default="",
         description="CASA task name, e.g. 'statwt'. Empty returns the task names.",
     )
+    param_names: list[str] | None = Field(
+        default=None,
+        description="Optional subset of parameter names to return (omit for all).",
+    )
 
 
 @mcp.tool(
@@ -2064,8 +2072,9 @@ class CasaTaskSpecInput(BaseModel):
     description=(
         "Parameters of a CASA task (name, type, default, description, sub-parameter, "
         "must-exist input), from the task schemas made for the pinned CASA version. "
-        "Empty task lists the tasks. docs_path is the task's CASA Docs page (prose and "
-        "examples); for a large page it is an index of pieces -- Read only the piece you need."
+        "Pass param_names to fetch only named parameters; empty task lists the tasks. "
+        "docs_path is the task's CASA Docs page (prose and examples); for a large page "
+        "it is an index of pieces -- Read only the piece you need."
     ),
     annotations={
         "title": "CASA Task Parameters",
@@ -2079,7 +2088,7 @@ async def ms_casa_task_spec(params: CasaTaskSpecInput) -> ToolResult:
     """Parameters of casatasks.<task>, from the CASA task schemas."""
     from ms_inspect.tools import casa_task_spec as _cts
 
-    return await _run_tool(_cts.run, task=params.task)
+    return await _run_tool(_cts.run, task=params.task, param_names=params.param_names)
 
 
 class CasaToolSpecInput(BaseModel):

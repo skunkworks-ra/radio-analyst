@@ -33,9 +33,9 @@ radio-analyst/
 │   │   ├── casa-docs/             <- SKILL.md + NOTICE + vendored tasks/*.rst
 │   │   └── report/                <- SKILL.md
 │   └── commands/                  <- inspect, precal, calibrate, polcal, image, postcal, selfcal, simulate
-├── agents/                        <- Claude Code stage subagents (*-stage.md)
+├── agents/                        <- Claude Code orchestrator + stage subagents (orchestrate.md, *-stage.md)
 ├── .opencode/
-│   ├── agents/                    <- OpenCode stage subagents with per-stage MCP whitelists
+│   ├── agents/                    <- OpenCode orchestrator + stage subagents with per-agent MCP whitelists
 │   └── commands/                  <- radio-analyst-*.md copies of .claude/commands/*.md
 ├── hooks/
 │   └── hooks.json                 <- SessionStart (ensure-env.sh) + Stop/SessionEnd (audit_hook.sh)
@@ -287,4 +287,6 @@ and call `response_envelope(...)`. On the wire (`util/formatting.py` + `util/dis
 5. If a stage command grants the tool, update `.claude/commands/<stage>.md`,
    copy to `.opencode/commands/radio-analyst-<stage>.md`, sync `agents/<stage>-stage.md`
    and `.opencode/agents/<stage>-stage.md`, and run `pixi run gen-stage-bundles`.
+   If `orchestrate` grants the tool, sync `.claude/skills/orchestrate/SKILL.md`,
+   `agents/orchestrate.md`, and `.opencode/agents/orchestrate.md`.
 6. Run `pixi run check` and `pixi run test-unit`.

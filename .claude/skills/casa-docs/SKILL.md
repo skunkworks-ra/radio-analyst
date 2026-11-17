@@ -21,7 +21,7 @@ Never answer a CASA task question from memory and present it as documentation.
 
 ## Procedure
 
-1. Call `ms_casa_task_spec(task)`.
+1. Call `ms_casa_task_spec(task)` (pass `param_names=[...]` when checking specific parameters).
 2. Read `docs_path`. A large page is an index: one line per piece, with its
    size and the headings it covers. Read only the piece you need. Examples
    holds call patterns; Description holds parameter and mode prose.

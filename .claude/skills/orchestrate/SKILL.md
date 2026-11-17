@@ -338,11 +338,12 @@ debug_params: {<task>: {<param>: <value>}}   (only when debug is allowed)
 
 Debug is allowed only on a retry, and only when the change is a CASA
 parameter the stage tool does not expose (its own parameters come first).
-`ms_casa_task_spec(task)` lists a task's parameters. Never debug on attempt 1.
+`ms_casa_task_spec(task)` lists a task's parameters (pass `param_names=[...]`
+when checking specific parameter names). Never debug on attempt 1.
 
 To choose a value that no skill or stage command gives, call
-`ms_casa_task_spec(task)`, Read its `docs_path`, then Read only the one piece
-you need.
+`ms_casa_task_spec(task)` (with `param_names=[...]` when known), Read its
+`docs_path`, then Read only the one piece you need.
 
 ## End
 

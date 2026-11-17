@@ -41,14 +41,32 @@ def docs_path(task: str) -> str | None:
     return str(path) if path.is_file() else None
 
 
-def run(task: str) -> dict:
+def run(task: str, param_names: list[str] | None = None) -> dict:
     """
     Parameters of casatasks.<task>: name, type, default, description, and whether
     the XML marks it a sub-parameter or an input path that must exist.
 
-    An empty task name returns the list of task names instead.
+    An empty task name returns the list of task names instead. When ``param_names``
+    is non-empty, filters ``params`` to those named parameters in XML order and
+    surfaces ``n_params_total`` alongside ``n_params``.
     """
+    requested: list[str] = []
+    if param_names is not None and len(param_names) > 0:
+        seen: set[str] = set()
+        for raw in param_names:
+            cleaned = raw.strip() if isinstance(raw, str) else ""
+            if not cleaned:
+                raise ComputationError(
+                    "param_names must contain only non-empty parameter names.",
+                    ms_path="",
+                )
+            if cleaned not in seen:
+                seen.add(cleaned)
+                requested.append(cleaned)
+
     if not task.strip():
+        if requested:
+            raise ComputationError("param_names requires a non-empty task name.", ms_path="")
         names = task_names()
         return response_envelope(
             tool_name=TOOL_NAME,
@@ -60,6 +78,20 @@ def run(task: str) -> dict:
         spec = task_spec(task.strip())
     except ValueError as e:
         raise ComputationError(str(e), ms_path="") from e
+
+    if requested:
+        unknown = [n for n in requested if n not in spec.params]
+        if unknown:
+            raise ComputationError(
+                f"CASA task {spec.name!r} has no parameter(s) {unknown}; "
+                f"valid parameters ({len(spec.params)}): {list(spec.params)}.",
+                ms_path="",
+            )
+        want = set(requested)
+        selected_specs = [p for p in spec.params.values() if p.name in want]
+    else:
+        selected_specs = list(spec.params.values())
+
     params = [
         {
             "name": p.name,
@@ -69,7 +101,7 @@ def run(task: str) -> dict:
             "subparam": p.subparam,
             "mustexist": p.mustexist,
         }
-        for p in spec.params.values()
+        for p in selected_specs
     ]
     warnings: list[str] = []
     ddir = _docs_dir()
@@ -97,6 +129,7 @@ def run(task: str) -> dict:
             "description": spec.description,
             "docs_path": docs_field,
             "n_params": len(params),
+            "n_params_total": len(spec.params),
             "params": params,
         },
         warnings=warnings,

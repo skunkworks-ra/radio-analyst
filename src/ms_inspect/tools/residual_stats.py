@@ -27,8 +27,9 @@ TOOL_NAME = "ms_residual_stats"
 _DEFAULT_MAX_ROWS = 500_000
 
 # Wire-payload bound on the per-channel arrays, counted in channels across all
-# SpWs. Same bound and sidecar behaviour as ms_spw_amp_severity.
-_DEFAULT_MAX_PER_CHAN_RECORDS = 2000
+# SpWs. Default 0 offloads chan_* arrays to <workdir>/sidecars/ while keeping
+# all per-SpW aggregates inline; pass -1 (or a large positive cap) for inline.
+_DEFAULT_MAX_PER_CHAN_RECORDS = 0
 _CHAN_KEYS = ("chan_n_unflagged", "chan_median_amp", "chan_robust_sigma", "chan_p95_amp")
 
 
@@ -107,7 +108,7 @@ def _bound_chan_payload(
     total = sum(len(e.get("chan_median_amp", [])) for e in per_spw)
     data["n_per_chan_records"] = total
     data["max_per_chan_records"] = max_per_chan_records
-    if max_per_chan_records <= 0 or total <= max_per_chan_records:
+    if max_per_chan_records < 0 or total <= max_per_chan_records:
         data["per_chan_truncated"] = fmt_field(False)
         return data
 
@@ -130,15 +131,17 @@ def _bound_chan_payload(
         for k in _CHAN_KEYS:
             e.pop(k, None)
 
-    data["per_chan_truncated"] = fmt_field(
-        True,
-        "PARTIAL",
-        note=(
+    trunc_note = (
+        f"{total} per-channel records offloaded (max_per_chan_records=0 compact default); "
+        f"chan_* arrays dropped from all {len(per_spw)} SpW entries. Per-SpW aggregates are complete."
+        if max_per_chan_records == 0
+        else (
             f"{total} per-channel records exceeded max_per_chan_records="
             f"{max_per_chan_records}; chan_* arrays dropped from all "
             f"{len(per_spw)} SpW entries. Per-SpW aggregates are complete."
-        ),
+        )
     )
+    data["per_chan_truncated"] = fmt_field(True, "PARTIAL", note=trunc_note)
     if written:
         data["detail_path"] = fmt_field(written, flag="COMPLETE")
         data["detail_note"] = (
@@ -181,9 +184,9 @@ def run(
         max_rows: Maximum number of rows to read (default 500 000).
                   Rows are sampled uniformly if the MS is larger.
         max_per_chan_records: Wire-payload bound on the chan_* arrays, counted
-                  in channels across all SpWs. Above it the arrays are dropped
-                  from every SpW and written to a JSON sidecar next to the MS.
-                  0 disables the bound.
+                  in channels across all SpWs. Default 0 offloads chan_* arrays
+                  to <workdir>/sidecars/ while keeping per-SpW aggregates inline.
+                  Pass -1 to disable the bound and return all chan_* inline.
 
     Returns:
         Standard response envelope with per-spw amplitude statistics of

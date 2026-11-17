@@ -115,7 +115,7 @@ After the script completes, call `ms_calsol_stats` to inspect solution quality:
 ```python
 ms_calsol_stats(
     caltable_path = f"{WORKDIR}/pcal1.g",
-    verbosity     = 'full',     # phase_mean_deg is not in compact output
+    workdir       = {WORKDIR},  # compact default includes per-antenna phase_mean_deg
 )
 ```
 
