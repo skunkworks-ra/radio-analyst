@@ -271,6 +271,12 @@ def test_selfcal_commands_and_bundle_drop_verbosity_full():
     ):
         txt = (REPO_ROOT / rel).read_text()
         assert not re.search(r"verbosity\s*=\s*['\"]full['\"]", txt), rel
+    for rel in (
+        ".claude/commands/inspect.md",
+        ".opencode/commands/radio-analyst-inspect.md",
+    ):
+        insp_txt = (REPO_ROOT / rel).read_text()
+        assert "n_fields_with_intents > 0" in insp_txt, rel
 
 
 def test_calsol_stats_multi_corr_opposite_phase_no_cancellation_or_180_flip(tmp_path: Path):

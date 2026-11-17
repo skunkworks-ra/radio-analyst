@@ -10,6 +10,7 @@ tools:
   grep: false
   todowrite: false
   todoread: false
+  skill: false
   read: true
   task: true
   "ms-inspect_*": false
@@ -39,6 +40,7 @@ permission:
   grep: deny
   todowrite: deny
   todoread: deny
+  skill: deny
   read: allow
   task: allow
   "ms-inspect_*": deny

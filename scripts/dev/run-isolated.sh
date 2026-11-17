@@ -132,6 +132,16 @@ txt = open("/secrets/opencode-config.jsonc").read()
 txt = re.sub(r"(?m)^\s*//.*$", "", txt)
 txt = re.sub(r",(\s*[}\]])", r"\1", txt)
 prov = json.loads(txt).get("provider", {})
+effort = os.environ.get("EFFORT", "default")
+for pcfg in prov.values():
+    for mid, mcfg in (pcfg.get("models") or {}).items():
+        if "minimax" in mid.lower():
+            mcfg["temperature"] = True
+            opts = mcfg.setdefault("options", {})
+            opts.setdefault("temperature", 1.0)
+            opts.setdefault("top_p", 0.95)
+            if effort == "default":
+                opts.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
 json.dump({"$schema": "https://opencode.ai/config.json", "provider": prov},
           open(os.path.expanduser("~/.config/opencode/opencode.json"), "w"), indent=2)
 print("providers:", ", ".join(sorted(prov)))
@@ -205,7 +215,7 @@ fi
 opencode serve --port 4096 >/out/opencode-serve.log 2>&1 &
 srv=$!
 for i in $(seq 60); do curl -s -o /dev/null http://127.0.0.1:4096/ && break; sleep 1; done
-args=(--attach http://127.0.0.1:4096 --dir /work/run --model "$MODEL" --format json --thinking --auto)
+args=(--attach http://127.0.0.1:4096 --dir /work/run --model "$MODEL" --format json --auto)
 [[ "$EFFORT" != "default" ]] && args+=(--variant "$EFFORT")
 set +e
 # "/radio-analyst-orchestrate <args>" in the prompt file runs that command, as

@@ -52,7 +52,7 @@ until `status=done`.
    - `ms_baseline_lengths(ms_path)` -> `max_baseline_m`, `resolution_arcsec_range`
    - `ms_spectral_window_list(ms_path)` -> per-SPW edges and widths (when running step 8)
 
-4. Derive tclean parameters per 11-imaging.md Steps 1-7:
+4. Derive tclean parameters per 11-imaging.md Steps 1-7 (evaluate the Step 3-5 formulas via `python -c` rather than mental arithmetic):
    - specmode (Step 1): `'mfs'` unless user asks for a cube
    - deconvolver (Step 2), two passes. First pass: `'hogbom'` (`'mtmfs'` with `nterms=2`
      if `total_bw_hz / center_freq_hz > 0.2`). Second pass: `'multiscale'` with `scales` per Step 2 (for mtmfs,
