@@ -257,16 +257,20 @@ def test_calsol_stats_compact_includes_signed_max_abs_phase_mean_deg_without_can
 
 
 def test_selfcal_commands_and_bundle_drop_verbosity_full():
+    import re
+
     for rel in (
         ".claude/commands/selfcal.md",
         ".opencode/commands/radio-analyst-selfcal.md",
         ".claude/skills/radio-interferometry/12-selfcal.md",
         ".claude/skills/radio-interferometry/bundles/selfcal.md",
+        ".claude/commands/calibrate.md",
+        ".opencode/commands/radio-analyst-calibrate.md",
+        ".claude/skills/radio-interferometry/07-calibration-execution.md",
+        ".claude/skills/radio-interferometry/bundles/calibrate.md",
     ):
         txt = (REPO_ROOT / rel).read_text()
-        assert "verbosity='full'" not in txt, rel
-        assert 'verbosity="full"' not in txt, rel
-        assert "verbosity     = 'full'" not in txt, rel
+        assert not re.search(r"verbosity\s*=\s*['\"]full['\"]", txt), rel
 
 
 def test_calsol_stats_multi_corr_opposite_phase_no_cancellation_or_180_flip(tmp_path: Path):

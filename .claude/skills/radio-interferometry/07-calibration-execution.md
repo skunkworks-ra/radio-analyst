@@ -29,7 +29,7 @@ Fill every `{PLACEHOLDER}` from Phase 1–2 tool outputs before calling any solv
 | `{FLUX_FIELD}` | `ms_field_list` | field name of the primary flux/bandpass calibrator |
 | `{BP_FIELD}` | `ms_field_list` | same as FLUX_FIELD unless a dedicated BP cal is present |
 | `{PHASE_FIELD}` | `ms_field_list` | field name(s) of phase calibrators, comma-separated |
-| `{TARGET_FIELD}` | `ms_field_list` | field name of the science target |
+| `{TARGET_FIELD}` | `ms_field_list` | field name(s) of the science target (for a mosaic: comma-separated `mosaic_groups[].field_names`, e.g. `'3C391 C1,3C391 C2,...'`, never `group_name`) |
 | `{CAL_FIELDS}` | `ms_field_list` | comma-separated names of ALL calibrators |
 | `{ALL_SPW}` | `ms_spectral_window_list` | spw selection string, e.g. `'0~15'` |
 | `{CENTER_CHANNELS}` | `ms_spectral_window_list` | from `ms_spectral_window_list.suggested.center_channels_string` |
@@ -286,12 +286,12 @@ ms_gaincal(
 
 **Inspect G0 solutions:**
 ```
-ms_calsol_stats(caltable_path = {WORKDIR}/initial_phase.G0, verbosity = 'full')
+ms_calsol_stats(caltable_path = {WORKDIR}/initial_phase.G0)
 ```
 
 | Field | Index | Threshold | Action if exceeded |
 |---|---|---|---|
-| `phase_rms_deg[ant, spw=0, field=0]` | all antennas | < 60° | > 60° on most antennas → suspect source model or data column; do not proceed |
+| `phase_rms_deg[ant]` | all antennas | < 60 deg | > 60 deg on most antennas -> suspect source model or data column; do not proceed |
 | `overall_flagged_frac` | scalar | < 0.15 | > 0.15 → check refant and CENTER_CHANNELS selection |
 | `antennas_lost` | list | empty or 1 | any → note it; compare with K (Dead antenna, above); > 1 → also note in the report |
 | `outliers.low_snr` | list | empty | non-empty → inspect named antennas; low SNR on G0 is a warning, not a hard stop |
@@ -327,12 +327,12 @@ ms_gaincal(
 
 **Inspect K solutions:**
 ```
-ms_calsol_stats(caltable_path = {WORKDIR}/delay.K, verbosity = 'full')
+ms_calsol_stats(caltable_path = {WORKDIR}/delay.K)
 ```
 
 | Field | Index | Threshold | Action if exceeded |
 |---|---|---|---|
-| `delay_ns[ant, spw, field=0, corr]` | all antennas | abs value < 30 ns | > 50 ns on one antenna → hardware or cabling problem; note in summary |
+| `delay_ns[ant]` / `delay_abs_max_ns` | all antennas | abs value < 30 ns | > 50 ns on one antenna -> hardware or cabling problem; note in summary |
 | `delay_rms_ns[spw, field=0]` | all SPWs | < 10 ns | > 10 ns → delay solve may have failed on that SPW |
 | `overall_flagged_frac` | scalar | < 0.10 | > 0.10 → check WIDE_CHANNELS selection |
 | `outliers.low_snr` | — | — | not reported for delay tables: CASA writes no solution SNR for K |
@@ -372,17 +372,17 @@ of a delay solution makes no physical sense and creates artifacts at scan edges.
 
 **Inspect B solutions:**
 ```
-ms_calsol_stats(caltable_path = {WORKDIR}/bandpass.B, verbosity = 'full')
+ms_calsol_stats(caltable_path = {WORKDIR}/bandpass.B)
 ```
 
 | Field | Index | Threshold | Action if exceeded |
 |---|---|---|---|
-| `overall_flagged_frac` | scalar | < 0.10 | 0.10–0.20 → note; > 0.20 → loop back to RFI excision (10 Steps 2 and 8; 13 Step 1 on the primaries) |
-| `n_antennas_lost` | scalar | ≤ 1 | 2–3 → check refant and bp_field; > 3 → hard stop |
-| `phase_rms_deg[ant, spw, field=bp_field_idx]` | all antennas | < 10° | 10–30° → warn; > 30° → delay solve likely failed; re-run Step 2. On a single-solution bandpass `phase_rms_axis` is `channel`: scatter across the band about the mean, so a leftover delay slope shows here |
-| `amp_array[ant, spw, field=bp_field_idx, :]` | all antennas | smooth, ~1.0 | Large mid-band excursions → suspect antenna; edge roll-off is normal |
-| `outliers.low_snr` | list | empty | non-empty → inspect named antennas; SNR < 3 on BP is a hard concern |
-| `outliers.amp_outliers` | list | empty | non-empty → antenna has anomalous amplitude shape; check against `amp_array` for that antenna |
+| `overall_flagged_frac` | scalar | < 0.10 | 0.10-0.20 -> note; > 0.20 -> loop back to RFI excision (10 Steps 2 and 8; 13 Step 1 on the primaries) |
+| `n_antennas_lost` | scalar | <= 1 | 2-3 -> check refant and bp_field; > 3 -> hard stop |
+| `phase_rms_deg[ant]` | all antennas | < 10 deg | 10-30 deg -> warn; > 30 deg -> delay solve likely failed; re-run Step 2. On a single-solution bandpass `phase_rms_axis` is `channel`: scatter across the band about the mean, so a leftover delay slope shows here |
+| `amp_mean[ant]`, `amp_std[ant]` | all antennas | consistent across array, low scatter | Large mid-band excursions show in `outliers.amp_outliers` (call `ms_calsol_stats_detail` on named antennas); edge roll-off is normal |
+| `outliers.low_snr` | list | empty | non-empty -> inspect named antennas; SNR < 3 on BP is a hard concern |
+| `outliers.amp_outliers` | list | empty | non-empty -> antenna has anomalous amplitude shape; inspect with `ms_calsol_stats_detail` |
 
 Both polarizations on a given antenna should show the same amplitude shape within ~10%.
 
@@ -513,10 +513,10 @@ Trees 1-4 and hard-stop Escalation criteria live there; the happy path skips it.
 
 ---
 
-## Step 5 — Inspect gain solutions
+## Step 5 -- Inspect gain solutions
 
 ```
-ms_calsol_stats(caltable_path = {WORKDIR}/gain.G, verbosity = 'full')
+ms_calsol_stats(caltable_path = {WORKDIR}/gain.G)
 ```
 
 The `gain.G` table contains solutions for both flux and phase calibrators. Use
@@ -533,10 +533,10 @@ place will bias the fluxscale transfer.
 |---|---|---|---|
 | `overall_flagged_frac` | scalar | < 0.08 | 0.08–0.15 → note; > 0.15 → loop back to RFI excision (10 Steps 2 and 8; 13 Step 1 on the primaries) |
 | `n_antennas_lost` | scalar | ≤ 1 | > 3 → check data quality and refant |
-| `amp_std[ant, spw, field=flux_idx]` | flux cal | < 5% of `amp_mean` | > 15% → suspect antenna or RFI |
-| `phase_rms_deg[ant, spw, field=flux_idx]` | flux cal | < 20° | > 45° → ionospheric or bad data |
-| `amp_std[ant, spw, field=flux_idx]` over time | flux cal | stable; no jumps between solutions | A jump on one antenna → that antenna; on all antennas at once → the model or the data at that time. The level itself need not be 1.0 (`solnorm=False`) |
-| `amp_mean[ant, spw, field=phase_idx]` | phase cal | on its own level, offset from the flux cal | Expected (its model is the 1 Jy default) — fluxscale will correct this |
+| `amp_std[ant]` / `outliers.amp_reference` | all cals | < 5% of `amp_mean` | > 15% -> suspect antenna or RFI (call `ms_calsol_stats_detail` on outlying antennas) |
+| `phase_rms_deg[ant]` | all cals | < 20 deg | > 45 deg -> ionospheric or bad data |
+| `amp_std[ant]` over time | flux cal | stable; no jumps between solutions | A jump on one antenna -> that antenna; on all antennas at once -> the model or the data at that time. The level itself need not be 1.0 (`solnorm=False`) |
+| `outliers.amp_reference` (`field_median`) | per field | phase cal on its own level, offset from flux cal | Expected (its model is the 1 Jy default) -- fluxscale will correct this |
 | `outliers.low_snr` | list | empty | non-empty → inspect named antennas; use Recovery Tree 2 (07b) if > 20% of antennas listed |
 | `outliers.amp_outliers` | list | empty | non-empty → inspect named antennas; an amplitude outlier on the flux cal is a hard flag before applycal |
 
@@ -779,12 +779,12 @@ ms_applycal(
 )
 ```
 
-### 7c — Science target
+### 7c -- Science target
 
 ```
 ms_applycal(
     ms_path    = {FULL_MS},
-    field      = {TARGET_FIELD},
+    field      = {TARGET_FIELD},  # for a mosaic: comma-separated mosaic_groups[].field_names, never group_name
     gaintable  = {PRIORCALS} + [delay.K, bandpass.B, gain.fluxscaled],
     gainfield  = [''] * len(PRIORCALS) + ['', '', <the target's phase cal>],  # see Assigning {PHASE_FIELD}
     interp     = [''] * len(PRIORCALS) + ['nearest,nearestflag', 'nearest', 'linear'],

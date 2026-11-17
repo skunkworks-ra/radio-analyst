@@ -33,7 +33,7 @@ until `status=done`.
 
 **Workflow:**
 
-1. `ms_workflow_status(ms_path, workdir)` -- confirm CORRECTED is populated.
+1. `ms_workflow_status(ms_path, workdir)` -- confirm `corrected_populated_target` is True and `next_recommended_step` is not `applycal_target` or earlier (STOP if not).
 
 2. **Step 0 -- field and Stokes** per 11-imaging.md Step 0. If the arguments give
    `stokes:`, `field:`, `deconvolver:`, `imagename:` or `passes: 1`, use them.

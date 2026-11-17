@@ -111,6 +111,17 @@ def _pol_state(entries: list[dict], target: Path) -> tuple[list[str], bool, int]
     return [k for k in order if k in solves], applied, unkeyed
 
 
+def _target_applied(entries: list[dict], target: Path) -> bool:
+    """True when at least one completed applycal entry wrote to ``target``."""
+    for e in entries:
+        if e.get("exists") is not True or e.get("stage") != _APPLYCAL:
+            continue
+        product = e.get("product")
+        if isinstance(product, str) and Path(product).expanduser().resolve() == target:
+            return True
+    return False
+
+
 def _probe_corrected(ms_str: str) -> tuple[bool | None, str | None]:
     """Is CORRECTED_DATA present. None (with a reason) if the probe failed.
 
@@ -198,6 +209,7 @@ def run(ms_path: str, workdir: str, stokes: str = "I") -> dict:
     # A failed probe stops the derivation there rather than falling through:
     # below a failed probe every later answer would be inferred from an unknown.
     final_solves_done = [s for s in _FINAL_SOLVES if s in done]
+    target_applied = _target_applied(entries, p)
     pol_solves_done, pol_applied_target, unkeyed = _pol_state(entries, p)
     pol_solved = _POL_KCROSS in pol_solves_done and _POL_DTERMS in pol_solves_done
 
@@ -221,7 +233,7 @@ def run(ms_path: str, workdir: str, stokes: str = "I") -> dict:
         next_step = "delay_bandpass_gain"
     elif corrected_target is None:
         next_step = "probe_failed_corrected_target"
-    elif _APPLYCAL not in done or not corrected_target:
+    elif not target_applied or not corrected_target:
         next_step = "applycal_target"
     elif pol and not pol_solved:
         next_step = "polcal"
@@ -255,10 +267,19 @@ def run(ms_path: str, workdir: str, stokes: str = "I") -> dict:
         warnings.append(
             f"preflag is recorded complete in the stage log, but calibrators.ms is not present in {wd}."
         )
-    if _APPLYCAL in done and corrected_target is False:
+    if (target_applied or (_APPLYCAL in done and not calibrators_ms_present)) and (
+        corrected_target is False
+    ):
         warnings.append(
             "applycal is recorded complete in the stage log, but CORRECTED_DATA is not"
             f" present on {ms_str}. The log is history; the MS is current state."
+        )
+    unverified_target_corrected = bool(entries) and corrected_target is True and not target_applied
+    if unverified_target_corrected:
+        warnings.append(
+            f"CORRECTED_DATA is present on {ms_str}, but {STAGE_LOG_NAME} has no completed"
+            " applycal entry for this MS (for example after a failed applycal scratch-column"
+            " creation or an upstream split)."
         )
 
     data = {
@@ -275,6 +296,15 @@ def run(ms_path: str, workdir: str, stokes: str = "I") -> dict:
         "corrected_populated_target": (
             field(None, "UNAVAILABLE", note=f"MAIN colnames read failed: {corrected_target_error}")
             if corrected_target is None
+            else field(
+                False,
+                "SUSPECT",
+                note=(
+                    "CORRECTED_DATA column exists on the target MS, but stage_log.jsonl has no"
+                    " completed applycal entry for this MS."
+                ),
+            )
+            if unverified_target_corrected
             else field(corrected_target)
         ),
         "corrected_populated_calibrators": (

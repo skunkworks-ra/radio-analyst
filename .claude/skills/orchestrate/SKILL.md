@@ -74,15 +74,17 @@ Required keys in every `<stage_decision>` JSON object:
 
 ## Stages
 
-Call each stage agent with the Agent tool, `subagent_type` as named. Give it a
-prompt with the stage's arguments first (the stage command's own argument
-line), then the values you hand it, one per line as `name: value`. Scope values
-are fixed here from `stokes`, not left to the stage.
+Call each stage agent with the Agent tool, `subagent_type` as named (in OpenCode,
+pass the `task` tool's `subagent_type` without the `radio-analyst:` prefix, for
+example `inspect-stage`). Give it a prompt with the stage's arguments first (the
+stage command's own argument line), then the values you hand it, one per line as
+`name: value`. Scope values are fixed here from `stokes`, not left to the stage.
 
-Every stage prompt also carries `python: <path>`: the interpreter that runs the
-generated scripts (the one this session's context names, or
-`.pixi/envs/default/bin/python` in a clone). Find it once from context; the
-stages do not search for it.
+Every stage prompt also carries `python: <path>` (and, if named in this session's
+context, `run_step: <path>`): the interpreter and `run-step.sh` wrapper that run
+the generated scripts (the ones this session's context names, or
+`.pixi/envs/default/bin/python` and `scripts/plugin/run-step.sh` in a clone).
+Find them once from context; the stages do not search for them.
 
 | # | Stage | Agent | Arguments |
 |---|---|---|---|
@@ -170,7 +172,7 @@ coherence rows `not_checked` with the string as the reason.
 | Gain flagged fraction (07:654) | `ms_calsol_stats({workdir}/gain.G)` `overall_flagged_frac` | < 0.15 | stop, as above |
 | Antennas lost (07:655) | `ms_calsol_stats` `n_antennas_lost` on `initial_phase.G0`, `delay.K`, `bandpass.B`, `gain.G` | <= 3 each | stop (07:663) |
 | fluxscale done, `gain.fluxscaled` written (07:658) | `ms_workflow_status({ms}, workdir)` `final_solves_completed` | contains `"fluxscale"` | retry |
-| CORRECTED on the target (commands/image.md step 1) | same, `corrected_populated_target` | true | retry |
+| CORRECTED on the target (commands/image.md step 1) | same, `corrected_populated_target` (and `products_recorded.applycal` includes `{ms}`) | true | retry |
 | Phase cal coherence (11:67) | `ms_corrected_stats({cal}, field=<phase cals>, chan_start, chan_end)` `phase_rms_deg` | < 30 | retry, re-solve |
 | Phase cal gains (11:68) | same, `amp_robust_std` vs `amp_median` | < ~20% | retry |
 | Target not decorrelated (11:69) | `ms_corrected_stats({ms}, field=<targets>, chan_start, chan_end)` `amp_median`, `amp_robust_std` | `amp_median` > 0, std not >> median | retry |

@@ -48,7 +48,7 @@ even if an earlier stage denied one of them: call them.
    If `next_recommended_step` is not `delay_bandpass_gain`, STOP.
 
 2. Gather placeholders via tool output (no hand-derivation):
-   - `ms_field_list(calibrators.ms)` -> flux_field, bp_field, phase_fields
+   - `ms_field_list(calibrators.ms)` -> flux_field, bp_field, phase_fields; `ms_field_list(ms_path)` -> target_fields (for a mosaic: comma-separated `mosaic_groups[].field_names`, never `group_name`)
    - `ms_spectral_window_list(calibrators.ms)` -> suggested.center_channels_string,
      suggested.wide_channels_string, all_spw_string
    - `ms_antenna_list(calibrators.ms)` -> recommended_minblperant

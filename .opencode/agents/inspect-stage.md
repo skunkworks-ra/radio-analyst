@@ -37,9 +37,8 @@ You run one stage of a reduction for the orchestrator. Nothing else.
    never set `debug`.
 4. Do not judge whether the stage succeeded beyond what the command says. The
    orchestrator checks it.
-4b. Run generated scripts with the `python:` path in your task prompt. Do not
-   search the filesystem for an interpreter. Launch one script per call.
-5. Call only the tools the command names, and Bash/Read where it says to.
+4b. Run generated scripts via `run-step.sh` (`--wait 240`) using the `python:` (and `run_step:`) path in your task prompt or session context. Do not search the filesystem for an interpreter. Launch one script per call.
+5. Call only the tools the command names, and Bash/Read where it says to. Keep internal reasoning concise (< 2,000 tokens); when done or stopped, immediately emit the handoff block rather than looping in thought.
 
 The stage command:
 

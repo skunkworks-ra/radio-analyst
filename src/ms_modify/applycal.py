@@ -24,6 +24,7 @@ from pathlib import Path
 
 from ms_inspect.util.casa_context import (
     describe_numeric_fields,
+    open_msmd,
     open_table,
     validate_ms_path,
 )
@@ -58,6 +59,39 @@ def _script_path(workdir: Path, field: str, ms_str: str = "") -> Path:
     ms_stem = _safe_stem(Path(ms_str).name.removesuffix(".ms")) if ms_str else ""
     prefix = f"applycal_{ms_stem}_" if ms_stem else "applycal_"
     return next_script_path(workdir, f"{prefix}{_safe_stem(field)}.py")
+
+
+_CASA_FIELD_META_CHARS = frozenset("*?~><^/;!&|()")
+
+
+def _validate_literal_fields(ms_path: str, ms_str: str, field_sel: str) -> None:
+    """Reject plain literal field names absent from FIELD before writing a script."""
+    if not field_sel or not field_sel.strip():
+        return
+    literal_tokens = [
+        tok.strip()
+        for tok in field_sel.split(",")
+        if tok.strip()
+        and not tok.strip().isdigit()
+        and not any(ch in tok for ch in _CASA_FIELD_META_CHARS)
+    ]
+    if not literal_tokens:
+        return
+    try:
+        with open_msmd(ms_str) as msmd:
+            names = list(msmd.fieldnames())
+    except Exception:
+        return
+    known = set(names)
+    missing = [tok for tok in literal_tokens if tok not in known]
+    if missing:
+        from ms_inspect.exceptions import ComputationError
+
+        raise ComputationError(
+            f"Field(s) {missing} not found in {ms_path}; available fields: {names}. "
+            "For a mosaic, pass comma-separated mosaic_groups[].field_names (never group_name).",
+            ms_path=ms_path,
+        )
 
 
 def _build_script(
@@ -184,6 +218,7 @@ def run(
     casa_calls: list[str] = []
     warnings: list[str] = []
     warnings.extend(describe_numeric_fields(ms_path, field))
+    _validate_literal_fields(ms_path, ms_str, field)
 
     if gainfield is None:
         gainfield = [""] * len(gaintable)

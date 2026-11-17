@@ -392,6 +392,67 @@ def test_stokes_i_chain_is_unchanged_and_says_which_stokes(fake_ms, monkeypatch)
     assert "pol_applied_target" not in data
 
 
+def test_stokes_i_apply_on_calibrators_ms_does_not_satisfy_target_even_with_scratch_col(
+    fake_ms, monkeypatch
+):
+    """CASA applycal adds a scratch CORRECTED_DATA column before field selection;
+    if selectvis then fails, calibrators.ms applycal + target scratch column must
+    NOT report corrected_populated_target=True or advance to first_image."""
+    ms, workdir = fake_ms
+    (ms / "STATE").mkdir()
+    cal_ms = workdir / "calibrators.ms"
+    cal_ms.mkdir()
+    (cal_ms / "table.info").write_text("Type = Measurement Set\n")
+    monkeypatch.setattr(
+        workflow_status, "open_table", _fake_main_table(colnames=["DATA", "CORRECTED_DATA"])
+    )
+    _log(workdir, "set_intents", "preflag", "priorcals", "initial_bandpass", "initial_rflag")
+    _log(workdir, "gaincal", product="/w/delay.K", measurement={"gaintype": "K"})
+    _log(workdir, "bandpass", "fluxscale")
+    _log(
+        workdir,
+        "applycal",
+        product=str(cal_ms),
+        measurement={
+            "field": "J1331+3030",
+            "corrected_data": True,
+            "parang": True,
+            "pol_types": [],
+        },
+    )
+    res = _run(ms, workdir)
+    data = res["data"]
+    assert data["next_recommended_step"] == "applycal_target"
+    assert data["corrected_populated_target"]["value"] is False
+    assert data["corrected_populated_target"]["flag"] == "SUSPECT"
+    assert any("no completed applycal entry" in w for w in res["warnings"])
+
+
+def test_stokes_i_apply_matches_target_through_symlink(fake_ms, monkeypatch, tmp_path):
+    ms, workdir = fake_ms
+    (ms / "STATE").mkdir()
+    cal_ms = workdir / "calibrators.ms"
+    cal_ms.mkdir()
+    (cal_ms / "table.info").write_text("Type = Measurement Set\n")
+    monkeypatch.setattr(
+        workflow_status, "open_table", _fake_main_table(colnames=["DATA", "CORRECTED_DATA"])
+    )
+    _log(workdir, "set_intents", "preflag", "priorcals", "initial_bandpass", "initial_rflag")
+    _log(workdir, "gaincal", product="/w/delay.K", measurement={"gaintype": "K"})
+    _log(workdir, "bandpass", "fluxscale")
+    link = tmp_path / "target_link.ms"
+    link.symlink_to(ms)
+    _log(
+        workdir,
+        "applycal",
+        product=str(link),
+        measurement={"field": "3C391 C1", "corrected_data": True, "parang": True, "pol_types": []},
+    )
+    data = _run(ms, workdir)["data"]
+    assert data["corrected_populated_target"]["value"] is True
+    assert data["next_recommended_step"] == "first_image"
+
+
 def test_iquv_with_no_pol_solve_asks_for_polcal(fake_ms, monkeypatch):
     """The Stokes I apply (parang True, no pol tables) must not satisfy it."""
     ms, workdir = fake_ms
