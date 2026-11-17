@@ -8,6 +8,8 @@ tools:
   bash: false
   glob: false
   grep: false
+  todowrite: false
+  todoread: false
   read: true
   task: true
   "ms-inspect_*": false
@@ -35,6 +37,8 @@ permission:
   bash: deny
   glob: deny
   grep: deny
+  todowrite: deny
+  todoread: deny
   read: allow
   task: allow
   "ms-inspect_*": deny

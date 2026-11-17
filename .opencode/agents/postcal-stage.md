@@ -1,7 +1,7 @@
 ---
 description: "Postcal stage of an orchestrated reduction. Runs the postcal command on one MS and returns its handoff block."
 mode: subagent
-model: nrp/kimi
+model: tejas/MiniMax-M2.7
 tools:
   edit: false
   write: false
