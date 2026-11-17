@@ -75,6 +75,13 @@ def _unwrap_params(raw_input: object) -> dict:
     inner = raw_input.get("params")
     if isinstance(inner, dict) and set(raw_input.keys()) <= {"params"}:
         return inner
+    if isinstance(inner, str) and set(raw_input.keys()) <= {"params"}:
+        stripped = inner.strip()
+        if stripped.startswith("{"):
+            with contextlib.suppress(json.JSONDecodeError):
+                parsed = json.loads(stripped)
+                if isinstance(parsed, dict):
+                    return parsed
     return dict(raw_input)
 
 
@@ -450,7 +457,7 @@ def main() -> int:
         transcript = hook.get("transcript_path")
         if not transcript or not Path(transcript).is_file():
             return 0
-        build_audit_records_from_transcript(transcript)
+        build_audit_records_from_transcript(transcript, default_workdir=hook.get("cwd"))
     except Exception as exc:
         print(f"audit_hook: {exc}", file=sys.stderr)
     return 0

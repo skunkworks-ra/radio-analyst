@@ -510,3 +510,23 @@ def test_orchestrator_agents_sync_with_skill_grants():
         and v == "allow"
     )
     assert allowed_perm_mcp == want_mcp
+
+
+def test_opencode_hooks_plugin_matches_claude_hooks_json():
+    """OpenCode .opencode/plugins/hooks.js wires the same 3 hook scripts as hooks/hooks.json."""
+    claude_hooks = json.loads((REPO_ROOT / "hooks" / "hooks.json").read_text())["hooks"]
+    want_scripts = {
+        Path(h["args"][0]).name
+        for event_entries in claude_hooks.values()
+        for group in event_entries
+        for h in group["hooks"]
+    }
+    assert want_scripts == {"ensure-env.sh", "audit_hook.sh", "session_end.sh"}
+
+    oc_hook = REPO_ROOT / ".opencode" / "plugins" / "hooks.js"
+    assert oc_hook.is_file()
+    txt = oc_hook.read_text()
+    for script_name in want_scripts:
+        assert f"scripts/plugin/{script_name}" in txt, script_name
+    assert 'event?.type !== "session.idle"' in txt
+    assert "info.parentID" in txt

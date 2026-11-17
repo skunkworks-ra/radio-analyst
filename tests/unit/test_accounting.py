@@ -147,3 +147,155 @@ def test_hook_uses_the_sessions_own_report_workdir(transcript, tmp_path, monkeyp
     assert not (other / "accounting.json").exists()
     monkeypatch.setattr("sys.stdin", io.StringIO("not json"))
     assert accounting.main() == 0
+
+
+def test_opencode_session_and_child_exports_and_stringified_params(tmp_path, monkeypatch):
+    """OpenCode session.json + session_*.json match Claude Code accounting + report rebuild."""
+    wd = tmp_path / "opencode_work"
+    wd.mkdir()
+    (wd / "report_inputs.json").write_text("{}")
+
+    main_doc = {
+        "info": {
+            "id": "ses_root",
+            "agent": "orchestrate",
+            "model": {"providerID": "nrp", "id": "glm-5"},
+            "time": {"created": 1000},
+        },
+        "messages": [
+            {
+                "info": {
+                    "id": "msg_u1",
+                    "role": "user",
+                },
+                "parts": [{"type": "text", "text": "go"}],
+            },
+            {
+                "info": {
+                    "id": "msg_a1",
+                    "role": "assistant",
+                    "providerID": "nrp",
+                    "modelID": "glm-5",
+                    "tokens": {
+                        "input": 12000,
+                        "output": 250,
+                        "reasoning": 400,
+                        "cache": {"read": 0, "write": 0},
+                    },
+                },
+                "parts": [
+                    {"type": "tool", "callID": "c1", "tool": "task", "state": {"input": {}}},
+                    {
+                        "type": "tool",
+                        "callID": "c2",
+                        "tool": "ms-create_ms_report",
+                        "state": {
+                            # OpenCode models often pass params as a JSON-encoded string
+                            "input": {"params": json.dumps({"workdir": str(wd)})}
+                        },
+                    },
+                ],
+            },
+        ],
+    }
+    child_inspect = {
+        "info": {
+            "id": "ses_c1",
+            "parentID": "ses_root",
+            "agent": "inspect-stage",
+            "model": {"providerID": "nrp", "id": "kimi"},
+            "time": {"created": 2000},
+        },
+        "messages": [
+            {
+                "info": {
+                    "id": "m_i1",
+                    "role": "assistant",
+                    "providerID": "nrp",
+                    "modelID": "kimi",
+                    "tokens": {
+                        "input": 4000,
+                        "output": 80,
+                        "reasoning": 0,
+                        "cache": {"read": 1000, "write": 0},
+                    },
+                },
+                "parts": [
+                    {
+                        "type": "tool",
+                        "callID": "ic1",
+                        "tool": "ms-inspect_ms_field_list",
+                        "state": {"input": {}},
+                    }
+                ],
+            }
+        ],
+    }
+    child_precal = {
+        "info": {
+            "id": "ses_c2",
+            "parentID": "ses_root",
+            "agent": "precal-stage",
+            "model": {"providerID": "nrp", "id": "kimi"},
+            "time": {"created": 3000},
+        },
+        "messages": [
+            {
+                "info": {
+                    "id": "m_p1",
+                    "role": "assistant",
+                    "providerID": "nrp",
+                    "modelID": "kimi",
+                    "tokens": {
+                        "input": 9000,
+                        "output": 150,
+                        "reasoning": 0,
+                        "cache": {"read": 0, "write": 0},
+                    },
+                },
+                "parts": [],
+            }
+        ],
+    }
+    unrelated_child = {
+        "info": {
+            "id": "ses_other",
+            "parentID": "ses_someone_else",
+            "agent": "calibrate-stage",
+            "time": {"created": 1500},
+        },
+        "messages": [],
+    }
+
+    main_path = tmp_path / "session.json"
+    main_path.write_text(json.dumps(main_doc))
+    (tmp_path / "session_ses_c2.json").write_text(json.dumps(child_precal))
+    (tmp_path / "session_ses_c1.json").write_text(json.dumps(child_inspect))
+    (tmp_path / "session_ses_other.json").write_text(json.dumps(unrelated_child))
+
+    acct = accounting.from_transcript(str(main_path))
+    assert [r["session"] for r in acct["sessions"]] == [
+        "main (orchestrator)",
+        "inspect-stage",
+        "precal-stage",
+    ]
+    assert acct["sessions"][0]["model"] == "nrp/glm-5"
+    assert acct["sessions"][0]["input_tokens"] == 12000
+    assert acct["sessions"][0]["output_tokens"] == 250
+    assert acct["sessions"][0]["reasoning_tokens"] == 400
+    assert acct["sessions"][0]["tool_calls"] == 2
+    assert acct["sessions"][0]["cost_usd_estimate"] is None
+    assert acct["sessions"][1]["cache_read_input_tokens"] == 1000
+    assert acct["total_cost_usd_estimate"] is None
+
+    import ms_create.report as report
+
+    calls = []
+    monkeypatch.setattr(report, "run", lambda w, reuse_saved=False: calls.append((w, reuse_saved)))
+    monkeypatch.setattr(
+        "sys.stdin",
+        io.StringIO(json.dumps({"transcript_path": str(main_path), "cwd": str(wd)})),
+    )
+    assert accounting.main() == 0
+    assert (wd / "accounting.json").is_file()
+    assert calls == [(str(wd), True)]
