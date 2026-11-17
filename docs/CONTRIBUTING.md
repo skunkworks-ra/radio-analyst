@@ -30,7 +30,7 @@ radio-analyst/
 │   │   ├── radio-interferometry/  <- SKILL.md + 00..13 + ledger.md + bundles/*.md
 │   │   ├── orchestrate/           <- SKILL.md (read-only orchestrator + <stage_decision>)
 │   │   ├── ms-simulator/          <- SKILL.md + 01..05
-│   │   ├── casa-docs/             <- SKILL.md
+│   │   ├── casa-docs/             <- SKILL.md + NOTICE + vendored tasks/*.rst
 │   │   └── report/                <- SKILL.md
 │   └── commands/                  <- inspect, precal, calibrate, polcal, image, postcal, selfcal, simulate
 ├── agents/                        <- Claude Code stage subagents (*-stage.md)
@@ -48,7 +48,7 @@ radio-analyst/
 │   ├── dev/                       <- install-local.sh / uninstall-local.sh / run-isolated.sh
 │   └── ci/                        <- tool_manifest.json, smoke MS generator, MCP probes
 ├── src/
-│   ├── casa_tasks/                <- gen_schemas.py + casa_task_schemas.json
+│   ├── casa_tasks/                <- gen_schemas.py + refresh_casadocs.py + casa_task_schemas.json
 │   ├── ms_create/                 <- FastMCP server (4 tools, port 8002) + audit_hook.py
 │   ├── ms_modify/                 <- FastMCP server (19 tools, port 8001)
 │   └── ms_inspect/                <- FastMCP server (38 tools, port 8000) + util/stage_bundles.py
@@ -69,6 +69,7 @@ in `pixi.toml`).
 pixi install
 pixi run gen-stage-bundles   # regenerate .claude/skills/radio-interferometry/bundles/*.md
 pixi run gen-casa-schemas    # regenerate src/casa_tasks/casa_task_schemas.json after CASA bump
+pixi run refresh-casadocs    # refresh vendored .claude/skills/casa-docs/tasks/*.rst after CASA bump
 pixi run check               # ruff lint + format check
 pixi run test-unit           # unit test suite
 pixi run test-int            # integration tests (RADIO_MCP_TEST_MS or RADIO_MCP_TEST_MS_TGZ)
@@ -84,6 +85,7 @@ pixi run test-int            # integration tests (RADIO_MCP_TEST_MS or RADIO_MCP
 | `RADIO_MCP_WORKERS` | `4` | Parallel worker count for FLAG column reads (capped at 8) |
 | `RADIO_MCP_DIR` | cwd | Directory for server logs (`logs/`, `events.jsonl`) |
 | `RADIO_MCP_ENV_WAIT` | `20` | Seconds `launch.sh` waits on an active plugin env build |
+| `RADIO_ANALYST_ROOT` | repo root | Root containing `.claude/skills/casa-docs/` (exported by `scripts/plugin/launch.sh` in plugin installs) |
 | `RADIO_MCP_TEST_MS` | unset | Path to pre-extracted MS for `test-int` |
 | `RADIO_MCP_TEST_MS_TGZ` | unset | Path to `.ms.tgz` tarball for `test-int` |
 | `RADIO_MCP_TEST_CALTABLE` | unset | Path to G/B caltable for caltable integration tests |
@@ -164,7 +166,7 @@ pixi run test-int            # integration tests (RADIO_MCP_TEST_MS or RADIO_MCP
 | Tool | Module | Summary |
 |------|--------|---------|
 | `ms_casa_task_lookup` | `util/casa_task_index.py` | Resolve CASA task name to casadocs API and casa6 source URLs |
-| `ms_casa_task_spec` | `tools/casa_task_spec.py` | Return checked-in parameter schema for any installed CASA task |
+| `ms_casa_task_spec` | `tools/casa_task_spec.py` | Return checked-in parameter schema for any installed CASA task plus `docs_path` into `.claude/skills/casa-docs/tasks/` (pages > 4000 tokens split into ~2000-token pieces, max 4000 tokens, behind an index) |
 | `ms_casa_tool_spec` | `tools/casa_tool_spec.py` | Introspect `casatools` methods (`table`) and safety tiers |
 
 ---

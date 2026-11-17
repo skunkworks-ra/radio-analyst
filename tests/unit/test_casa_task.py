@@ -169,6 +169,27 @@ def test_casa_task_spec_lists_params(tmp_path, monkeypatch):
     names = [p["name"] for p in out["data"]["params"]]
     assert names == ["vis", "caltable", "outputvis", "fitorder"]
     assert out["data"]["params"][0]["mustexist"] is True
+    assert "docs_path" in out["data"]
+
+
+def test_docs_path_uses_env_root(tmp_path, monkeypatch):
+    import ms_inspect.tools.casa_task_spec as cts
+    from ms_inspect.util.formatting import wire_envelope
+
+    page = tmp_path / ".claude" / "skills" / "casa-docs" / "tasks" / "statwt.rst"
+    page.parent.mkdir(parents=True)
+    page.write_text("statwt page\n")
+    monkeypatch.setenv("RADIO_ANALYST_ROOT", str(tmp_path))
+    assert cts.docs_path("statwt") == str(page.resolve())
+    assert cts.docs_path("nosuch") is None
+
+    # Missing RADIO_ANALYST_ROOT docs dir flags UNAVAILABLE with warning
+    monkeypatch.setenv("RADIO_ANALYST_ROOT", str(tmp_path / "missing_root"))
+    wire = wire_envelope(cts.run("statwt"))
+    assert wire["data"]["docs_path"] is None
+    assert wire["completeness_summary"] == "UNAVAILABLE"
+    assert wire["field_flags"]["docs_path"]["flag"] == "UNAVAILABLE"
+    assert any("RADIO_ANALYST_ROOT" in w for w in wire["warnings"])
 
 
 def test_servers_register_the_two_tools():
