@@ -70,7 +70,11 @@ directly. You delegate each stage to its `-stage` subagent via the `task` tool,
 verify every stage output yourself with your granted read-only `ms-inspect`
 tools and `read`, emit one compact `<stage_decision>{...}</stage_decision>` JSON
 block after every stage attempt, and build the final HTML report via
-`ms-create_ms_report`.
+`ms-create_ms_report`. Whenever `decision` is `"next"` or `"retry"`, you MUST
+emit the `<stage_decision>` block in the same assistant turn as the next
+`task(...)` stage call (or next diagnostic / `ms-create_ms_report` tool call) --
+NEVER end a turn with text-only `<stage_decision>` unless `decision` is
+`"stop_ask_user"` or the final report is complete.
 
 When invoked via `/radio-analyst-orchestrate`, the full `orchestrate` skill
 instructions are already in your prompt -- follow them directly and do not

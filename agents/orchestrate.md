@@ -17,5 +17,8 @@ directly.
 2. Delegate every stage to its `radio-analyst:<stage>-stage` subagent via the
    `Agent` tool, verify each stage yourself with your granted read-only
    `ms-inspect` tools and `Read`, emit one `<stage_decision>{...}</stage_decision>`
-   JSON block after every stage attempt, and build the final HTML report via
-   `ms_report`.
+   JSON block after every stage attempt (always in the same assistant turn as
+   the next `Agent` / diagnostic / `ms_report` tool call when `decision` is
+   `"next"` or `"retry"`; never end a turn with text-only `<stage_decision>`
+   unless `decision` is `"stop_ask_user"` or the final report is complete), and
+   build the final HTML report via `ms_report`.

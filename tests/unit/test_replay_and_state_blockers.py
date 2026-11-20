@@ -1437,6 +1437,341 @@ class TestAuditHookIsolationAndOpenCode:
         assert rec["checks"][0]["tool"] == "ms_field_list"
         assert rec["checks"][0]["output"] == {"n_fields": 4}
 
+    def test_opencode_same_turn_stage_decision_with_tool_calls_via_audit_hook_sh(self, tmp_path):
+        """<stage_decision> emitted in the SAME assistant turn as next/retry task() or ms_report."""
+        import os
+        import subprocess
+        import sys
+
+        wd = tmp_path / "work_same_turn"
+        wd.mkdir()
+        export_file = tmp_path / "session.json"
+
+        doc = {
+            "info": {"id": "ses_root"},
+            "messages": [
+                {
+                    "info": {"id": "msg_1", "role": "assistant"},
+                    "parts": [
+                        {
+                            "type": "tool",
+                            "callID": "call_precal_1",
+                            "tool": "task",
+                            "state": {
+                                "input": {
+                                    "subagent_type": "precal-stage",
+                                    "prompt": f"/data/3c391.ms workdir={wd}",
+                                },
+                                "output": "STAGE HANDOFF: precal\nstatus: completed",
+                                "metadata": {"sessionId": "ses_precal_1"},
+                            },
+                        }
+                    ],
+                },
+                {
+                    "info": {"id": "msg_2", "role": "assistant"},
+                    "parts": [
+                        {
+                            "type": "tool",
+                            "callID": "call_wf_1",
+                            "tool": "ms-inspect_ms_workflow_status",
+                            "state": {
+                                "input": {"ms_path": "/data/3c391.ms", "workdir": str(wd)},
+                                "output": json.dumps(
+                                    {"next_recommended_step": "delay_bandpass_gain"}
+                                ),
+                                "metadata": {},
+                            },
+                        }
+                    ],
+                },
+                {
+                    # Same assistant turn: <stage_decision> (decision=next) + task(calibrate-stage)
+                    "info": {"id": "msg_3", "role": "assistant"},
+                    "parts": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "<stage_decision>"
+                                + json.dumps(
+                                    {
+                                        "seq": 1,
+                                        "stage": "precal",
+                                        "try": 1,
+                                        "workdir": str(wd),
+                                        "decision": "next",
+                                        "deciding_metric": "ms_workflow_status.next_recommended_step = delay_bandpass_gain",
+                                        "reason": "Precal verified; launching calibrate-stage.",
+                                        "debug_directive": None,
+                                        "png_reviewed": None,
+                                    }
+                                )
+                                + "</stage_decision>"
+                            ),
+                        },
+                        {
+                            "type": "tool",
+                            "callID": "call_cal_1",
+                            "tool": "task",
+                            "state": {
+                                "input": {
+                                    "subagent_type": "calibrate-stage",
+                                    "prompt": f"/data/3c391.ms workdir={wd}",
+                                },
+                                "output": "STAGE HANDOFF: calibrate try 1",
+                                "metadata": {"sessionId": "ses_cal_1"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "info": {"id": "msg_4", "role": "assistant"},
+                    "parts": [
+                        {
+                            "type": "tool",
+                            "callID": "call_calsol_1",
+                            "tool": "ms-inspect_ms_calsol_stats",
+                            "state": {
+                                "input": {"caltable": str(wd / "gain.G"), "workdir": str(wd)},
+                                "output": json.dumps({"flagged_frac": 0.42}),
+                                "metadata": {},
+                            },
+                        }
+                    ],
+                },
+                {
+                    # Same assistant turn: <stage_decision> (decision=retry) + task(calibrate-stage retry)
+                    "info": {"id": "msg_5", "role": "assistant"},
+                    "parts": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "<stage_decision>"
+                                + json.dumps(
+                                    {
+                                        "seq": 2,
+                                        "stage": "calibrate",
+                                        "try": 1,
+                                        "workdir": str(wd),
+                                        "decision": "retry",
+                                        "deciding_metric": "ms_calsol_stats.flagged_frac = 0.42",
+                                        "reason": "Too many flagged gain solutions; retrying with longer solint.",
+                                        "debug_directive": None,
+                                        "png_reviewed": None,
+                                    }
+                                )
+                                + "</stage_decision>"
+                            ),
+                        },
+                        {
+                            "type": "tool",
+                            "callID": "call_cal_2",
+                            "tool": "task",
+                            "state": {
+                                "input": {
+                                    "subagent_type": "calibrate-stage",
+                                    "prompt": f"/data/3c391.ms workdir={wd}\nretry: 2 of 5",
+                                },
+                                "output": "STAGE HANDOFF: calibrate try 2",
+                                "metadata": {"sessionId": "ses_cal_2"},
+                            },
+                        },
+                    ],
+                },
+                {
+                    "info": {"id": "msg_6", "role": "assistant"},
+                    "parts": [
+                        {
+                            "type": "tool",
+                            "callID": "call_calsol_2",
+                            "tool": "ms-inspect_ms_calsol_stats",
+                            "state": {
+                                "input": {"caltable": str(wd / "gain.G"), "workdir": str(wd)},
+                                "output": json.dumps({"flagged_frac": 0.04}),
+                                "metadata": {},
+                            },
+                        }
+                    ],
+                },
+                {
+                    # Same assistant turn: <stage_decision> (decision=next) + ms_report
+                    "info": {"id": "msg_7", "role": "assistant"},
+                    "parts": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "<stage_decision>"
+                                + json.dumps(
+                                    {
+                                        "seq": 3,
+                                        "stage": "calibrate",
+                                        "try": 2,
+                                        "workdir": str(wd),
+                                        "decision": "next",
+                                        "deciding_metric": "ms_calsol_stats.flagged_frac = 0.04",
+                                        "reason": "Calibration passed on retry 2.",
+                                        "debug_directive": None,
+                                        "png_reviewed": None,
+                                    }
+                                )
+                                + "</stage_decision>"
+                            ),
+                        },
+                        {
+                            "type": "tool",
+                            "callID": "call_report_1",
+                            "tool": "ms-create_ms_report",
+                            "state": {
+                                "input": {"workdir": str(wd)},
+                                "output": json.dumps({"report_path": str(wd / "report.html")}),
+                                "metadata": {},
+                            },
+                        },
+                    ],
+                },
+            ],
+        }
+        export_file.write_text(json.dumps(doc, indent=2))
+
+        # Execute scripts/plugin/audit_hook.sh end-to-end as OpenCode / Claude Code hooks do.
+        repo_root = Path(__file__).resolve().parents[2]
+        hook_script = repo_root / "scripts" / "plugin" / "audit_hook.sh"
+        plugin_data = tmp_path / "plugin_data"
+        plugin_data.mkdir()
+        py_prefix = Path(sys.executable).resolve().parent.parent
+        (plugin_data / "env.prefix").write_text(str(py_prefix) + "\n")
+
+        env = os.environ.copy()
+        env["CLAUDE_PLUGIN_DATA"] = str(plugin_data)
+        proc = subprocess.run(
+            ["bash", str(hook_script)],
+            input=json.dumps({"transcript_path": str(export_file), "cwd": str(wd)}),
+            text=True,
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stderr
+
+        orch_dir = wd / "orchestrator"
+        names = sorted(p.name for p in orch_dir.glob("*.json"))
+        assert names == [
+            "01_precal_try1.json",
+            "02_calibrate_try1.json",
+            "03_calibrate_try2.json",
+        ]
+
+        r1 = json.loads((orch_dir / "01_precal_try1.json").read_text())
+        assert r1["stage"] == "precal"
+        assert r1["decision"] == "next"
+        assert r1["agent_id"] == "ses_precal_1"
+        assert r1["handoff"] == "STAGE HANDOFF: precal\nstatus: completed"
+        assert [c["tool"] for c in r1["checks"]] == ["ms_workflow_status"]
+
+        r2 = json.loads((orch_dir / "02_calibrate_try1.json").read_text())
+        assert r2["stage"] == "calibrate"
+        assert r2["attempt"] == 1
+        assert r2["decision"] == "retry"
+        assert r2["agent_id"] == "ses_cal_1"
+        assert r2["handoff"] == "STAGE HANDOFF: calibrate try 1"
+        assert len(r2["checks"]) == 1
+        assert r2["checks"][0]["output"] == {"flagged_frac": 0.42}
+
+        r3 = json.loads((orch_dir / "03_calibrate_try2.json").read_text())
+        assert r3["stage"] == "calibrate"
+        assert r3["attempt"] == 2
+        assert r3["decision"] == "next"
+        assert r3["agent_id"] == "ses_cal_2"
+        assert r3["handoff"] == "STAGE HANDOFF: calibrate try 2"
+        assert [c["tool"] for c in r3["checks"]] == ["ms_calsol_stats"]
+        assert r3["checks"][0]["output"] == {"flagged_frac": 0.04}
+
+    def test_opencode_run_jsonl_same_turn_stage_decision_with_next_stage_call(self, tmp_path):
+        """opencode run --format json step with <stage_decision> text + task() tool_use."""
+        wd = tmp_path / "work_oc_jsonl_same"
+        wd.mkdir()
+        jsonl_file = tmp_path / "trace.jsonl"
+
+        lines = [
+            {
+                "type": "tool_use",
+                "part": {
+                    "callID": "c_precal",
+                    "tool": "task",
+                    "state": {
+                        "input": {
+                            "subagent_type": "precal-stage",
+                            "prompt": f"/data/3c391.ms workdir={wd}",
+                        },
+                        "output": "PRECAL HANDOFF",
+                        "metadata": {"sessionId": "ses_p1"},
+                    },
+                },
+            },
+            {
+                "type": "tool_use",
+                "part": {
+                    "callID": "c_wf",
+                    "tool": "ms-inspect_ms_workflow_status",
+                    "state": {
+                        "input": {"ms_path": "/data/3c391.ms", "workdir": str(wd)},
+                        "output": json.dumps({"next_recommended_step": "delay_bandpass_gain"}),
+                        "metadata": {},
+                    },
+                },
+            },
+            # Single step: text <stage_decision> + immediate task(calibrate-stage) -> tool-calls
+            {"type": "step_start", "part": {"id": "s_next"}},
+            {
+                "type": "text",
+                "part": {
+                    "id": "txt_precal_dec",
+                    "text": (
+                        '<stage_decision>{"seq": 1, "stage": "precal", "try": 1, '
+                        f'"workdir": "{wd}", "decision": "next", '
+                        '"reason": "precal verified"}</stage_decision>'
+                    ),
+                },
+            },
+            {
+                "type": "tool_use",
+                "part": {
+                    "callID": "c_cal",
+                    "tool": "task",
+                    "state": {
+                        "input": {
+                            "subagent_type": "calibrate-stage",
+                            "prompt": f"/data/3c391.ms workdir={wd}",
+                        },
+                        "output": "CALIBRATE HANDOFF",
+                        "metadata": {"sessionId": "ses_c1"},
+                    },
+                },
+            },
+            {"type": "step_finish", "part": {"reason": "tool-calls"}},
+            {
+                "type": "text",
+                "part": {
+                    "id": "txt_cal_dec",
+                    "text": (
+                        '<stage_decision>{"seq": 2, "stage": "calibrate", "try": 1, '
+                        f'"workdir": "{wd}", "decision": "next", '
+                        '"reason": "calibrate verified"}</stage_decision>'
+                    ),
+                },
+            },
+        ]
+        jsonl_file.write_text("\n".join(json.dumps(x) for x in lines) + "\n")
+
+        written = audit_hook.build_audit_records_from_transcript(jsonl_file)
+        assert [p.name for p in written] == ["01_precal_try1.json", "02_calibrate_try1.json"]
+        r1 = json.loads(written[0].read_text())
+        r2 = json.loads(written[1].read_text())
+        assert r1["handoff"] == "PRECAL HANDOFF"
+        assert [c["tool"] for c in r1["checks"]] == ["ms_workflow_status"]
+        assert r2["handoff"] == "CALIBRATE HANDOFF"
+        assert r2["checks"] == []
+
 
 # ---------------------------------------------------------------------------
 # 7. Adversary regression suite (Areas 1, 2, 5)

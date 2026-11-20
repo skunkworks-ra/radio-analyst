@@ -53,7 +53,16 @@ attempt counter stays separate from Stokes I `image`). The `Stop` / `SessionEnd`
 audit hook (`scripts/plugin/audit_hook.sh`) deterministically extracts each
 block into `{workdir}/orchestrator/{seq:02d}_{stage}_try{try}.json` alongside
 `<workdir>/events.jsonl` and `<workdir>/stage_log.jsonl` -- you do NOT call
-`Write` yourself:
+`Write` yourself.
+
+**Same-turn tool call rule (prevents headless early exit).** Whenever
+`decision` is `"next"` or `"retry"`, you MUST emit the `<stage_decision>` block
+in the **same** assistant turn as the next `Agent` / `task(...)` stage call (or
+the next diagnostic tool call / `ms_report` call). NEVER end an assistant turn
+with text-only `<stage_decision>` (no tool call) unless `decision` is
+`"stop_ask_user"` or the final `ms_report` has already completed -- in headless
+runners (`opencode run`, `claude -p`), a text-only turn terminates the session
+immediately (`reason="stop"`).
 
 ```
 <stage_decision>
