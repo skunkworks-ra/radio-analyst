@@ -213,14 +213,25 @@ the radiometer prediction directly with
 | Check | Tool, field | Pass | On fail |
 |---|---|---|---|
 | Image measures | `ms_image_stats(<imagename>.image.pbcor, psf_path, pb_level)` | status ok | retry |
-| `residual_rms_jy` vs `thermal_rms_jy` (11:358) | `ms_image_stats` vs `ms_radiometer_estimate` | within 2x | over 2x: "When noise is not met" below |
-| `residual_dynamic_range` (11:359) | `ms_image_stats` | > 20 for a target | retry |
-| `detection` label (11:367) | `ms_image_stats` | report it; not a pass/fail | none |
+| `residual_rms_jy` vs `thermal_rms_jy` (11 Step 9) | `ms_image_stats` vs `ms_radiometer_estimate` | within 2x | over 2x: "When noise is not met" below |
+| `residual_dynamic_range` (11 Step 9) | `ms_image_stats` | > 20 for a target | retry |
+| Negative clean bowl (11 Step 9) | `ms_image_stats`: `min_jy`, `negative_to_peak_ratio` | `negative_to_peak_ratio <= 0.05` (Stokes I) | > 0.05 (severe if > 0.10): negative clean bowl; check mask/`nsigma`/threshold and PNG, retry `image-stage` with tighter masking/threshold (or run "When noise is not met" if `residual_rms_jy > 2x`) |
+| Visual PNG inspection (11 Step 9) | `Read(<prefix>.png)` from `ms_image_stats` `png_path` | mandatory on every target image before any `next` or `ms_report` decision; record findings in `png_reviewed` | visible stripes, rings, or negative bowls: do not accept; run "When noise is not met" or retry `image-stage` with a concrete change |
+| `detection` label (11 Step 9) | `ms_image_stats` | report it; not a pass/fail | none |
 
 Note as `not_checked` unless the handoff gives the expected beam:
-`beam_major_arcsec` and `peak_jy` (11:360-361).
+`beam_major_arcsec` and `peak_jy` (11 Step 9).
 
 #### When noise is not met
+
+**No bailout on unresolved noise or bowls.** Never accept a target image and
+proceed to `ms_report` while `residual_rms_jy > 2x thermal_rms_jy`,
+`negative_to_peak_ratio > 0.10`, or `Read(<prefix>.png)` shows severe stripes,
+rings, or negative bowls. "Products exist", "stage status completed", or
+perceived time constraints are not a pass. You MUST either execute Checks
+A -> B -> C below and follow through (postcal, re-image, or selfcal) until the
+gate passes, or emit `decision: "stop_ask_user"` with the diagnostic numbers
+explaining why it could not be resolved.
 
 A dirty or lightly cleaned image of filled, extended emission cannot be at the
 noise level: the residual comes down as cleaning goes deeper. So a residual over
@@ -230,14 +241,16 @@ that order, each one even when it is slow; a later step never stands in for an
 earlier one.
 
 A. **Noise on the calibrator.** A point-source calibrator images to the noise
-   when the calibration is good, so it is the representative noise test. Run the
-   image stage on the phase calibrator: arguments `<ms_path> workdir=<workdir>`,
-   `field: <phase cal>`, `stokes: I`, `passes: 1`, `imagename: <phase cal>_noise`
-   (its own name, so the target images are not overwritten). Compare its
-   `residual_rms_jy` against `ms_radiometer_estimate({ms}, field=<phase cal>,
-   stokes='I', weighting='briggs', robust=0.5)` `thermal_rms_jy` (11:358):
-   within 2x rules the calibration out. Over 2x: the calibration is suspect;
-   stop and ask.
+   when the calibration is good, so it is the representative noise test. Invoke
+   the `radio-analyst:image-stage` subagent via the Agent/task tool (never call
+   `ms_tclean` yourself -- the orchestrator does not execute scripts) with
+   arguments `<ms_path> workdir=<workdir>`, `field: <phase cal>`, `stokes: I`,
+   `passes: 1`, `imagename: <phase cal>_noise` (its own name, so the target
+   images are not overwritten), plus its `SKILL EXCERPT FILE:` line
+   (`{ri}/bundles/image.md`). Compare its `residual_rms_jy` against
+   `ms_radiometer_estimate({ms}, field=<phase cal>, stokes='I',
+   weighting='briggs', robust=0.5)` `thermal_rms_jy` (11 Step 9): within 2x
+   rules the calibration out. Over 2x: the calibration is suspect; stop and ask.
 B. **Target amplitude against frequency.** `ms_spw_amp_severity({ms},
    datacolumn='CORRECTED_DATA', field=<targets>)`. Its per-channel
    `robust_sigma` is the 13 Step 3 measure (13:101-106, :143-148). The floor is
@@ -264,23 +277,25 @@ D. **Flag, then check again.** Run stage 4b (postcal: rflag only on the
 With A to C clear, the calibration and the data are ruled out, and the
 remaining gap is the imaging. Work down this order, one step per attempt:
 
-1. **Cleaning.** Read `converged` and `stopcode` for the image from
-   `{workdir}/stage_log.jsonl` (the `tclean` line), and its `deconvolver` from
-   its script `{workdir}/tclean_<prefix>.py`. Not converged, or the
-   deconvolver was hogbom: retry the image stage with the change named
-   (`deconvolver: multiscale`, then `deconvolver: asp` last: 11 Step 2; asp is
-   expensive, say so in `reason`).
-2. **Look at the image.** Read the PNG (`<prefix>.png`, the one `ms_image_stats`
-   wrote) with the Read tool before deciding anything further. Write what you
-   see into `<stage_decision>`'s `png_reviewed`: is the source structure clean,
-   or are there stripes, rings or negative bowls around it?
-3. **Selfcal, if the model is good.** This also covers 11:363 (over 3x: escalate
-   rather than re-imaging with different imaging parameters). Apply 12 Step 0 (12:36-62): `dynamic_range`
+1. **Cleaning and masking.** Read `converged` and `stopcode` for the image from
+   `{workdir}/stage_log.jsonl` (the `tclean` line), and its `deconvolver` and
+   masking parameters from `{workdir}/tclean_<prefix>.py`. If a negative bowl is
+   present (`negative_to_peak_ratio > 0.05` or visible bowl in `<prefix>.png`),
+   or if cleaning did not converge, or the deconvolver was hogbom: retry
+   `radio-analyst:image-stage` with a concrete change (tighter masking/`nsigma`/
+   `threshold` to eliminate the bowl, `deconvolver: multiscale`, or
+   `deconvolver: asp` last: 11 Step 2; asp is expensive, say so in `reason`).
+2. **Verify the image visually.** Confirm `Read(<prefix>.png)` from the primary
+   check table (re-Read after any retry) and record what you see in
+   `<stage_decision>`'s `png_reviewed`: is the source structure clean, or are
+   there stripes, rings or negative bowls around it? Never run selfcal against a
+   bowled model.
+3. **Selfcal, if the model is good.** Apply 12 Step 0 (12:36-62): `dynamic_range`
    from `ms_image_stats` (< 30: selfcal unlikely to help, stop and ask; 30 and
    up: proceed), and `ms_residual_stats` on each target pointing (any SpW with
    `p95_amp / median_amp` > 10: RFI-dominated, stop and ask). If the PNG shows a
-   clean model and both pass, run stage 5 (selfcal) with `imagename=` the
-   prefix of the last target-field image (it wrote MODEL_DATA, which selfcal
+   clean, bowl-free model and both pass, run stage 5 (selfcal) with `imagename=`
+   the prefix of the last target-field image (it wrote MODEL_DATA, which selfcal
    solves against; never the calibrator noise image).
 
 ### 4b. postcal (rflag only)

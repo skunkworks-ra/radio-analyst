@@ -4,9 +4,11 @@ tools/image_stats.py — ms_image_stats
 Post-imaging quality metrics from a CASA native image.
 
 Reads the restored (or pbcor) image and returns:
-  - rms_jy:           robust RMS (1.4826 × MAD, noise estimate)
-  - peak_jy:          peak pixel value
-  - dynamic_range:    abs(peak) / rms
+  - rms_jy:                  robust RMS (1.4826 × MAD, noise estimate)
+  - peak_jy:                 peak pixel value
+  - min_jy:                  minimum finite pixel inside sibling .pb >= pb_level (or whole-image fallback)
+  - negative_to_peak_ratio:  abs(min(0, min_jy)) / peak_jy for Stokes I / total intensity
+  - dynamic_range:           abs(peak) / rms
   - beam_major_arcsec, beam_minor_arcsec, beam_pa_deg: restoring beam
 
 For a multi-plane image (frequency cube and/or multi-Stokes, e.g. an IQUV
@@ -446,6 +448,53 @@ def _residual_rms(
     return _MAD_TO_SIGMA * mad, region, None
 
 
+def _pb_masked_min(
+    ia,
+    image_path: str,
+    pb_level: float,
+    fallback_min: float | None,
+    casa_calls: list[str],
+    warnings: list[str],
+) -> tuple[float | None, str]:
+    """Minimum finite pixel value inside sibling .pb >= pb_level, else whole-image fallback."""
+    _, pb_path = _siblings(image_path)
+    if not pb_path.exists():
+        if fallback_min is None:
+            return None, "min not returned by ia.statistics() and sibling .pb not found"
+        return fallback_min, "whole-image min (sibling .pb not found)"
+
+    import numpy as np
+
+    try:
+        with open_image(str(pb_path)) as ia_pb:
+            pb_pix = np.asarray(ia_pb.getchunk(), dtype=float)
+        img_pix = np.asarray(ia.getchunk(), dtype=float)
+        pb_bcast = _broadcast_pb(pb_pix, img_pix.shape)
+        if pb_bcast is None:
+            warnings.append(
+                f"Sibling PB shape {pb_pix.shape} incompatible with image shape "
+                f"{img_pix.shape}; falling back to whole-image min_jy."
+            )
+            if fallback_min is None:
+                return None, "min unavailable (sibling .pb shape mismatch)"
+            return fallback_min, "whole-image min (sibling .pb shape mismatch)"
+        casa_calls.append(
+            f"ia.getchunk() on {Path(image_path).name} where {pb_path.name} >= {pb_level} [min_jy]"
+        )
+        vals = img_pix[(pb_bcast >= pb_level) & np.isfinite(img_pix)]
+        if vals.size == 0:
+            return None, f"no finite pixels with {pb_path.name} >= {pb_level}"
+        return float(np.min(vals)), f"min pixel inside {pb_path.name} >= {pb_level}"
+    except Exception as exc:
+        warnings.append(
+            f"Could not apply sibling PB mask ({pb_path.name}) for min_jy: {exc}; "
+            "falling back to whole-image min_jy."
+        )
+        if fallback_min is None:
+            return None, f"min unavailable ({exc})"
+        return fallback_min, "whole-image min (sibling .pb read failed)"
+
+
 def _write_png(image_path: str, png_path: str, pb_level: float) -> str:
     """Plane 0 as a PNG, viridis over the 1st to 99.9th percentile, PB contour in white."""
     import numpy as np
@@ -542,6 +591,9 @@ def run(
         )
         single_stokes = _single_plane_stokes(ia)
         peak_val = _select_peak(max_val, min_val, single_stokes)
+        min_jy_val, min_jy_note = _pb_masked_min(
+            ia, image_path, pb_level, min_val, casa_calls, warnings
+        )
 
         # Beam from image header.
         try:
@@ -570,13 +622,33 @@ def run(
                 warnings.append(f"Could not read beam from PSF image: {exc}")
 
     # ------------------------------------------------------------------
-    # Dynamic range
+    # Dynamic range and negative-to-peak ratio
     # ------------------------------------------------------------------
     if rms_val > 0:
         dynamic_range = abs(peak_val) / rms_val
     else:
         dynamic_range = None
         warnings.append("RMS is zero or negative; dynamic range not computable.")
+
+    has_signed_stokes = single_stokes in _SIGNED_STOKES or (
+        planes is not None and any(p.get("stokes") in _SIGNED_STOKES for p in planes)
+    )
+    if has_signed_stokes:
+        neg_to_peak = None
+        neg_to_peak_note = (
+            f"not defined for signed Stokes {single_stokes}"
+            if single_stokes in _SIGNED_STOKES
+            else "not defined across multi-Stokes image containing signed Q/U/V"
+        )
+    elif min_jy_val is None:
+        neg_to_peak = None
+        neg_to_peak_note = "min_jy unavailable"
+    elif peak_val <= 0:
+        neg_to_peak = None
+        neg_to_peak_note = "peak_jy <= 0"
+    else:
+        neg_to_peak = abs(min(0.0, min_jy_val)) / peak_val
+        neg_to_peak_note = "abs(min(0, min_jy)) / peak_jy"
 
     # ------------------------------------------------------------------
     # Build response
@@ -585,6 +657,16 @@ def run(
         "image_path": fmt_field(str(Path(image_path).expanduser().resolve())),
         "rms_jy": fmt_field(round(rms_val, 9)),
         "peak_jy": fmt_field(round(peak_val, 9)),
+        "min_jy": fmt_field(
+            round(min_jy_val, 9) if min_jy_val is not None else None,
+            flag="COMPLETE" if min_jy_val is not None else "UNAVAILABLE",
+            note=min_jy_note,
+        ),
+        "negative_to_peak_ratio": fmt_field(
+            round(neg_to_peak, 4) if neg_to_peak is not None else None,
+            flag="COMPLETE" if neg_to_peak is not None else "UNAVAILABLE",
+            note=neg_to_peak_note,
+        ),
         "dynamic_range": fmt_field(
             round(dynamic_range, 1) if dynamic_range is not None else None,
             flag="COMPLETE" if dynamic_range is not None else "UNAVAILABLE",

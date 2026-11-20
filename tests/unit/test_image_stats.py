@@ -399,3 +399,159 @@ class TestSignedStokesAndPbMaskedPlanes:
         assert q0["detection"] == "detection"
         assert i0["peak_jy"] == pytest.approx(0.20, abs=1e-4)
         assert v0["detection"] == "undetected"
+
+
+class TestMinJyAndNegativeBowl:
+    """PB-masked min_jy and negative_to_peak_ratio for Stokes I bowl diagnostics."""
+
+    def _mock_csys(self, stokes_names, stokes_axis=2, spec_axis=3):
+        csys = MagicMock()
+        csys.stokes.return_value = stokes_names
+
+        def _find(kind):
+            if kind == "stokes" and stokes_axis is not None:
+                return {"return": True, "pixel": [stokes_axis]}
+            if kind == "spectral" and spec_axis is not None:
+                return {"return": True, "pixel": [spec_axis]}
+            return {"return": False, "pixel": []}
+
+        csys.findcoordinate.side_effect = _find
+        return csys
+
+    def _beam(self):
+        return {
+            "major": {"value": 2.0, "unit": "arcsec"},
+            "minor": {"value": 2.0, "unit": "arcsec"},
+            "positionangle": {"value": 0.0, "unit": "deg"},
+        }
+
+    def test_pb_masked_min_and_severe_bowl_ratio(self, tmp_path):
+        import numpy as np
+
+        from ms_inspect.tools import image_stats
+
+        img = np.zeros((32, 32, 1, 1), dtype=float)
+        # Edge noise spike outside PB (< 0.1): -0.90 Jy must be ignored
+        img[2, 2, 0, 0] = -0.90
+        # Inside PB (>= 0.1): peak +0.20 Jy, clean bowl -0.05 Jy -> ratio = 0.25
+        img[20, 20, 0, 0] = 0.20
+        img[22, 22, 0, 0] = -0.05
+
+        pb = np.full((32, 32, 1, 1), 0.02, dtype=float)
+        pb[16:, :, :, :] = 0.8
+
+        img_dir = tmp_path / "target.image.pbcor"
+        pb_dir = tmp_path / "target.pb"
+        img_dir.mkdir()
+        pb_dir.mkdir()
+
+        ia_img = MagicMock()
+        ia_img.shape.return_value = list(img.shape)
+        ia_img.coordsys.return_value = self._mock_csys(["I"])
+        ia_img.statistics.side_effect = [
+            {"medabsdevmed": [0.001]},
+            {"max": [0.20], "min": [-0.90], "rms": [0.01]},
+        ]
+        ia_img.getchunk.return_value = img
+        ia_img.restoringbeam.return_value = self._beam()
+
+        ia_pb = MagicMock()
+        ia_pb.getchunk.return_value = pb
+
+        def fake_open(path):
+            cm = MagicMock()
+            cm.__enter__.return_value = ia_pb if Path(path).name.endswith(".pb") else ia_img
+            return cm
+
+        with patch.object(image_stats, "open_image", side_effect=fake_open):
+            res = image_stats.run(str(img_dir), pb_level=0.1)
+
+        assert res["data"]["min_jy"]["value"] == pytest.approx(-0.05)
+        assert res["data"]["min_jy"]["flag"] == "COMPLETE"
+        assert "target.pb >= 0.1" in res["data"]["min_jy"]["note"]
+        assert res["data"]["negative_to_peak_ratio"]["value"] == pytest.approx(0.25)
+        assert res["data"]["negative_to_peak_ratio"]["flag"] == "COMPLETE"
+
+    def test_positive_only_image_has_zero_bowl_ratio_and_fallback_without_pb(self, tmp_path):
+        from ms_inspect.tools import image_stats
+
+        img_dir = tmp_path / "clean.image"
+        img_dir.mkdir()
+
+        ia = MagicMock()
+        ia.shape.return_value = [32, 32, 1, 1]
+        ia.coordsys.return_value = self._mock_csys(["I"])
+        ia.statistics.side_effect = [
+            {"medabsdevmed": [0.001]},
+            {"max": [0.10], "min": [0.0005], "rms": [0.002]},
+        ]
+        ia.restoringbeam.return_value = self._beam()
+
+        cm = MagicMock()
+        cm.__enter__.return_value = ia
+        with patch.object(image_stats, "open_image", return_value=cm):
+            res = image_stats.run(str(img_dir))
+
+        assert res["data"]["min_jy"]["value"] == pytest.approx(0.0005)
+        assert res["data"]["min_jy"]["flag"] == "COMPLETE"
+        assert "whole-image min" in res["data"]["min_jy"]["note"]
+        assert res["data"]["negative_to_peak_ratio"]["value"] == pytest.approx(0.0)
+        assert res["data"]["negative_to_peak_ratio"]["flag"] == "COMPLETE"
+
+    def test_signed_stokes_marks_negative_to_peak_ratio_unavailable(self, tmp_path):
+        from ms_inspect.tools import image_stats
+
+        img_dir = tmp_path / "stokes_q.image"
+        img_dir.mkdir()
+
+        ia = MagicMock()
+        ia.shape.return_value = [32, 32, 1, 1]
+        ia.coordsys.return_value = self._mock_csys(["Q"])
+        ia.statistics.side_effect = [
+            {"medabsdevmed": [0.001]},
+            {"max": [0.002], "min": [-0.050], "rms": [0.002]},
+        ]
+        ia.restoringbeam.return_value = self._beam()
+
+        cm = MagicMock()
+        cm.__enter__.return_value = ia
+        with patch.object(image_stats, "open_image", return_value=cm):
+            res = image_stats.run(str(img_dir))
+
+        assert res["data"]["min_jy"]["value"] == pytest.approx(-0.050)
+        assert res["data"]["min_jy"]["flag"] == "COMPLETE"
+        assert res["data"]["negative_to_peak_ratio"]["value"] is None
+        assert res["data"]["negative_to_peak_ratio"]["flag"] == "UNAVAILABLE"
+        assert "signed Stokes Q" in res["data"]["negative_to_peak_ratio"]["note"]
+
+    def test_iquv_cube_marks_negative_to_peak_ratio_unavailable(self, tmp_path):
+        import numpy as np
+
+        from ms_inspect.tools import image_stats
+
+        img_dir = tmp_path / "cube_iquv.image"
+        img_dir.mkdir()
+
+        ia = MagicMock()
+        ia.shape.return_value = [16, 16, 4, 1]
+        ia.coordsys.return_value = self._mock_csys(["I", "Q", "U", "V"])
+        ia.statistics.side_effect = [
+            {"medabsdevmed": [0.001]},
+            {"max": [0.10], "min": [-0.05], "rms": [0.002]},
+            {"medabsdevmed": np.array([0.001, 0.001, 0.001, 0.001])},
+            {
+                "max": np.array([0.10, 0.001, 0.02, 0.0002]),
+                "min": np.array([-0.002, -0.05, -0.001, -0.0003]),
+            },
+        ]
+        ia.restoringbeam.return_value = self._beam()
+
+        cm = MagicMock()
+        cm.__enter__.return_value = ia
+        with patch.object(image_stats, "open_image", return_value=cm):
+            res = image_stats.run(str(img_dir))
+
+        assert res["data"]["min_jy"]["value"] == pytest.approx(-0.05)
+        assert res["data"]["negative_to_peak_ratio"]["value"] is None
+        assert res["data"]["negative_to_peak_ratio"]["flag"] == "UNAVAILABLE"
+        assert "multi-Stokes" in res["data"]["negative_to_peak_ratio"]["note"]

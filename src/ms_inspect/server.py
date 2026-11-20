@@ -1856,8 +1856,9 @@ async def ms_gaincal_snr_predict(params: GaincalSnrPredictInput) -> ToolResult:
     name="ms_image_stats",
     description=(
         "Image quality metrics from a CASA image: MAD-based robust RMS, peak, "
-        "dynamic range, restoring beam, and residual_rms_jy from the sibling .residual "
-        "where .pb >= pb_level. png_path writes plane 0 as a PNG. Run after tclean."
+        "PB-masked min_jy, negative_to_peak_ratio, dynamic range, restoring beam, "
+        "and residual_rms_jy from the sibling .residual where .pb >= pb_level. "
+        "png_path writes plane 0 as a PNG. Run after tclean."
     ),
     annotations={
         "title": "Image Statistics",

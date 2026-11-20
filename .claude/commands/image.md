@@ -95,13 +95,16 @@ until `status=done`.
 
 6. `ms_image_stats(imagename.image.pbcor, psf_path=imagename.psf,
    pb_level=abs(pblimit), png_path=imagename.png)` (for mtmfs the image is the
-   `.tt0` one: use the pbcor name on disk) -- quality metrics; open the
-   PNG per 11-imaging.md Step 9.
+   `.tt0` one: use the pbcor name on disk) -- quality metrics (including
+   `residual_rms_jy`, `min_jy`, `negative_to_peak_ratio`, `dynamic_range`);
+   always open `png_path` with Read and report what is visible inside the PB
+   contour.
 
 7. Apply 11-imaging.md Step 9 gates to the second-pass image; report the
    first-pass numbers beside them:
    - `residual_rms_jy` vs. `thermal_rms_jy` from `ms_radiometer_estimate` (2x tolerance)
    - `residual_dynamic_range` thresholds per field type
+   - `min_jy` and `negative_to_peak_ratio` (Stokes I clean-bowl check inside PB >= `pb_level`)
    - `beam_major_arcsec` vs. `lambda / max_baseline_m * (180*3600/pi)` (20% tolerance)
    - `peak_jy` sanity check
 
@@ -119,10 +122,10 @@ until `status=done`.
    pb_level=abs(pblimit), png_path=<name>_iquv.png)` and report its `planes`
    against Quality gates (per-plane) in place of step 7.
 
-If `residual_rms_jy > 3 * thermal_rms_jy`, escalate: the problem is calibration
-or unflagged target RFI, not imaging parameters.
-
 **Output:** the derived tclean parameters (including `thermal_rms_jy` from
-`ms_radiometer_estimate`), image paths, image-quality metrics with pass/fail per
-gate, and a recommendation (ship, re-image with different parameters, or go back
-to calibration).
+`ms_radiometer_estimate`), image and mask paths, `png_path` visual findings,
+and all measured image-quality metrics (`residual_rms_jy`, `rms_jy`, `peak_jy`,
+`min_jy`, `negative_to_peak_ratio`, `residual_dynamic_range`, `dynamic_range`,
+`detection`, restoring beam) compared against Step 9 thresholds. Report numbers
+only -- do not recommend skipping re-imaging, calibration review, or downstream
+stages.

@@ -438,23 +438,30 @@ extended source it also includes source pixels. Always write this in the
 report: "The .pbcor image noise rises toward the PB edge; the RMS quoted is
 from the .residual inside PB >= {pb_level}."
 
-**Look at the image.** Open `png_path` with Read when the clean did not
-converge (stopcode not 2 or 8), when `residual_rms_jy` is more than 2 times the
-radiometer estimate, or before you quote a flux. The white line is
-PB = `pb_level`; judge only what is inside it.
+**Look at the image (mandatory).** Always open `png_path` with Read on every
+target image before quoting a flux, reporting results, or declaring imaging
+done. The white line is PB = `pb_level`; judge only what is inside it. Look
+explicitly for negative clean bowls around extended emission, stripes, rings,
+and edge artefacts.
 
 Quality gates:
 
 | Metric | Expected | Action if not met |
 |---|---|---|
-| `residual_rms_jy` | Within 2× of radiometer estimate | > 2×: residual RFI, calibration artefacts or a dynamic-range limit; look at the PNG, then check CORRECTED |
+| `residual_rms_jy` | Within 2× of radiometer estimate | > 2×: separate calibration, residual RFI, and imaging causes below; do not ship unresolved |
 | `residual_dynamic_range` | > 100 for calibrators; > 20 for typical targets | < 20: imaging artefacts dominant; check PSF sidelobes |
+| `min_jy`, `negative_to_peak_ratio` | `negative_to_peak_ratio` <= 0.05 (Stokes I, inside PB >= `pb_level`) | > 0.05 (severe if > 0.10): negative clean bowl from over-cleaning unmasked noise, too-low threshold, or missing short spacings; verify mask and `nsigma`, re-image with tighter masking/threshold before self-cal or shipping |
 | `beam_major_arcsec` | Close to `lambda/max_baseline_m * (180*3600/pi)` | Large deviation: uv coverage gaps or flagging holes |
 | `peak_jy` | Positive, above threshold | Negative peak > rms: clean diverged; reduce gain or niter |
 
-If `residual_rms_jy` is > 3× the radiometer estimate, escalate rather than
-re-imaging: the problem is likely in the calibration or unflagged target RFI,
-not in the imaging parameters.
+When `residual_rms_jy` exceeds 2x the radiometer estimate (including > 3x), do
+not assume a single cause and do not ship the image unresolved. Separate the
+causes in order: (A) image the phase calibrator as a point-source noise check
+to test calibration quality, (B) inspect target `CORRECTED_DATA` amplitudes vs
+frequency and time for residual RFI and flag if present, and (C) if
+calibration and data are clean, address the imaging gap (masking/negative
+bowls, convergence/deconvolver choice, or phase self-calibration when
+`dynamic_range >= 30` and the model is bowl-free).
 
 ### Reading `detection`
 
