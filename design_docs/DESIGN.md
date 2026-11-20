@@ -862,7 +862,7 @@ On tool error:
 **Phase 1 (Layers 1 & 2): 13 tools** — the tables above plus `ms_flag_preflight`.
 
 > **Note on scope.** This design document was originally written for Phase 1
-> (Layers 1 & 2) only. The `ms_inspect` server has since grown to **38 tools**
+> (Layers 1 & 2) only. The `ms_inspect` server has since grown to **39 tools**
 > as later calibration/imaging phases were implemented, and the read-only
 > contract now spans the whole reduction. The remaining `ms_inspect` tools are
 > catalogued below; `ms_modify` (§8b) and `ms_create` (§8c) are full MCP servers
@@ -874,6 +874,7 @@ On tool error:
 | Tool | Primary CASA API | Key derived quantities |
 |------|-----------------|----------------------|
 | `ms_flag_preflight` | tb → FLAG shape/rows (no read) | Row count, data volume, runtime estimate, recommended `n_workers` |
+| `ms_antenna_amp_stats` | tb → DATA/CORRECTED_DATA/MODEL_DATA (chunked per DDID) | Per-antenna parallel-hand `amp_median`, `amp_min`, `amp_max`, `amp_p95`, `ratio_to_array_median` (dead/hot unflagged antenna check) |
 
 ### Calibration inspection
 
@@ -930,7 +931,7 @@ On tool error:
 | `ms_casa_task_spec` | Parameters of a CASA task, read from the checked-in task schemas (casatasks XML translated for the pinned CASA version) |
 | `ms_casa_tool_spec` | Methods of an installed casatools class (v1: `table`) by introspection, with the tier `ms_casa_tool` gives each |
 
-**Total `ms_inspect`: 38 tools.**
+**Total `ms_inspect`: 39 tools.**
 
 ---
 

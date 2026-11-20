@@ -172,3 +172,32 @@ solution — the solution may be formally valid but poorly constrained.
 
 Recommend: set `minblperant=4` in `gaincal` (default is 4 but confirm),
 and visually inspect solutions for heavily flagged antennas.
+
+---
+
+## Per-antenna raw visibility amplitudes (dead unflagged antennas)
+
+Flag fractions alone do **not** catch dead, parked, or zero-gain antennas whose
+rows remain unflagged (`FLAG=False`). Never guess dead antennas from lower row
+counts or missing scans alone -- measure raw parallel-hand amplitudes directly
+with `ms_antenna_amp_stats`:
+
+```
+ms_antenna_amp_stats(
+    ms_path    = <ms_path>,
+    field      = <bright calibrator, e.g. flux/bandpass cal>,
+    datacolumn = 'DATA',
+)
+```
+
+Passing a bright calibrator field keeps runtime under ~1 s and maximizes the
+contrast between healthy antennas and dead/degraded ones. `per_antenna` is
+sorted ascending by `ratio_to_array_median` (each antenna's median baseline
+amplitude divided by `array_median_amp`):
+
+| `ratio_to_array_median` | Likely cause | Action |
+|-------------------------|--------------|--------|
+| `~0.001--0.05` (and `unflagged_fraction > 0`) | Dead / unflagged antenna (noise-only baselines, e.g. 50--400x below array median) | Confirm across calibrator scans; flag the antenna before calibration or exclude it from `refant` |
+| `0.2--0.6` | Low-gain receiver, partial pointing/focus error, or weak sub-band | Inspect per-SPW / per-scan and check `gaincal` / `bandpass` solutions |
+| `>> 2` (or `amp_max >> amp_median`) | Hot antenna or unflagged RFI on baselines touching that antenna | Check `ms_spw_amp_severity` / `ms_vis_amp_time_stats` before assuming receiver fault |
+| `UNAVAILABLE` (`n_unflagged_samples == 0`) | Antenna already 100% flagged or absent from selected scans | Cross-check with `ms_antenna_flag_fraction` |

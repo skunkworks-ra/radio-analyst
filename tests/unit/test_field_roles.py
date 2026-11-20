@@ -609,3 +609,48 @@ class TestFluxStandardIsGatedOnFrequency:
         assert rec["flux_standard_range_checked"] is False
         target_warnings = [w for w in result.get("warnings", []) if w.startswith("[G55.7+3.4]")]
         assert not any("flux standard" in w.lower() for w in target_warnings)
+
+
+class TestEmptyStateScheduleAndRoleEvidence:
+    """Empty STATE table (3C391-like): schedule + catalogue evidence separates 3C286 from 3C84."""
+
+    def test_schedule_and_catalogue_notes_for_3c286_j1822_3c84(self, monkeypatch):
+        specs = [
+            ("J1331+3030", [], 202.7845, 30.5092),  # fid 0: 3C286
+            ("J1822-0938", [], 275.6196, -9.6491),  # fid 1: phase cal
+            ("3C391", [], 282.3510, -0.9279),  # fid 2: target
+            ("J0319+4130", [], 49.9507, 41.5117),  # fid 3: 3C84 leakage
+        ]
+        # 15 scans: 3C286 at scans 1-2, then J1822/3C391 interleaved, 3C84 single scan at end (15)
+        scan_fields = [0, 0, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 3]
+        _patch(
+            monkeypatch,
+            specs,
+            scan_fields=scan_fields,
+            spws_for_field=[[0]] * len(specs),
+            chan_freqs={0: [4.55e9, 4.65e9]},
+        )
+        result = field_list_run("/fake.ms")
+        assert result["data"]["n_fields_with_intents"] == 0
+
+        f3c286 = _rec(result, "J1331+3030")
+        assert f3c286["n_scans"] == 2
+        assert f3c286["total_on_source_s"] == 600.0
+        assert f3c286["scan_schedule"]["position"] == "start"
+        assert f3c286["scan_schedule"]["scan_numbers"] == [1, 2]
+        assert "Perley-Butler 2017" in f3c286["catalogue_role_note"]
+        assert "3C286" in f3c286["catalogue_role_note"]
+
+        fj1822 = _rec(result, "J1822-0938")
+        assert fj1822["n_scans"] == 6
+        assert fj1822["scan_schedule"]["position"] == "interleaved"
+
+        f3c84 = _rec(result, "J0319+4130")
+        assert f3c84["n_scans"] == 1
+        assert f3c84["total_on_source_s"] == 300.0
+        assert f3c84["scan_schedule"]["position"] == "single_scan_at_end"
+        assert f3c84["scan_schedule"]["first_scan"] == 15
+        assert f3c84["scan_schedule"]["total_ms_scans"] == 15
+        assert f3c84["pol_calibrator"]["value"]["single_scan_sufficient"] is True
+        assert "not a primary flux-scale standard" in f3c84["catalogue_role_note"].lower()
+        assert "leakage" in f3c84["catalogue_role_note"].lower()

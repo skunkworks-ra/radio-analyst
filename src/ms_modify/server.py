@@ -10,7 +10,7 @@ All tools carry readOnlyHint: False — they modify the MS.
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
@@ -1811,9 +1811,25 @@ class TcleanInput(BaseModel):
         default="modelcolumn",
         description="'modelcolumn' (default) or 'none'.",
     )
-    pblimit: float = Field(default=-0.1, description="Primary-beam cutoff (default -0.1).")
+    pblimit: float = Field(
+        default=-0.1,
+        description="Primary-beam cutoff (default -0.1; use positive e.g. 0.1 on mosaics to blank noisy PB edges).",
+    )
     pbmask: float | None = Field(
-        default=None, description="Clean mask PB level (None uses abs(pblimit))."
+        default=None, description="Clean mask PB level when usemask='pb' (None uses abs(pblimit))."
+    )
+    usemask: Literal["pb", "user"] = Field(
+        default="pb",
+        description="Masking mode: 'pb' (default) or 'user' with an external/PyBDSF mask path. ('auto-multithresh' is intentionally disallowed.)",
+    )
+    mask: str | None = Field(
+        default=None,
+        description="CASA mask image path or region string (required when usemask='user').",
+    )
+    nsigma: float | None = Field(
+        default=None,
+        description="Optional residual-MAD stopping threshold (e.g. 3.0--5.0); prevents cleaning unmasked noise on dynamic-range-limited mosaics.",
+        ge=0.0,
     )
     nchan: int | None = Field(
         default=None, description="Cube output channels (specmode='cube').", ge=1
@@ -1910,6 +1926,9 @@ async def ms_tclean(params: TcleanInput) -> ToolResult:
         savemodel=params.savemodel,
         pblimit=params.pblimit,
         pbmask=params.pbmask,
+        usemask=params.usemask,
+        mask=params.mask,
+        nsigma=params.nsigma,
         nchan=params.nchan,
         start=params.start,
         width=params.width,

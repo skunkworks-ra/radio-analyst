@@ -65,16 +65,18 @@ until `status=done`.
    - Fresnel check (Step 5) -> `wprojplanes`
    - gridder (Step 6): `'mosaic'` for a first-pass mosaic (A-configuration: memory
      check first), `'wproject'` single-pointing + W, else `'standard'`
-   - threshold (Step 7): `3 * thermal_rms_jy` from `ms_radiometer_estimate`; format as mJy
+   - threshold (Step 7): do NOT clean an unmasked (`usemask='pb'`) dynamic-range-limited mosaic down to `3 * thermal_rms_jy` alone. Use `nsigma=3.0` (or `3.5--5.0` on unmasked mosaics) with `threshold = max(3 * thermal_rms_jy, 3..5 * measured_off_source_rms)` (measured from the first/shallow pass via `ms_image_stats`), and positive `pblimit=0.1` on mosaics. Use `usemask='user'` + `mask=<path>` when a tight external/PyBDSF mask is available; never use `auto-multithresh`.
 
 5. First pass: `ms_tclean(ms_path, imagename=<name>_hogbom, field, stokes,
    specmode, deconvolver, nterms, gridder, wprojplanes, cell, imsize,
-   weighting='briggs', robust=0.5, niter=50000, threshold,
+   weighting='briggs', robust=0.5, niter=50000, threshold, nsigma=3.0,
+   pblimit=(0.1 if mosaic else -0.1), usemask='pb',
    savemodel='modelcolumn', workdir, execute=False)` -> run.
-   Then step 6 on it.
+   Then step 6 on it (use its `residual_rms_jy` to check/raise the second-pass threshold if unmasked).
 
    Second pass: the same call with `imagename=<name>_<deconvolver>`, the
-   second-pass `deconvolver` and `scales` from step 4 -> run. Then step 6 on it.
+   second-pass `deconvolver` and `scales` from step 4 (and updated threshold /
+   `nsigma` or `usemask='user', mask=<path>` if an external mask was built) -> run. Then step 6 on it.
    MODEL_DATA now holds the second-pass model (both calls record automatically in
    `stage_log.jsonl`).
 

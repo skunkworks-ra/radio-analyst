@@ -137,25 +137,33 @@ def run(ms_path: str, workdir: str | None = None) -> dict:
         except Exception:
             source_ids = list(range(n_fields))
 
-        # Scan sequence for pattern-based role inference (cheap; used only in
-        # heuristic mode). The same scan times give each field's sample times
+        # Scan sequence for pattern-based role inference and per-field schedule
+        # evidence. The same scan times give each field's sample times
         # (start, middle and end of each scan) for projected baselines.
         scan_sequence: list[tuple[int, int, float]] = []  # (scan_num, field_id, duration_s)
+        field_scans: dict[int, list[tuple[int, float]]] = {}  # fid -> [(scan_num, duration_s)]
+        all_scan_numbers: list[int] = []
         field_times: dict[int, list[float]] = {}
         try:
             for snum in sorted(msmd.scannumbers()):
+                snum_int = int(snum)
                 fids = list(msmd.fieldsforscan(snum))
                 if not fids:
                     continue
                 times = msmd.timesforscans([snum])
                 t0, t1 = float(min(times)), float(max(times))
                 dur = t1 - t0 if len(times) > 1 else 0.0
-                scan_sequence.append((snum, int(fids[0]), dur))
+                all_scan_numbers.append(snum_int)
+                scan_sequence.append((snum_int, int(fids[0]), dur))
                 for f in fids:
-                    field_times.setdefault(int(f), []).extend([t0, 0.5 * (t0 + t1), t1])
+                    fi = int(f)
+                    field_scans.setdefault(fi, []).append((snum_int, dur))
+                    field_times.setdefault(fi, []).extend([t0, 0.5 * (t0 + t1), t1])
             casa_calls.append("msmd.scannumbers/fieldsforscan/timesforscans (scan pattern)")
         except Exception:
             scan_sequence = []
+            field_scans = {}
+            all_scan_numbers = []
             field_times = {}
 
         # Observing frequency per field. This tool was field-only until now; the
@@ -373,10 +381,17 @@ def run(ms_path: str, workdir: str | None = None) -> dict:
         elif std.flag == "UNAVAILABLE" and cal_entry is not None:
             warnings.append(f"[{name}] {std.note}")
 
+        pol_cal_field = _pol_calibrator_field(name)
+        sched = _field_schedule_summary(field_scans.get(fid, []), all_scan_numbers)
+        role_note = _catalogue_role_note(cal_entry, pol_cal_field)
+
         record = {
             "field_id": fid,
             "name": name,
             "source_id": source_ids[fid] if fid < len(source_ids) else fid,
+            "n_scans": sched["n_scans"],
+            "total_on_source_s": sched["total_on_source_s"],
+            "scan_schedule": sched["scan_schedule"],
             "ra_j2000_deg": field(
                 round(ra_deg, 6) if ra_deg is not None else None, flag=coord_flag, note=coord_note
             ),
@@ -392,6 +407,7 @@ def run(ms_path: str, workdir: str | None = None) -> dict:
             # which is not a kind of calibrator.
             "field_role": role_out,
             "catalogue_role": catalogue_role,
+            "catalogue_role_note": role_note,
             "flux_standard": cal_standard,
             # Whether the frequency gate actually RAN, not whether it passed.
             # flux_standard COMPLETE means both "checked and inside the range"
@@ -402,7 +418,7 @@ def run(ms_path: str, workdir: str | None = None) -> dict:
             "resolved_source": cal_resolved,
             "vla_cal_match": vla_cal_match_field,
             "vla_cal_flux_estimate": _vla_flux_estimate(vla_cal_match_field, fq, telescope),
-            "pol_calibrator": _pol_calibrator_field(name),
+            "pol_calibrator": pol_cal_field,
         }
         fields_out.append(record)
 
@@ -573,6 +589,8 @@ def run(ms_path: str, workdir: str | None = None) -> dict:
                     "name": orig["name"],
                     "source_id": orig["source_id"],
                     "mosaic_group": gname,
+                    "n_scans": orig["n_scans"],
+                    "total_on_source_s": orig["total_on_source_s"],
                     "ra_j2000_deg": orig["ra_j2000_deg"],
                     "dec_j2000_deg": orig["dec_j2000_deg"],
                     "intents": orig["intents"],
@@ -790,13 +808,110 @@ def _extract_coords(
     return ra_rad, dec_rad, "COMPLETE", None
 
 
+def _field_schedule_summary(
+    scans_for_field: list[tuple[int, float]],
+    all_scan_numbers: list[int],
+) -> dict:
+    """Compact per-field schedule summary (scan count, on-source time, position)."""
+    n_scans = len(scans_for_field)
+    total_s = round(sum(dur for _, dur in scans_for_field), 1)
+    total_ms_scans = len(all_scan_numbers)
+    if n_scans == 0 or total_ms_scans == 0:
+        return {
+            "n_scans": n_scans,
+            "total_on_source_s": total_s,
+            "scan_schedule": None,
+        }
+
+    scan_nums = [s for s, _ in scans_for_field]
+    scan_index = {s: idx for idx, s in enumerate(all_scan_numbers)}
+    indices = [scan_index[s] for s in scan_nums if s in scan_index]
+    if not indices:
+        pos = "unknown"
+    elif n_scans == 1:
+        idx = indices[0]
+        if idx == 0 or idx < 0.10 * total_ms_scans:
+            pos = "single_scan_at_start"
+        elif idx == total_ms_scans - 1 or idx >= 0.90 * total_ms_scans:
+            pos = "single_scan_at_end"
+        else:
+            pos = "single_scan_mid"
+    else:
+        lo_i, hi_i = min(indices), max(indices)
+        span_frac = (hi_i - lo_i) / max(1, total_ms_scans - 1)
+        if hi_i < 0.25 * total_ms_scans:
+            pos = "start"
+        elif lo_i >= 0.75 * total_ms_scans:
+            pos = "end"
+        elif span_frac >= 0.40 and n_scans >= 4:
+            pos = "interleaved"
+        elif lo_i < 0.15 * total_ms_scans and hi_i >= 0.85 * total_ms_scans:
+            pos = "bookend"
+        elif lo_i < 0.15 * total_ms_scans:
+            pos = "start_and_mid"
+        else:
+            pos = "mid"
+
+    sched: dict = {
+        "first_scan": scan_nums[0],
+        "last_scan": scan_nums[-1],
+        "total_ms_scans": total_ms_scans,
+        "position": pos,
+    }
+    if n_scans <= 8:
+        sched["scan_numbers"] = scan_nums
+    return {
+        "n_scans": n_scans,
+        "total_on_source_s": total_s,
+        "scan_schedule": sched,
+    }
+
+
+def _catalogue_role_note(cal_entry: CalibratorEntry | None, pol_cal_field: dict) -> str | None:
+    """Concise explanation of a source's primary and/or polarisation catalogue roles."""
+    parts: list[str] = []
+    if cal_entry is not None:
+        role_str = "/".join(cal_entry.role)
+        std_str = f" ({cal_entry.flux_standard})" if cal_entry.flux_standard else ""
+        parts.append(f"{cal_entry.canonical_name}: primary {role_str} calibrator{std_str}.")
+        if cal_entry.notes:
+            parts.append(cal_entry.notes.strip())
+    pol_val = pol_cal_field.get("value") if isinstance(pol_cal_field, dict) else None
+    if isinstance(pol_val, dict):
+        pol_roles = pol_val.get("role") or []
+        pol_name = pol_val.get("name") or "?"
+        cat = pol_val.get("category") or "?"
+        single_ok = pol_val.get("single_scan_sufficient")
+        var_note = pol_val.get("variability_note")
+        if cal_entry is None:
+            parts.append(
+                f"{pol_name}: not a primary flux-scale standard (no CASA setjy flux standard); "
+                f"pol-calibrator category {cat} (role={pol_roles}, "
+                f"single_scan_sufficient={single_ok})."
+            )
+        else:
+            parts.append(
+                f"Pol-calibrator category {cat} (role={pol_roles}, "
+                f"single_scan_sufficient={single_ok})."
+            )
+        if var_note:
+            parts.append(str(var_note).strip())
+    return " ".join(parts) if parts else None
+
+
 def _pol_calibrator_field(name: str) -> dict:
     """Polarisation-catalogue identity of a field, by name."""
     entry = lookup_pol(name)
     if entry is None:
         return field(None, flag="UNAVAILABLE", note="Not in the polarisation calibrator catalogue")
     return field(
-        {"name": entry.b1950_name, "category": entry.category, "role": list(entry.role)},
+        {
+            "name": entry.b1950_name,
+            "category": entry.category,
+            "role": list(entry.role),
+            "single_scan_sufficient": entry.single_scan_sufficient,
+            "variability_note": entry.variability_note,
+        },
         flag="COMPLETE",
         note=(
             f"Matched '{name}' to pol catalogue entry '{entry.b1950_name}'. A polarisation "

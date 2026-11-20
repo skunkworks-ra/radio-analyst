@@ -159,9 +159,20 @@ def test_tool_inventories_list_every_registered_tool(doc: str):
     assert not missing, f"{doc} does not list {missing}"
 
 
+def test_every_skill_has_name_and_description_frontmatter():
+    """OpenCode requires both `name` and `description` in SKILL.md frontmatter to register a skill."""
+    skills_root = REPO_ROOT / ".claude" / "skills"
+    skill_files = sorted(skills_root.glob("*/SKILL.md"))
+    assert skill_files
+    for sf in skill_files:
+        fm = _frontmatter(sf)
+        assert fm.get("name") == sf.parent.name, (sf, fm.get("name"))
+        assert isinstance(fm.get("description"), str) and fm["description"].strip(), sf
+
+
 def test_documented_tool_counts_match_registrations():
     counts = {server: len(tools) for server, tools in _registered_tools().items()}
-    assert counts == {"ms-inspect": 38, "ms-modify": 19, "ms-create": 4}
+    assert counts == {"ms-inspect": 39, "ms-modify": 19, "ms-create": 4}
     claude_path = REPO_ROOT / "CLAUDE.md"
     assert len(claude_path.read_bytes()) <= 4096
     claude_md = claude_path.read_text()
@@ -356,7 +367,7 @@ def test_section3_command_and_skill_argument_and_grant_fixes():
     assert "(12:217-224)" in orch
 
 
-def test_all_61_tools_suppress_output_schema():
+def test_all_tools_suppress_output_schema():
     """Wave 5: every @mcp.tool returns bare ToolResult (CallToolResult) so outputSchema is None."""
     import asyncio
 
@@ -372,7 +383,7 @@ def test_all_61_tools_suppress_output_schema():
         )
 
     ins_tools, mod_tools, crt_tools = asyncio.run(_list_all())
-    assert len(ins_tools) == 38
+    assert len(ins_tools) == 39
     assert len(mod_tools) == 19
     assert len(crt_tools) == 4
     for srv_name, tools in (

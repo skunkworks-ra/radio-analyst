@@ -77,7 +77,7 @@ def test_unknown_tool_refused(wd):
         ct.plan("ms", [_c("open")], wd, False, [])
 
 
-@pytest.mark.parametrize("method", ["taql", "query", "clearlocks", "lock", "row"])
+@pytest.mark.parametrize("method", ["taql", "selectrows", "clearlocks", "lock", "row"])
 def test_never_tier_refused_even_with_allow_write(wd, method):
     with pytest.raises(ComputationError, match="every mode"):
         ct.plan("table", [_c(method)], wd, True, [])
@@ -298,3 +298,94 @@ def test_refused_list_does_not_touch_casa(fake, wd, src):
     with pytest.raises(ComputationError):
         ct.run("table", [_c("open", tablename=str(src)), _c("putcol")], str(wd))
     assert fake.instances == []
+
+
+def test_open_rejects_taql_string_with_guidance(wd):
+    with pytest.raises(ComputationError, match=r"TaQL.*query"):
+        ct.plan(
+            "table",
+            [_c("open", tablename="select from /workspace/input.ms where FIELD_ID in [0,1,9]")],
+            wd,
+            False,
+            [],
+        )
+
+
+def test_query_requires_open_and_empty_name_and_is_readonly(wd, src):
+    with pytest.raises(ComputationError, match="needs an open table"):
+        ct.plan("table", [_c("query", query="FIELD_ID == 0")], wd, False, [])
+
+    with pytest.raises(ComputationError, match="name must be empty"):
+        ct.plan(
+            "table",
+            [
+                _c("open", tablename=str(src)),
+                _c("query", query="FIELD_ID == 0", name=str(wd / "q")),
+            ],
+            wd,
+            True,
+            [],
+        )
+
+    dest = wd / "copy.ms"
+    with pytest.raises(ComputationError, match="nomodify=True"):
+        ct.plan(
+            "table",
+            [
+                _c("open", tablename=str(src)),
+                _c("copy", newtablename=str(dest)),
+                _c("close"),
+                _c("open", tablename=str(dest), nomodify=False),
+                _c("query", query="FIELD_ID == 0"),
+                _c("putcol", columnname="A", value=[1]),
+            ],
+            wd,
+            True,
+            [],
+        )
+
+
+def test_run_query_swaps_active_handle_and_closes_subtable(monkeypatch, fake, wd, src):
+    class QueryFakeTable(FakeTable):
+        def __init__(self, n=7):
+            super().__init__()
+            self._n = n
+            self.sub = None
+
+        def nrows(self):
+            return self._n
+
+        def getcol(self, columnname):
+            import numpy as np
+
+            return np.arange(6.0).reshape(2, 3)
+
+        def query(self, query="", name=""):
+            self.log.append(("query", query, name))
+            self.sub = QueryFakeTable(n=3)
+            return self.sub
+
+    FakeTable.instances = []
+    monkeypatch.setattr(ct, "_new_instance", lambda tool: QueryFakeTable())
+    out = ct.run(
+        "table",
+        [
+            _c("open", tablename=str(src)),
+            _c("query", query="FIELD_ID IN [0,1,9]"),
+            _c("nrows"),
+            _c("getcol", columnname="A"),
+            _c("close"),
+        ],
+        str(wd),
+        inline_max_elements=6,
+    )
+
+    res = out["data"]["results"]["value"]
+    assert res[1]["value"] == {"queried": True, "nrows": 3}
+    assert res[2]["value"] == 3
+    assert res[3]["value"] == [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]]
+    root_tbl = FakeTable.instances[0]
+    assert root_tbl.log[1] == ("query", "FIELD_ID IN [0,1,9]", "")
+    assert root_tbl.sub is not None
+    assert root_tbl.sub.closed >= 1
+    assert root_tbl.closed >= 1

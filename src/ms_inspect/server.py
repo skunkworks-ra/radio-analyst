@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ms_inspect import __version__
 from ms_inspect.tools import (
+    antenna_amp_stats,
     antennas,
     calsol_plot,
     calsol_plot_library,
@@ -430,6 +431,36 @@ class RadiometerEstimateInput(BaseModel):
         description="Briggs robust parameter when weighting='briggs' (default 0.5).",
         ge=-2.0,
         le=2.0,
+    )
+
+
+class AntennaAmpStatsInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    ms_path: str = Field(..., description="Path to Measurement Set.", min_length=1)
+    field: str = Field(
+        default="",
+        description="CASA field selection (empty = all fields; pass a bright calibrator for fastest, highest-contrast dead-antenna check).",
+    )
+    spw: str = Field(
+        default="",
+        description="CASA SpW id/range selection (empty = all SpWs).",
+    )
+    scans: str = Field(
+        default="",
+        description="Optional CASA scan number/range selection, e.g. '2,3' or '1~5' (empty = all scans).",
+    )
+    datacolumn: str = Field(
+        default="DATA",
+        description="'DATA' (default), 'CORRECTED_DATA', or 'MODEL_DATA'.",
+    )
+    exclude_autocorr: bool = Field(
+        default=True,
+        description="Exclude autocorrelations (ANTENNA1 == ANTENNA2, default True).",
+    )
+    max_rows: int = Field(
+        default=200_000,
+        description="Max rows sampled per DATA_DESC_ID; uniformly strided above cap (default 200000).",
+        ge=1,
     )
 
 
@@ -1510,6 +1541,36 @@ async def ms_radiometer_estimate(params: RadiometerEstimateInput) -> ToolResult:
         stokes=params.stokes,
         weighting=params.weighting,
         robust=params.robust,
+    )
+
+
+@mcp.tool(
+    name="ms_antenna_amp_stats",
+    description=(
+        "Per-antenna parallel-hand visibility amplitude statistics (raw DATA by default, or "
+        "CORRECTED_DATA / MODEL_DATA): median, min, max, p95, unflagged_fraction, and "
+        "ratio_to_array_median sorted ascending by ratio to surface dead or hot unflagged "
+        "antennas. Read-only; measures only, no pass/fail verdicts."
+    ),
+    annotations={
+        "title": "Per-Antenna Visibility Amplitude Statistics",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_antenna_amp_stats(params: AntennaAmpStatsInput) -> ToolResult:
+    """Compute per-antenna parallel-hand visibility amplitude statistics."""
+    return await _run_tool(
+        antenna_amp_stats.run,
+        params.ms_path,
+        field=params.field,
+        spw=params.spw,
+        scans=params.scans,
+        datacolumn=params.datacolumn,
+        exclude_autocorr=params.exclude_autocorr,
+        max_rows=params.max_rows,
     )
 
 

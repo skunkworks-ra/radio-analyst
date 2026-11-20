@@ -131,3 +131,4 @@ Key implications:
 | `total_duration_s < 600` | Very short track | Note that UV coverage and sensitivity will be poor |
 | All fields have `intents == []` and no catalogue match | UVFITS import from old system | Use field names as sole guide; flag all intents as UNAVAILABLE |
 | `n_spw == 1` and `n_channels == 1` | Heavily time-and-frequency averaged | No spectral analysis or per-channel bandpass possible |
+| Low flag fraction, but an antenna has `ratio_to_array_median << 0.1` in `ms_antenna_amp_stats(field=<cal>, datacolumn='DATA')` | Dead or parked antenna left unflagged (`FLAG=False`) | Do not infer dead antennas from row counts alone; verify with `ms_antenna_amp_stats` on calibrator scans and note for flagging / refant exclusion (see `03-instrument-sanity.md`) |

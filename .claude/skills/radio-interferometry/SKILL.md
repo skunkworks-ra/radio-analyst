@@ -1,8 +1,11 @@
 ---
+name: radio-interferometry
 description: >
-  Radio interferometric data analysis for CASA Measurement Sets.
-  Auto-invoked when working with .ms files, ms_inspect MCP tools,
-  VLA/MeerKAT/uGMRT data, or any interferometry calibration/imaging task.
+  Radio interferometric data analysis and CASA Measurement Set (.ms) reduction
+  playbook (inspection, flagging, pre-calibration, bandpass/gain/polcal,
+  imaging, self-calibration). Load before inspecting, calibrating, or imaging
+  any VLA, MeerKAT, uGMRT, or ALMA .ms dataset with ms-inspect / ms-modify /
+  ms-create MCP tools.
 ---
 
 # Radio Interferometry Skill -- ms-inspect Phase 1 & 2
@@ -19,6 +22,13 @@ instruments: they measure, you reason.
 Never ask a tool to interpret its own output. Call a tool, receive structured
 data with completeness flags, then apply the reasoning in the supporting
 knowledge files to decide what the numbers mean and what to do next.
+
+**Trust measured MS and catalogue evidence over memorized tutorial priors.**
+When scan intents (`STATE` table) are absent or a dataset looks familiar from a
+tutorial, base calibrator roles, dead-antenna diagnosis, and calibration choices
+on measured tool outputs (`catalogue_role`, `flux_standard`, `pol_calibrator`,
+scan schedule, visibility amplitudes, and solution statistics) rather than
+overriding them from vague recall.
 
 ### Reading tool responses
 

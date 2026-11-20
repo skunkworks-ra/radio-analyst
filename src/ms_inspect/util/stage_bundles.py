@@ -49,6 +49,7 @@ _SECTION_SPECS: dict[str, tuple[str, tuple[str, ...]]] = {
     "precal": (
         "10-precal-workflow.md",
         (
+            "## Mandatory completion checklist",
             "## Step 1 ",
             "## Step 2 ",
             "## Step 3 ",

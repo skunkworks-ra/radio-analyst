@@ -10,6 +10,13 @@ Never ask a tool to interpret its own output. Call a tool, receive structured
 data with completeness flags, then apply the reasoning in the supporting
 knowledge files to decide what the numbers mean and what to do next.
 
+**Trust measured MS and catalogue evidence over memorized tutorial priors.**
+When scan intents (`STATE` table) are absent or a dataset looks familiar from a
+tutorial, base calibrator roles, dead-antenna diagnosis, and calibration choices
+on measured tool outputs (`catalogue_role`, `flux_standard`, `pol_calibrator`,
+scan schedule, visibility amplitudes, and solution statistics) rather than
+overriding them from vague recall.
+
 ### Reading tool responses
 
 Every `"status": "ok"` tool response returns:

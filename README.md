@@ -8,7 +8,7 @@
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 A Claude Code plugin for reducing radio interferometric data with CASA. It
-gives Claude 61 tools across three MCP servers, the reasoning of an
+gives Claude 62 tools across three MCP servers, the reasoning of an
 experienced interferometrist (skills), and step-by-step workflows (slash
 commands) for VLA/JVLA/EVLA, MeerKAT, and uGMRT Measurement Sets, from a raw
 ASDM to a first image.
@@ -102,7 +102,7 @@ the read-only tools.
 
 **Three servers, by what they can touch:**
 
-- **ms-inspect**: read-only inspection and diagnostics (38 tools).
+- **ms-inspect**: read-only inspection and diagnostics (39 tools).
 - **ms-modify**: flagging, calibration, imaging (19 tools, script-first).
 - **ms-create**: ASDM inspection and import, the reduction log and the report (4 tools).
 
@@ -205,9 +205,9 @@ Loaded automatically when relevant. No need to invoke them yourself.
 The per-tool inventory is in [`design_docs/DESIGN.md`](design_docs/DESIGN.md)
 (§8 ms-inspect, §8b ms-modify, §8c ms-create). Summary:
 
-- **ms-inspect (38)**:
+- **ms-inspect (39)**:
   - Orientation (6): observation info, fields, scans, scan intents, SpWs, correlator setup.
-  - Instrument sanity (7): antennas, baselines, elevation and parallactic angle vs. time, shadowing, flag preflight, per-antenna flag fraction.
+  - Instrument sanity (8): antennas, baselines, elevation and parallactic angle vs. time, shadowing, flag preflight, per-antenna flag fraction, per-antenna visibility amplitude stats.
   - Calibration inspection (6): caltable statistics and detail, single and batch caltable plots, gaincal SNR prediction, caltable checks.
   - Pre-calibration checks (5): import, model, prior caltables, online flag stats, flag summary.
   - Instrument and RFI (8): reference antenna ranking, RFI channel stats, SpW amplitude severity, pol-cal conditions, residual and corrected-data statistics, visibility amplitude vs. time stats, phase-calibrator lookup.

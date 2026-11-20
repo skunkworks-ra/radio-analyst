@@ -91,9 +91,10 @@ _TABLE = ToolPolicy(
             "coldatatype",
             "endianformat",
             "ok",
-            # computation on a column
+            # computation and read-only in-memory selection on a table
             "statistics",
             "calc",
+            "query",  # in-memory read-only subtable (name='' enforced in casa_tool.py)
             # state queries (lock debugging)
             "isopened",
             "iswritable",
@@ -132,7 +133,6 @@ _TABLE = ToolPolicy(
     never=frozenset(
         {
             "taql",  # full TaQL: UPDATE / INSERT / DELETE
-            "query",  # makes a reference table; with a name, writes it to disk
             "selectrows",  # reference table
             "row",  # accessor object, not JSON
             "getcoliter",  # iterator object, not JSON

@@ -2,6 +2,25 @@
 
 Use `ms_workflow_status(ms_path, workdir)` to probe where you are before starting any step.
 
+## Mandatory completion checklist
+
+**Pre-calibration is NOT complete after `ms_setjy`.** Stopping after `ms_setjy` leaves
+statistical RFI on `calibrators.ms` unflagged and leaves `BP0.b` / `init_gain.g` unwritten.
+Pre-calibration is complete **only** when every step below has executed (`rc=0`) on
+`calibrators.ms` and passed its check:
+
+1. `ms_set_intents` (if intents are missing)
+2. `ms_apply_preflag` -> splits `calibrators.ms`
+3. `ms_generate_priorcals` -> verified with `ms_verify_priorcals`
+4. `ms_setjy` (and `ms_setjy_polcal` when `pol_scope: on`)
+5. `ms_refant(calibrators.ms, field=bp_field)`
+6. **`ms_initial_bandpass` on `calibrators.ms` -> run** (produces `init_gain.g`, `BP0.b`, and populates `CORRECTED_DATA` on `bp_field`)
+7. `ms_verify_model(calibrators.ms, field=bp_field)`
+8. **`ms_apply_initial_rflag` on `calibrators.ms` -> run** (flags statistical RFI on `CORRECTED - MODEL` residuals)
+9. Final `ms_workflow_status(ms_path, workdir)` confirms `initial_rflag` is done (`next_recommended_step == 'delay_bandpass_gain'`).
+
+---
+
 ## Purpose
 
 This document guides decisions across the full pre-calibration sequence:

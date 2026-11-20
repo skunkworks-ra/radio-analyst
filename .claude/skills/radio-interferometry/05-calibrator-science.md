@@ -207,7 +207,34 @@ at A-config changes the entire calibration approach.
 
 ## Identifying which calibrator to use for which step
 
-In a standard VLA L-band/S-band reduction:
+### Disambiguating calibrator roles when `STATE` / scan intents are missing
+
+When `ms_field_list` reports `n_fields_with_intents == 0` (empty `STATE` table,
+common in split or archive MSs), **trust the measured MS schedule and catalogue
+evidence in `ms_field_list` over memorized tutorial priors**:
+
+- **Primary flux + bandpass calibrator (`calibrator_match`, `catalogue_role`,
+  `flux_standard`):** Sources such as 3C286 (`J1331+3030`), 3C48 (`J0137+3309`),
+  3C138 (`J0521+1638`), 3C147 (`J0542+4951`), or PKS1934-638 have an explicit
+  CASA flux standard (`Perley-Butler 2017` / `Stevens-Reynolds 2016`), stable
+  spectral shape, and typically appear at the start of the track or in multiple
+  scans (`n_scans`, `total_on_source_s`, `scan_schedule`). Use the primary flux
+  standard as the bandpass calibrator unless scan intents explicitly name a
+  separate bandpass calibrator.
+- **Single-scan leakage calibrators (e.g. 3C84 / `J0319+4130`, OQ208):**
+  Although bright, 3C84 has **no CASA flux standard** (`flux_standard: null`),
+  is variable on month timescales, and is catalogued as a low-polarisation
+  leakage calibrator (`pol_calibrator.role: ["leakage"]`,
+  `single_scan_sufficient: true`). A single scan at the end of a schedule
+  (`n_scans: 1`, `scan_schedule.position: "single_scan_at_end"`) is the
+  classic D-term leakage calibration scan -- do **not** override `ms_field_list`'s
+  primary bandpass calibrator (e.g. 3C286) with a single-scan 3C84 observation.
+- **Complex gain (phase) calibrator:** Interleaved with the science target
+  across the track (`scan_schedule.position: "interleaved"`, higher `n_scans`),
+  nearest on the sky to the target (`nearest_phase_cal`, `separation_deg`), and
+  matched in `vla_cal_match` (not a polarisation-only calibrator).
+
+In a standard VLA L-band/S-band/C-band reduction:
 1. `setjy` → 3C286 or 3C48 (flux scale, Perley-Butler 2017)
 2. `bandpass` → same as flux calibrator
 3. `gaincal(calmode='p')` → phase calibrator (phase-only, short solint)

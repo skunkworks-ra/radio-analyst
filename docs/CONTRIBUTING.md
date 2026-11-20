@@ -1,6 +1,6 @@
 # Contributing & Developer Reference (`radio-analyst`)
 
-Developer internals, repository layout, environment setup, full 61-tool
+Developer internals, repository layout, environment setup, full 62-tool
 inventory, wire contract, and CASA conventions for `radio-analyst`. Read
 [`CLAUDE.md`](../CLAUDE.md) first for the non-negotiable scientific and tool
 contract.
@@ -14,7 +14,7 @@ radio-analyst/
 ├── CLAUDE.md                      <- always-loaded contract (<= 4 KiB)
 ├── README.md                      <- user/install guide
 ├── docs/
-│   └── CONTRIBUTING.md            <- developer reference & 61-tool inventory
+│   └── CONTRIBUTING.md            <- developer reference & 62-tool inventory
 ├── design_docs/
 │   ├── DESIGN.md                  <- architecture, failure modes, conventions
 │   └── FLUX_STANDARD_DESIGN.md    <- per-field flux standard resolution
@@ -51,7 +51,7 @@ radio-analyst/
 │   ├── casa_tasks/                <- gen_schemas.py + refresh_casadocs.py + casa_task_schemas.json
 │   ├── ms_create/                 <- FastMCP server (4 tools, port 8002) + audit_hook.py
 │   ├── ms_modify/                 <- FastMCP server (19 tools, port 8001)
-│   └── ms_inspect/                <- FastMCP server (38 tools, port 8000) + util/stage_bundles.py
+│   └── ms_inspect/                <- FastMCP server (39 tools, port 8000) + util/stage_bundles.py
 └── tests/
     ├── unit/                      <- fast unit suite (runs without live external data)
     └── integration/               <- real-MS integration suite
@@ -92,9 +92,9 @@ pixi run test-int            # integration tests (RADIO_MCP_TEST_MS or RADIO_MCP
 
 ---
 
-## Full tool inventory (61 tools)
+## Full tool inventory (62 tools)
 
-### 1. `ms-inspect` -- read-only inspection and diagnostics (38 tools, port 8000)
+### 1. `ms-inspect` -- read-only inspection and diagnostics (39 tools, port 8000)
 
 #### Layer 1: Orientation (6 tools)
 
@@ -107,7 +107,7 @@ pixi run test-int            # integration tests (RADIO_MCP_TEST_MS or RADIO_MCP
 | `ms_spectral_window_list` | `tools/spectral.py` | Per-SPW frequencies, channel widths, correlations, suggested channel ranges |
 | `ms_correlator_config` | `tools/spectral.py` | Dump time, correlation basis, full-Stokes status |
 
-#### Layer 2: Instrument sanity (7 tools)
+#### Layer 2: Instrument sanity (8 tools)
 
 | Tool | Module | Summary |
 |------|--------|---------|
@@ -118,6 +118,7 @@ pixi run test-int            # integration tests (RADIO_MCP_TEST_MS or RADIO_MCP
 | `ms_shadowing_report` | `tools/shadowing.py` | Read-only geometric shadowing fraction overall and per antenna |
 | `ms_flag_preflight` | `tools/flags.py` | Row count, FLAG shape, data volume, runtime estimate, recommended workers |
 | `ms_antenna_flag_fraction` | `tools/flags.py` | Adaptive chunked parallel `FLAG` read per antenna |
+| `ms_antenna_amp_stats` | `tools/antenna_amp_stats.py` | Per-antenna raw/corrected visibility amplitude summary (`amp_median`, `amp_min`, `amp_max`, `ratio_to_array_median`) for dead/hot unflagged antenna checks |
 
 #### Calibration inspection (6 tools)
 

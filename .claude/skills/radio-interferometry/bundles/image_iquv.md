@@ -10,6 +10,13 @@ Never ask a tool to interpret its own output. Call a tool, receive structured
 data with completeness flags, then apply the reasoning in the supporting
 knowledge files to decide what the numbers mean and what to do next.
 
+**Trust measured MS and catalogue evidence over memorized tutorial priors.**
+When scan intents (`STATE` table) are absent or a dataset looks familiar from a
+tutorial, base calibrator roles, dead-antenna diagnosis, and calibration choices
+on measured tool outputs (`catalogue_role`, `flux_standard`, `pol_calibrator`,
+scan schedule, visibility amplitudes, and solution statistics) rather than
+overriding them from vague recall.
+
 ### Reading tool responses
 
 Every `"status": "ok"` tool response returns:
@@ -234,11 +241,34 @@ ms_radiometer_estimate(
 ```
 
 Read `thermal_rms_jy` (along with `sefd_jy`, `eta_c`, `n_pol`, `n_ant_unflagged`,
-`on_source_s`, `eff_bw_hz`, and `weighting_factor` for reporting) and set:
+`on_source_s`, `eff_bw_hz`, and `weighting_factor` for reporting).
 
-```
-threshold = 3 * thermal_rms_jy
-```
+**Do NOT clean an unmasked (`usemask='pb'`) dynamic-range-limited mosaic down to
+`3 * thermal_rms_jy`.** On extended or bright sources (for example a supernova
+remnant mosaic like 3C391), the actual off-source residual RMS can be 5--10x
+higher than the theoretical radiometer floor (`thermal_rms_jy`). Driving an
+unmasked PB clean down to `3 * thermal_rms_jy` with `niter=50000` cleans into
+noise and PSF sidelobes, producing severe negative clean bowls or timeouts.
+
+Instead, choose the stopping criterion from **measured** off-source RMS:
+
+1. **Theoretical reference (always compute):** `thermal_rms_jy` from
+   `ms_radiometer_estimate` is the sensitivity benchmark for Step 9 quality
+   assessment (`residual_rms_jy` vs `thermal_rms_jy`), **not** a blind unmasked
+   clean floor on extended mosaics.
+2. **Measured threshold for unmasked (`usemask='pb'`) cleaning:** Measure the
+   actual off-source RMS from a fast dirty or shallow pass (`ms_image_stats`
+   `residual_rms_jy` inside `PB >= abs(pblimit)`), and set:
+   ```
+   threshold = max(3 * thermal_rms_jy, 3..5 * measured_off_source_rms)
+   ```
+   and pass `nsigma=3.0` (or `3.5--5.0` on unmasked mosaics) so CASA stops cleanly
+   (`stopcode=8`) at `nsigma * MAD` of the residual instead of cleaning into
+   noise.
+3. **Deep cleaning with an external mask (`usemask='user'`, `mask=<path>`):**
+   When cleaning inside a tight source mask (e.g. a PyBDSF island mask or a mask
+   derived from the first pass), cleaning down to `2--3 * measured_off_source_rms`
+   (or `nsigma=3.0`) is safe because noise outside the source is excluded.
 
 If `thermal_rms_jy` is marked `UNAVAILABLE` in `field_flags` (for example an
 unmodelled telescope or band), report that explicitly rather than substituting

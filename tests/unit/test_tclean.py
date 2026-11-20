@@ -143,6 +143,45 @@ class TestPbMask:
         assert "pblimit      = -0.1," in script
         assert "pbmask       = 0.3," in script
 
+    def test_positive_pblimit_and_nsigma(self, tmp_path, real_ms_calibrated):
+        script, _ = _run(tmp_path, real_ms_calibrated, pblimit=0.1, nsigma=3.5)
+        assert "pblimit      = 0.1," in script
+        assert "pbmask       = 0.1," in script
+        assert "nsigma       = 3.5," in script
+
+    def test_user_mask_rendered(self, tmp_path, real_ms_calibrated):
+        script, warnings = _run(
+            tmp_path,
+            real_ms_calibrated,
+            usemask="user",
+            mask="/work/pybdsf.mask",
+            pblimit=0.1,
+        )
+        assert "usemask      = 'user'," in script
+        assert "mask         = '/work/pybdsf.mask'," in script
+        assert "pbmask       =" not in script
+        assert not any("ignored" in w for w in warnings)
+
+    def test_user_mask_without_mask_raises(self, tmp_path, real_ms_calibrated):
+        from ms_inspect.exceptions import ComputationError
+
+        with pytest.raises(ComputationError, match="requires a non-empty mask"):
+            _run(tmp_path, real_ms_calibrated, usemask="user")
+
+    def test_auto_multithresh_rejected(self, tmp_path, real_ms_calibrated):
+        from ms_inspect.exceptions import ComputationError
+
+        with pytest.raises(ComputationError, match="auto-multithresh"):
+            _run(tmp_path, real_ms_calibrated, usemask="auto-multithresh")
+
+    def test_mask_with_pb_warns_and_ignored(self, tmp_path, real_ms_calibrated):
+        script, warnings = _run(
+            tmp_path, real_ms_calibrated, usemask="pb", mask="/work/pybdsf.mask"
+        )
+        assert "usemask      = 'pb'," in script
+        assert "mask         =" not in script
+        assert any("ignored when usemask='pb'" in w for w in warnings)
+
 
 class TestCubeArgs:
     def test_cube_args_rendered_for_cube(self, tmp_path, real_ms_calibrated):

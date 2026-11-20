@@ -10,6 +10,13 @@ Never ask a tool to interpret its own output. Call a tool, receive structured
 data with completeness flags, then apply the reasoning in the supporting
 knowledge files to decide what the numbers mean and what to do next.
 
+**Trust measured MS and catalogue evidence over memorized tutorial priors.**
+When scan intents (`STATE` table) are absent or a dataset looks familiar from a
+tutorial, base calibrator roles, dead-antenna diagnosis, and calibration choices
+on measured tool outputs (`catalogue_role`, `flux_standard`, `pol_calibrator`,
+scan schedule, visibility amplitudes, and solution statistics) rather than
+overriding them from vague recall.
+
 ### Reading tool responses
 
 Every `"status": "ok"` tool response returns:
@@ -57,6 +64,25 @@ under `setsid` writing `<script>.log` and `<script>.pid`, then waits up to 240 s
 A deliberate re-solve generates or overwrites `<script>`; remove `<script>.rc`
 first (`rm -f <script>.rc`) only when intentionally re-running the exact same
 script path without regenerating it.
+
+---
+
+## Mandatory completion checklist
+
+**Pre-calibration is NOT complete after `ms_setjy`.** Stopping after `ms_setjy` leaves
+statistical RFI on `calibrators.ms` unflagged and leaves `BP0.b` / `init_gain.g` unwritten.
+Pre-calibration is complete **only** when every step below has executed (`rc=0`) on
+`calibrators.ms` and passed its check:
+
+1. `ms_set_intents` (if intents are missing)
+2. `ms_apply_preflag` -> splits `calibrators.ms`
+3. `ms_generate_priorcals` -> verified with `ms_verify_priorcals`
+4. `ms_setjy` (and `ms_setjy_polcal` when `pol_scope: on`)
+5. `ms_refant(calibrators.ms, field=bp_field)`
+6. **`ms_initial_bandpass` on `calibrators.ms` -> run** (produces `init_gain.g`, `BP0.b`, and populates `CORRECTED_DATA` on `bp_field`)
+7. `ms_verify_model(calibrators.ms, field=bp_field)`
+8. **`ms_apply_initial_rflag` on `calibrators.ms` -> run** (flags statistical RFI on `CORRECTED - MODEL` residuals)
+9. Final `ms_workflow_status(ms_path, workdir)` confirms `initial_rflag` is done (`next_recommended_step == 'delay_bandpass_gain'`).
 
 ---
 

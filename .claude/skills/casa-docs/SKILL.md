@@ -1,4 +1,5 @@
 ---
+name: casa-docs
 description: >
   Look up CASA task documentation. Auto-invoked when a user asks a CASA
   task/parameter question directly, or when a skill names a CASA Docs page.

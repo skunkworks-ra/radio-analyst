@@ -30,6 +30,7 @@ from __future__ import annotations
 import contextlib
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,10 @@ from ms_inspect.util.stage_log import record_stage
 
 TOOL_NAME = "ms_casa_tool"
 MANIFEST_NAME = ".casa_tool_copies.json"
+_TAQL_OPEN_RE = re.compile(
+    r"^\s*(?:select|calc|update|delete|insert|create|count|giving|using)\b",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +191,17 @@ def plan(
                 raise _refuse(i, method, f"{sess.path} is already open; close it first.")
             if "lockoptions" in args:
                 raise _refuse(i, method, "lockoptions is not accepted.")
-            p = _abs(_str_arg(i, method, args, "tablename"))
+            raw_tablename = _str_arg(i, method, args, "tablename")
+            if _TAQL_OPEN_RE.match(raw_tablename):
+                raise _refuse(
+                    i,
+                    method,
+                    "tablename looks like a TaQL query string, not a filesystem path; "
+                    "table.open does not accept TaQL. Open the table with "
+                    '{"method": "open", "args": {"tablename": "<ms_path>", "nomodify": true}} '
+                    'then filter rows with {"method": "query", "args": {"query": "<WHERE clause>"}}.',
+                )
+            p = _abs(raw_tablename)
             nomodify = args.get("nomodify", True)
             if not isinstance(nomodify, bool):
                 raise _refuse(i, method, "nomodify must be true or false.")
@@ -203,6 +218,18 @@ def plan(
             args["tablename"] = str(p)
             args["nomodify"] = nomodify
             sess = _Session(str(p), not nomodify)
+        elif method == "query":
+            if sess is None:
+                raise _refuse(i, method, "needs an open table (call open first).")
+            if args.get("name"):
+                raise _refuse(
+                    i,
+                    method,
+                    "name must be empty; query is strictly in-memory read-only and cannot write a reference table to disk.",
+                )
+            args["name"] = ""
+            # Queried reference views are strictly read-only.
+            sess = _Session(sess.path, False)
         elif method in ("close", "done"):
             sess = None
         elif tier == COPY:
@@ -415,6 +442,8 @@ def run(
     mutated_steps: list[tuple[str, str]] = []
 
     inst = _new_instance(tool)
+    handles: list[Any] = [inst]
+    active = inst
     try:
         for pc in pl.calls:
 
@@ -428,7 +457,21 @@ def run(
 
             casa_calls.append(f"{tool}.{pc.method}({', '.join(sorted(pc.args))})")
             try:
-                value = getattr(inst, pc.method)(**pc.args)
+                if pc.method == "query":
+                    sub = active.query(**pc.args)
+                    handles.append(sub)
+                    active = sub
+                    value: Any = {"queried": True, "nrows": int(sub.nrows())}
+                elif pc.method in ("close", "done"):
+                    for sub_h in reversed(handles[1:]):
+                        for closer in ("close", "done"):
+                            with contextlib.suppress(Exception):
+                                getattr(sub_h, closer)()
+                    handles = [inst]
+                    active = inst
+                    value = getattr(inst, pc.method)(**pc.args)
+                else:
+                    value = getattr(active, pc.method)(**pc.args)
             except Exception as e:
                 failed = {
                     "index": pc.index,
@@ -451,9 +494,10 @@ def run(
             if pc.tier in (COPY, EDIT) and pc.written:
                 mutated_steps.append((pc.method, pc.written))
     finally:
-        for closer in ("close", "done"):
-            with contextlib.suppress(Exception):  # best effort; the lock is what matters
-                getattr(inst, closer)()
+        for handle in reversed(handles):
+            for closer in ("close", "done"):
+                with contextlib.suppress(Exception):  # best effort; the lock is what matters
+                    getattr(handle, closer)()
 
     if mutated_steps:
         if failed is not None:

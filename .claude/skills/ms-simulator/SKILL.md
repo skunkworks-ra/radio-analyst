@@ -1,4 +1,5 @@
 ---
+name: ms-simulator
 description: >
   Simulate arbitrary CASA Measurement Sets from conversational input.
   Auto-invoked when user asks to simulate, generate, or create synthetic

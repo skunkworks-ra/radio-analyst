@@ -43,6 +43,8 @@ Every "-> run" below: run the script via `run-step.sh` (`--wait 240`), as the
 skill's "Running generated scripts" section says, re-running on `status=running`
 until `status=done`.
 
+**Mandatory completion checklist:** Pre-calibration is **NOT** complete after `ms_setjy` (step 6). You **MUST** continue through steps 7, 8 (`ms_initial_bandpass` on `calibrators.ms`), 9 (`ms_verify_model` + `ms_apply_initial_rflag` on `calibrators.ms`), and 10 (`ms_workflow_status` confirming `initial_rflag` is done and `next_recommended_step == "delay_bandpass_gain"`). Do not return a handoff after `ms_setjy`.
+
 **Workflow:**
 
 1. `ms_workflow_status(ms_path, workdir)` -- where are we starting from?
@@ -92,7 +94,9 @@ until `status=done`.
    1 Jy default, skip the rflag below. Otherwise
    `ms_apply_initial_rflag(calibrators.ms, workdir, field=bp_field, execute=False)` -> run.
 
-10. Final decision gate (Decision gate): go/no-go for full calibration solve.
+10. Final decision gate (Decision gate): call `ms_workflow_status(ms_path, workdir)`
+    and confirm `initial_rflag` is complete (`next_recommended_step == "delay_bandpass_gain"`).
+    Report go/no-go for full calibration solve.
 
 **Output:** a structured report of each stage's outcome, flagged warnings,
 and `workdir` for `/calibrate` (calibrate re-derives refant, priorcals and

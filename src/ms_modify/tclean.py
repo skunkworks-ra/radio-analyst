@@ -30,6 +30,9 @@ DEBUG_TASKS = ("tclean",)
 #: Deconvolvers that take tclean's `scales` (pixels; 0 is a point component).
 SCALE_DECONVOLVERS = ("multiscale", "mtmfs")
 
+#: Allowed masking modes in ms_tclean ('auto-multithresh' is intentionally excluded).
+VALID_USEMASKS = ("pb", "user")
+
 # Global tclean stopcodes (casatasks imager_deconvolver). Converged = {2, 8}.
 _STOPCODE_DESC = {
     1: "iteration limit reached before threshold",
@@ -96,6 +99,9 @@ def _build_script(
     savemodel: str,
     pblimit: float,
     pbmask: float,
+    usemask: str,
+    mask: str | None,
+    nsigma: float | None,
     nchan: int | None,
     start: str | None,
     width: str | None,
@@ -117,6 +123,8 @@ def _build_script(
         optional_lines += f"    wprojplanes  = {wprojplanes},\n"
     if cfcache is not None:
         optional_lines += f"    cfcache      = {cfcache!r},\n"
+    if nsigma is not None:
+        optional_lines += f"    nsigma       = {nsigma},\n"
     # Cube channelization — only meaningful for specmode='cube'.
     if specmode == "cube":
         if nchan is not None:
@@ -127,6 +135,12 @@ def _build_script(
             optional_lines += f"    width        = {width!r},\n"
         if outframe is not None:
             optional_lines += f"    outframe     = {outframe!r},\n"
+
+    mask_lines = f"    usemask      = {usemask!r},\n"
+    if usemask == "pb":
+        mask_lines += f"    pbmask       = {pbmask},\n"
+    elif usemask == "user" and mask:
+        mask_lines += f"    mask         = {mask!r},\n"
 
     script_name = Path(imagename).name.replace(".", "_")
 
@@ -184,9 +198,7 @@ summary = tclean(
     threshold    = {threshold!r},
     pbcor        = True,
     pblimit      = {pblimit},
-    usemask      = 'pb',
-    pbmask       = {pbmask},
-    savemodel    = {savemodel!r},
+{mask_lines}    savemodel    = {savemodel!r},
     fullsummary  = False,
 )
 _code = summary.get("stopcode") if isinstance(summary, dict) else None
@@ -237,6 +249,9 @@ def run(
     savemodel: str = "modelcolumn",
     pblimit: float = -0.1,
     pbmask: float | None = None,
+    usemask: str = "pb",
+    mask: str | None = None,
+    nsigma: float | None = None,
     nchan: int | None = None,
     start: str | None = None,
     width: str | None = None,
@@ -318,6 +333,31 @@ def run(
         imsize = [512, 512]
     if pbmask is None:
         pbmask = abs(pblimit)
+
+    if usemask not in VALID_USEMASKS:
+        from ms_inspect.exceptions import ComputationError
+
+        raise ComputationError(
+            f"Unsupported usemask={usemask!r}; ms_tclean supports {list(VALID_USEMASKS)} "
+            "(usemask='auto-multithresh' is intentionally excluded -- supply an external/PyBDSF "
+            "mask with usemask='user' and mask=<path>, or use usemask='pb').",
+            ms_path=ms_path,
+        )
+    if usemask == "user" and not (mask and mask.strip()):
+        from ms_inspect.exceptions import ComputationError
+
+        raise ComputationError(
+            "usemask='user' requires a non-empty mask path or region string.",
+            ms_path=ms_path,
+        )
+    if usemask == "pb" and mask:
+        warnings.append(
+            f"mask={mask!r} ignored when usemask='pb'; pass usemask='user' to apply an external mask."
+        )
+    if nsigma is not None and nsigma < 0:
+        from ms_inspect.exceptions import ComputationError
+
+        raise ComputationError(f"nsigma must be >= 0, got {nsigma}", ms_path=ms_path)
 
     if gridder in ("wproject", "awp2", "awproject") and wprojplanes is None:
         warnings.append(
@@ -438,6 +478,9 @@ def run(
         savemodel=savemodel,
         pblimit=pblimit,
         pbmask=pbmask,
+        usemask=usemask,
+        mask=mask.strip() if (usemask == "user" and mask) else None,
+        nsigma=nsigma,
         nchan=nchan,
         start=start,
         width=width,
@@ -499,11 +542,16 @@ def run(
         threshold=threshold,
         pbcor=True,
         pblimit=pblimit,
-        usemask="pb",
-        pbmask=pbmask,
+        usemask=usemask,
         savemodel=savemodel,
         fullsummary=False,
     )
+    if usemask == "pb":
+        tclean_kwargs["pbmask"] = pbmask
+    elif usemask == "user" and mask:
+        tclean_kwargs["mask"] = mask.strip()
+    if nsigma is not None:
+        tclean_kwargs["nsigma"] = nsigma
     if deconvolver == "mtmfs" and nterms is not None:
         tclean_kwargs["nterms"] = nterms
     if deconvolver in SCALE_DECONVOLVERS and scales:
