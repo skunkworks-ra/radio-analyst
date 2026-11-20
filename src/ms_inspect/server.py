@@ -462,6 +462,11 @@ class AntennaAmpStatsInput(BaseModel):
         description="Max rows sampled per DATA_DESC_ID; uniformly strided above cap (default 200000).",
         ge=1,
     )
+    near_zero_ratio: float = Field(
+        default=0.05,
+        description="Fraction of array_median_amp below which a row counts toward near_zero_fraction (default 0.05; absolute floor 1e-6).",
+        ge=0.0,
+    )
 
 
 class VisAmpTimeStatsInput(BaseModel):
@@ -1548,9 +1553,9 @@ async def ms_radiometer_estimate(params: RadiometerEstimateInput) -> ToolResult:
     name="ms_antenna_amp_stats",
     description=(
         "Per-antenna parallel-hand visibility amplitude statistics (raw DATA by default, or "
-        "CORRECTED_DATA / MODEL_DATA): median, min, max, p95, unflagged_fraction, and "
-        "ratio_to_array_median sorted ascending by ratio to surface dead or hot unflagged "
-        "antennas. Read-only; measures only, no pass/fail verdicts."
+        "CORRECTED_DATA / MODEL_DATA): median, MAD, IQR, min, max, p95, near_zero_fraction, "
+        "unflagged_fraction, and ratio_to_array_median sorted ascending by ratio to surface "
+        "dead or hot unflagged antennas. Read-only; measures only, no pass/fail verdicts."
     ),
     annotations={
         "title": "Per-Antenna Visibility Amplitude Statistics",
@@ -1571,6 +1576,7 @@ async def ms_antenna_amp_stats(params: AntennaAmpStatsInput) -> ToolResult:
         datacolumn=params.datacolumn,
         exclude_autocorr=params.exclude_autocorr,
         max_rows=params.max_rows,
+        near_zero_ratio=params.near_zero_ratio,
     )
 
 

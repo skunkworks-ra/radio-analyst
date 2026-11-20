@@ -55,15 +55,24 @@ class TestSummarizeAntennaAmplitudes:
         # Lowest ratio first: ea13
         assert rows[0]["name"] == "ea13"
         assert rows[0]["amp_median"]["value"] == pytest.approx(0.004, abs=1e-6)
+        assert rows[0]["amp_mad"]["value"] == pytest.approx(0.001, abs=1e-6)
+        assert rows[0]["amp_iqr"]["value"] == pytest.approx(0.001, abs=1e-6)
         assert rows[0]["amp_min"]["value"] == pytest.approx(0.003, abs=1e-6)
         assert rows[0]["amp_max"]["value"] == pytest.approx(0.005, abs=1e-6)
+        assert rows[0]["near_zero_fraction"]["value"] == 1.0
         assert rows[0]["ratio_to_array_median"]["value"] < 0.01
         assert rows[0]["unflagged_fraction"] == 1.0
+        assert rows[1]["near_zero_fraction"]["value"] == 0.0
+        assert out["near_zero_ratio"] == 0.05
+        assert out["near_zero_cutoff_amp"] == pytest.approx(0.05, rel=0.05)
 
         # Fully flagged antenna is last with UNAVAILABLE flags
         assert rows[-1]["name"] == "ea05"
         assert rows[-1]["amp_median"]["value"] is None
         assert rows[-1]["amp_median"]["flag"] == "UNAVAILABLE"
+        assert rows[-1]["amp_mad"]["flag"] == "UNAVAILABLE"
+        assert rows[-1]["amp_iqr"]["flag"] == "UNAVAILABLE"
+        assert rows[-1]["near_zero_fraction"]["flag"] == "UNAVAILABLE"
         assert rows[-1]["ratio_to_array_median"]["flag"] == "UNAVAILABLE"
 
     def test_strided_marks_partial_flag(self):

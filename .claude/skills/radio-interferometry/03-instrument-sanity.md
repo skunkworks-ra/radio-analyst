@@ -193,7 +193,9 @@ ms_antenna_amp_stats(
 Passing a bright calibrator field keeps runtime under ~1 s and maximizes the
 contrast between healthy antennas and dead/degraded ones. `per_antenna` is
 sorted ascending by `ratio_to_array_median` (each antenna's median baseline
-amplitude divided by `array_median_amp`):
+amplitude divided by `array_median_amp`) and also reports `amp_mad`, `amp_iqr`,
+and `near_zero_fraction` (fraction of unflagged rows at or below
+`near_zero_cutoff_amp`):
 
 | `ratio_to_array_median` | Likely cause | Action |
 |-------------------------|--------------|--------|

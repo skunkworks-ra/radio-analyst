@@ -37,6 +37,8 @@ TOOL_NAME = "ms_antenna_amp_stats"
 
 _ROW_CHUNK = 50_000
 _DEFAULT_MAX_ROWS = 200_000
+_DEFAULT_NEAR_ZERO_RATIO = 0.05
+_NEAR_ZERO_ABS_FLOOR = 1e-6
 
 
 def _resolve_datacolumn(col: str) -> str:
@@ -92,6 +94,7 @@ def summarize_antenna_amplitudes(
     per_ant_total_samples: np.ndarray,
     *,
     strided: bool = False,
+    near_zero_ratio: float = _DEFAULT_NEAR_ZERO_RATIO,
 ) -> dict:
     """
     Pure per-antenna amplitude summary (CASA-free, unit-testable).
@@ -118,14 +121,19 @@ def summarize_antenna_amplitudes(
                     "total_samples": n_tot,
                     "unflagged_fraction": unf_frac,
                     "amp_median": None,
+                    "amp_mad": None,
+                    "amp_iqr": None,
                     "amp_min": None,
                     "amp_max": None,
                     "amp_p95": None,
+                    "vals": vals,
                 }
             )
             continue
 
         med = float(np.median(vals))
+        mad = float(np.median(np.abs(vals - med)))
+        p25, p75, p95 = (float(x) for x in np.percentile(vals, [25, 75, 95]))
         live_medians.append(med)
         raw_records.append(
             {
@@ -136,9 +144,12 @@ def summarize_antenna_amplitudes(
                 "total_samples": n_tot,
                 "unflagged_fraction": unf_frac,
                 "amp_median": med,
+                "amp_mad": mad,
+                "amp_iqr": p75 - p25,
                 "amp_min": float(np.min(vals)),
                 "amp_max": float(np.max(vals)),
-                "amp_p95": float(np.percentile(vals, 95)),
+                "amp_p95": p95,
+                "vals": vals,
             }
         )
 
@@ -146,9 +157,11 @@ def summarize_antenna_amplitudes(
         med_arr = np.asarray(live_medians, dtype=float)
         array_median = float(np.median(med_arr))
         array_mad = float(np.median(np.abs(med_arr - array_median)))
+        near_zero_cutoff = max(_NEAR_ZERO_ABS_FLOOR, float(near_zero_ratio) * array_median)
     else:
         array_median = None
         array_mad = None
+        near_zero_cutoff = None
 
     val_flag = "PARTIAL" if strided else "COMPLETE"
     strided_note = "computed on uniformly strided rows (max_rows cap)" if strided else None
@@ -168,9 +181,12 @@ def summarize_antenna_amplitudes(
                     "amp_median": fmt_field(
                         None, flag="UNAVAILABLE", note="no unflagged parallel-hand visibilities"
                     ),
+                    "amp_mad": fmt_field(None, flag="UNAVAILABLE"),
+                    "amp_iqr": fmt_field(None, flag="UNAVAILABLE"),
                     "amp_min": fmt_field(None, flag="UNAVAILABLE"),
                     "amp_max": fmt_field(None, flag="UNAVAILABLE"),
                     "amp_p95": fmt_field(None, flag="UNAVAILABLE"),
+                    "near_zero_fraction": fmt_field(None, flag="UNAVAILABLE"),
                     "ratio_to_array_median": fmt_field(None, flag="UNAVAILABLE"),
                 }
             )
@@ -179,6 +195,11 @@ def summarize_antenna_amplitudes(
                 (med / array_median) if (array_median is not None and array_median > 0) else None
             )
             ratio_flag = "UNAVAILABLE" if ratio is None else val_flag
+            nz_frac = (
+                float(np.mean(rec["vals"] <= near_zero_cutoff))
+                if near_zero_cutoff is not None
+                else None
+            )
             per_antenna.append(
                 {
                     "antenna_id": rec["antenna_id"],
@@ -188,9 +209,15 @@ def summarize_antenna_amplitudes(
                     "total_samples": rec["total_samples"],
                     "unflagged_fraction": rec["unflagged_fraction"],
                     "amp_median": fmt_field(round(med, 6), flag=val_flag, note=strided_note),
+                    "amp_mad": fmt_field(round(rec["amp_mad"], 6), flag=val_flag),
+                    "amp_iqr": fmt_field(round(rec["amp_iqr"], 6), flag=val_flag),
                     "amp_min": fmt_field(round(rec["amp_min"], 6), flag=val_flag),
                     "amp_max": fmt_field(round(rec["amp_max"], 6), flag=val_flag),
                     "amp_p95": fmt_field(round(rec["amp_p95"], 6), flag=val_flag),
+                    "near_zero_fraction": fmt_field(
+                        round(nz_frac, 6) if nz_frac is not None else None,
+                        flag="UNAVAILABLE" if nz_frac is None else val_flag,
+                    ),
                     "ratio_to_array_median": fmt_field(
                         round(ratio, 6) if ratio is not None else None,
                         flag=ratio_flag,
@@ -213,6 +240,10 @@ def summarize_antenna_amplitudes(
         "n_antennas_with_data": len(live_medians),
         "array_median_amp": round(array_median, 6) if array_median is not None else None,
         "array_mad_amp": round(array_mad, 6) if array_mad is not None else None,
+        "near_zero_ratio": float(near_zero_ratio),
+        "near_zero_cutoff_amp": round(near_zero_cutoff, 6)
+        if near_zero_cutoff is not None
+        else None,
         "per_antenna": per_antenna,
     }
 
@@ -225,6 +256,7 @@ def run(
     datacolumn: str = "DATA",
     exclude_autocorr: bool = True,
     max_rows: int = _DEFAULT_MAX_ROWS,
+    near_zero_ratio: float = _DEFAULT_NEAR_ZERO_RATIO,
 ) -> dict:
     """
     Compute per-antenna parallel-hand visibility amplitude statistics.
@@ -237,9 +269,15 @@ def run(
         datacolumn:       'DATA' (default), 'CORRECTED_DATA', or 'MODEL_DATA'.
         exclude_autocorr: Exclude ANTENNA1 == ANTENNA2 rows (default True).
         max_rows:         Max rows sampled per DATA_DESC_ID (uniform stride above cap).
+        near_zero_ratio:  Fraction of array_median_amp below which a row counts as near-zero
+                          (default 0.05; absolute floor 1e-6).
     """
     if max_rows <= 0:
         raise ComputationError(f"max_rows must be > 0, got {max_rows}", ms_path=ms_path)
+    if near_zero_ratio < 0:
+        raise ComputationError(
+            f"near_zero_ratio must be >= 0, got {near_zero_ratio}", ms_path=ms_path
+        )
     try:
         col_name = _resolve_datacolumn(datacolumn)
     except ValueError as exc:
@@ -408,6 +446,7 @@ def run(
         per_ant_unflagged,
         per_ant_total,
         strided=strided,
+        near_zero_ratio=near_zero_ratio,
     )
 
     if strided:
@@ -442,6 +481,8 @@ def run(
         "n_antennas_with_data": summary["n_antennas_with_data"],
         "array_median_amp": fmt_field(summary["array_median_amp"], flag=arr_flag, note=arr_note),
         "array_mad_amp": fmt_field(summary["array_mad_amp"], flag=arr_flag),
+        "near_zero_ratio": summary["near_zero_ratio"],
+        "near_zero_cutoff_amp": fmt_field(summary["near_zero_cutoff_amp"], flag=arr_flag),
         "per_antenna": summary["per_antenna"],
     }
     return response_envelope(

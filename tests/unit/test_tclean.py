@@ -182,6 +182,44 @@ class TestPbMask:
         assert "mask         =" not in script
         assert any("ignored when usemask='pb'" in w for w in warnings)
 
+    def test_execute_forwards_user_mask_pblimit_and_nsigma(
+        self, tmp_path, real_ms_calibrated, monkeypatch
+    ):
+        import sys
+        import types
+
+        from ms_modify.tclean import run
+
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        captured: dict = {}
+
+        def fake_tclean(**kwargs):
+            captured.update(kwargs)
+            (Path(kwargs["imagename"] + ".image")).mkdir()
+            return {"stopcode": 8}
+
+        fake_mod = types.SimpleNamespace(tclean=fake_tclean)
+        monkeypatch.setitem(sys.modules, "casatasks", fake_mod)
+
+        res = run(
+            real_ms_calibrated,
+            str(workdir / "img"),
+            field="0",
+            workdir=str(workdir),
+            pblimit=0.1,
+            usemask="user",
+            mask=str(workdir / "pybdsf.mask"),
+            nsigma=3.5,
+            execute=True,
+        )
+        assert res["status"] == "ok"
+        assert captured["pblimit"] == 0.1
+        assert captured["usemask"] == "user"
+        assert captured["mask"] == str(workdir / "pybdsf.mask")
+        assert "pbmask" not in captured
+        assert captured["nsigma"] == 3.5
+
 
 class TestCubeArgs:
     def test_cube_args_rendered_for_cube(self, tmp_path, real_ms_calibrated):
