@@ -109,11 +109,35 @@ takes them, in pixels, 0 first). `asp` chooses its own scales but is expensive
 (`ms_tclean` warns): use it last, only when multiscale still leaves extended
 flux in the residual.
 
-**Masking.** `ms_tclean` supports `usemask='pb'` (default) and `usemask='user'`
-with an explicit `mask` path (a hand-made mask or a mask derived from a
-previous image with an external source finder such as PyBDSF). Do **not** use
-CASA's automatic masking (`usemask='auto-multithresh'`): it is slow and
-generates poor masks, and `ms_tclean` rejects it.
+**Masking (two-iteration PyBDSF mask update).** `ms_tclean` supports
+`usemask='pb'` (initial pass) and `usemask='user'` with a native CASA `.mask`
+built by `ms_make_mask` (PyBDSF island detection on the flat-noise `.image`,
+with `PB < pb_level` blanked). Do **not** use CASA's automatic masking
+(`usemask='auto-multithresh'`): it is slow and generates poor masks, and
+`ms_tclean` rejects it.
+
+For continuum target imaging (especially extended sources and mosaics), use at
+most **two mask update iterations**, then stop:
+
+1. **Initial pass (`usemask='pb'`):** Run the first `hogbom` pass
+   (`<name>_hogbom`) with `pblimit=0.1` (on mosaics) and `nsigma=3.0` to produce
+   a flat-noise `<name>_hogbom.image` without cleaning into outer-PB noise.
+2. **Mask iteration 1:** Call `ms_make_mask(image_path=<name>_hogbom.image,
+   mask_path=<name>_r1.mask, workdir={WORKDIR}, pb_level=0.1,
+   png_path=<name>_r1_mask.png, execute=True)` (always pass the flat-noise
+   `.image`, never `.pbcor`). Run Round-1 `multiscale` (`<name>_multiscale_r1`)
+   with `usemask='user'`, `mask=<name>_r1.mask`, `pblimit=0.1`, `nsigma=3.0`.
+3. **Mask iteration 2 (stop here):** Update the mask once from
+   `<name>_multiscale_r1.image`, unioning with Round 1 via `prior_mask`:
+   `ms_make_mask(image_path=<name>_multiscale_r1.image,
+   mask_path=<name>_r2.mask, prior_mask=<name>_r1.mask, workdir={WORKDIR},
+   pb_level=0.1, png_path=<name>_r2_mask.png, execute=True)`. Run the final
+   `multiscale` pass (`<name>_multiscale`) with `usemask='user'`,
+   `mask=<name>_r2.mask`, `pblimit=0.1`, `nsigma=3.0`, `savemodel='modelcolumn'`.
+4. **Stop after 2 mask iterations:** Do not run a 3rd mask update loop. If
+   `ms_make_mask` returns `mask_pixels == 0` (no >5 sigma islands yet), fall
+   back to `usemask='pb'` with `nsigma=3.0` instead of passing an empty mask
+   (which triggers `tclean` `stopcode=7`).
 
 **Primary-beam blanking on mosaics.** On single pointings, `pblimit=-0.1` keeps
 sources in the PB sidelobes unblanked while cleaning inside `pbmask=0.1`. On

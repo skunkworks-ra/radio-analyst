@@ -88,6 +88,7 @@ _RUN_REGISTRY: dict[str, str] = {
     "ms_flag_caltable": "ms_modify.flag_caltable",
     "ms_flag_data": "ms_modify.flag_data",
     "ms_tclean": "ms_modify.tclean",
+    "ms_make_mask": "ms_modify.make_mask",
     "ms_casa_task": "ms_modify.casa_task",
     "ms_casa_tool": "ms_modify.casa_tool",
 }
@@ -112,6 +113,7 @@ _STAGE_TO_TOOL: dict[str, str] = {
     "flag_caltable": "ms_flag_caltable",
     "flag_data": "ms_flag_data",
     "tclean": "ms_tclean",
+    "make_mask": "ms_make_mask",
 }
 
 _MULTI_PRODUCT_STAGES = frozenset({"import_asdm", "preflag", "priorcals", "initial_bandpass"})
@@ -126,6 +128,7 @@ _PRODUCT_SOLVE_STAGES = frozenset(
         "bandpass",
         "fluxscale",
         "polcal",
+        "make_mask",
     }
 )
 _MODEL_STAGES = frozenset({"setjy", "setjy_polcal"})

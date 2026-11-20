@@ -938,7 +938,7 @@ On tool error:
 ## 8b. Write Utilities (ms_modify)
 
 The companion `ms_modify` package **writes** to the MS. It is a full FastMCP
-server in its own right (`ms_modify.server`, port 8001) exposing **19 tools**;
+server in its own right (`ms_modify.server`, port 8001) exposing **20 tools**;
 the same functions are also callable programmatically by skills and scripts
 (e.g. for metadata repair before calibration can proceed).
 
@@ -961,6 +961,7 @@ the same functions are also callable programmatically by skills and scripts
 | `ms_fluxscale` | Bootstrap flux scale from a flux standard |
 | `ms_applycal` | Apply caltables; write CORRECTED_DATA |
 | `ms_tclean` | Generate (and optionally execute) a validated tclean imaging script |
+| `ms_make_mask` | Generate a native CASA `.mask` image from a flat-noise `.image` via PyBDSF island detection (PB-blanked, supports iterative `prior_mask` union) |
 | `ms_casa_task` | Run a CASA task that has no dedicated tool, through the generic guard (outputs in workdir, `.attemptN`, script) |
 | `ms_casa_tool` | Call casatools methods (v1: `table`) for debugging: read-only by default, `allow_write=True` for a deep copy in the workdir and edits to that copy only |
 

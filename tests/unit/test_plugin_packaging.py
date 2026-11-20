@@ -172,7 +172,7 @@ def test_every_skill_has_name_and_description_frontmatter():
 
 def test_documented_tool_counts_match_registrations():
     counts = {server: len(tools) for server, tools in _registered_tools().items()}
-    assert counts == {"ms-inspect": 39, "ms-modify": 19, "ms-create": 4}
+    assert counts == {"ms-inspect": 39, "ms-modify": 20, "ms-create": 4}
     claude_path = REPO_ROOT / "CLAUDE.md"
     assert len(claude_path.read_bytes()) <= 4096
     claude_md = claude_path.read_text()
@@ -384,7 +384,7 @@ def test_all_tools_suppress_output_schema():
 
     ins_tools, mod_tools, crt_tools = asyncio.run(_list_all())
     assert len(ins_tools) == 39
-    assert len(mod_tools) == 19
+    assert len(mod_tools) == 20
     assert len(crt_tools) == 4
     for srv_name, tools in (
         ("ms-inspect", ins_tools),

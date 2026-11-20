@@ -162,6 +162,7 @@ ms_path   = {ms_str!r}
 workdir = {workdir!r}
 
 imagename = {imagename!r}
+_input_mask = os.path.realpath({mask!r}) if ({usemask!r} == "user" and {mask!r}) else None
 
 # Remove existing tclean products for this imagename before re-running.
 # Only known product suffixes are removed — never a bare glob of
@@ -171,6 +172,8 @@ _PRODUCT_SUFFIXES = (
     ".pbcor", ".weight", ".gridwt", ".workdirectory",
 )
 for p in glob.glob(glob.escape(imagename) + ".*"):
+    if _input_mask and os.path.realpath(p) == _input_mask:
+        continue
     rest = p[len(imagename):]
     is_product = any(
         rest == s or rest[: len(s) + 1] == s + "." for s in _PRODUCT_SUFFIXES

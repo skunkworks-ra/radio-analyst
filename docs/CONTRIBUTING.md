@@ -1,6 +1,6 @@
 # Contributing & Developer Reference (`radio-analyst`)
 
-Developer internals, repository layout, environment setup, full 62-tool
+Developer internals, repository layout, environment setup, full 63-tool
 inventory, wire contract, and CASA conventions for `radio-analyst`. Read
 [`CLAUDE.md`](../CLAUDE.md) first for the non-negotiable scientific and tool
 contract.
@@ -14,7 +14,7 @@ radio-analyst/
 ├── CLAUDE.md                      <- always-loaded contract (<= 4 KiB)
 ├── README.md                      <- user/install guide
 ├── docs/
-│   └── CONTRIBUTING.md            <- developer reference & 62-tool inventory
+│   └── CONTRIBUTING.md            <- developer reference & 63-tool inventory
 ├── design_docs/
 │   ├── DESIGN.md                  <- architecture, failure modes, conventions
 │   └── FLUX_STANDARD_DESIGN.md    <- per-field flux standard resolution
@@ -92,7 +92,7 @@ pixi run test-int            # integration tests (RADIO_MCP_TEST_MS or RADIO_MCP
 
 ---
 
-## Full tool inventory (62 tools)
+## Full tool inventory (63 tools)
 
 ### 1. `ms-inspect` -- read-only inspection and diagnostics (39 tools, port 8000)
 
@@ -172,7 +172,7 @@ pixi run test-int            # integration tests (RADIO_MCP_TEST_MS or RADIO_MCP
 
 ---
 
-### 2. `ms-modify` -- calibration, flagging, and imaging (19 tools, port 8001)
+### 2. `ms-modify` -- calibration, flagging, and imaging (20 tools, port 8001)
 
 Every `ms-modify` tool records its action in `<workdir>/stage_log.jsonl`. Script
 generators default to `execute=False`.
@@ -196,6 +196,7 @@ generators default to `execute=False`.
 | `ms_fluxscale` | `ms_modify/fluxscale.py` | Flux-scale bootstrap from reference to transfer fields |
 | `ms_applycal` | `ms_modify/applycal.py` | Apply calibration stack and populate `CORRECTED_DATA` |
 | `ms_tclean` | `ms_modify/tclean.py` | Continuum (`mfs`/`mtmfs`) or frequency-cube (`cube`) `tclean` script generator |
+| `ms_make_mask` | `ms_modify/make_mask.py` | PyBDSF native CASA `.mask` image generator (PB-blanked, supports `prior_mask` union) |
 | `ms_casa_task` | `ms_modify/casa_task.py` | Guarded wrapper for CASA tasks without a dedicated MCP tool |
 | `ms_casa_tool` | `ms_modify/casa_tool.py` | Guarded `casatools` (`table`) debugging inspector (read-only by default) |
 

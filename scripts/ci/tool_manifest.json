@@ -61,7 +61,8 @@
       "ms_bandpass": {"ms_path": "{SMOKE_MS}", "field": "0", "caltable": "/nonexistent/out.b", "workdir": "/nonexistent/workdir"},
       "ms_fluxscale": {"ms_path": "{SMOKE_MS}", "caltable": "/nonexistent/in.g", "fluxtable": "/nonexistent/out.g", "reference": "0", "transfer": ["1"], "workdir": "/nonexistent/workdir"},
       "ms_applycal": {"ms_path": "{SMOKE_MS}", "field": "0", "gaintable": ["/nonexistent/table.g"], "workdir": "/nonexistent/workdir"},
-      "ms_tclean": {"ms_path": "{SMOKE_MS}", "imagename": "/nonexistent/workdir/image", "field": "0", "workdir": "/nonexistent/workdir"}
+      "ms_tclean": {"ms_path": "{SMOKE_MS}", "imagename": "/nonexistent/workdir/image", "field": "0", "workdir": "/nonexistent/workdir"},
+      "ms_make_mask": {"image_path": "/nonexistent/workdir/image.image", "mask_path": "/nonexistent/workdir/image.mask", "workdir": "/nonexistent/workdir"}
     },
     "ms-create": {
       "ms_sdm_summary": {"sdm_path": "/nonexistent/target.asdm"},

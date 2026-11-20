@@ -38,7 +38,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_orchestrator_mcp_schema_diet_under_quarter_of_full_surface():
-    """The 16 MCP tools granted to orchestrate weigh < 25% of the full 62-tool surface."""
+    """The 16 MCP tools granted to orchestrate weigh < 25% of the full 63-tool surface."""
 
     async def _list_all():
         return (
@@ -59,7 +59,7 @@ def test_orchestrator_mcp_schema_diet_under_quarter_of_full_surface():
                 tool.model_dump(exclude_none=True), separators=(",", ":")
             )
 
-    assert len(by_key) == 62
+    assert len(by_key) == 63
     total_bytes = sum(len(s.encode("utf-8")) for s in by_key.values())
 
     import yaml

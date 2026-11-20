@@ -8,6 +8,7 @@ allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
                mcp__plugin_radio-analyst_ms-inspect__ms_baseline_lengths,
                mcp__plugin_radio-analyst_ms-inspect__ms_scan_list,
                mcp__plugin_radio-analyst_ms-inspect__ms_radiometer_estimate,
+               mcp__plugin_radio-analyst_ms-modify__ms_make_mask,
                mcp__plugin_radio-analyst_ms-modify__ms_tclean,
                mcp__plugin_radio-analyst_ms-inspect__ms_image_stats,
                Bash,
@@ -67,18 +68,30 @@ until `status=done`.
      check first), `'wproject'` single-pointing + W, else `'standard'`
    - threshold (Step 7): do NOT clean an unmasked (`usemask='pb'`) dynamic-range-limited mosaic down to `3 * thermal_rms_jy` alone. Use `nsigma=3.0` (or `3.5--5.0` on unmasked mosaics) with `threshold = max(3 * thermal_rms_jy, 3..5 * measured_off_source_rms)` (measured from the first/shallow pass via `ms_image_stats`), and positive `pblimit=0.1` on mosaics. Use `usemask='user'` + `mask=<path>` when a tight external/PyBDSF mask is available; never use `auto-multithresh`.
 
-5. First pass: `ms_tclean(ms_path, imagename=<name>_hogbom, field, stokes,
+5. First pass (initial `usemask='pb'`): `ms_tclean(ms_path, imagename=<name>_hogbom, field, stokes,
    specmode, deconvolver, nterms, gridder, wprojplanes, cell, imsize,
    weighting='briggs', robust=0.5, niter=50000, threshold, nsigma=3.0,
    pblimit=(0.1 if mosaic else -0.1), usemask='pb',
    savemodel='modelcolumn', workdir, execute=False)` -> run.
-   Then step 6 on it (use its `residual_rms_jy` to check/raise the second-pass threshold if unmasked).
+   Then step 6 on it (use its `residual_rms_jy` to check/raise the threshold).
 
-   Second pass: the same call with `imagename=<name>_<deconvolver>`, the
-   second-pass `deconvolver` and `scales` from step 4 (and updated threshold /
-   `nsigma` or `usemask='user', mask=<path>` if an external mask was built) -> run. Then step 6 on it.
-   MODEL_DATA now holds the second-pass model (both calls record automatically in
-   `stage_log.jsonl`).
+   Second pass (two-iteration PyBDSF mask update per 11-imaging.md Step 2; stop after 2 mask updates):
+   - **Mask iteration 1:** `ms_make_mask(image_path=<name>_hogbom.image,
+     mask_path=<name>_r1.mask, workdir=workdir, pb_level=0.1,
+     png_path=<name>_r1_mask.png, execute=True)` (flat-noise `.image`, never `.pbcor`;
+     if `mask_pixels == 0`, skip masking and run `usemask='pb'` with `nsigma=3.0`).
+     Run `ms_tclean(..., imagename=<name>_<deconvolver>_r1, deconvolver=<second-pass>,
+     scales=<scales>, usemask='user', mask=<name>_r1.mask, pblimit=(0.1 if mosaic else -0.1),
+     nsigma=3.0, savemodel='none', execute=False)` -> run.
+   - **Mask iteration 2 (final; stop here):** `ms_make_mask(
+     image_path=<name>_<deconvolver>_r1.image, mask_path=<name>_r2.mask,
+     prior_mask=<name>_r1.mask, workdir=workdir, pb_level=0.1,
+     png_path=<name>_r2_mask.png, execute=True)`.
+     Run `ms_tclean(..., imagename=<name>_<deconvolver>, deconvolver=<second-pass>,
+     scales=<scales>, usemask='user', mask=<name>_r2.mask, pblimit=(0.1 if mosaic else -0.1),
+     nsigma=3.0, savemodel='modelcolumn', execute=False)` -> run. Then step 6 on it.
+   MODEL_DATA now holds the final masked second-pass model (all calls record automatically in
+   `stage_log.jsonl`). Do not run a 3rd mask iteration.
 
 6. `ms_image_stats(imagename.image.pbcor, psf_path=imagename.psf,
    pb_level=abs(pblimit), png_path=imagename.png)` (for mtmfs the image is the

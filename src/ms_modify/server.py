@@ -28,6 +28,7 @@ from ms_modify import (
     initial_bandpass,
     initial_rflag,
     intents,
+    make_mask,
     polcal,
     postcal_flag,
     preflag,
@@ -1937,6 +1938,84 @@ async def ms_tclean(params: TcleanInput) -> ToolResult:
         execute=params.execute,
         debug=params.debug,
         debug_params=params.debug_params,
+    )
+
+
+class MakeMaskInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    image_path: str = Field(
+        ..., description="Path to flat-noise CASA .image (or .image.tt0).", min_length=1
+    )
+    mask_path: str = Field(
+        ..., description="Output path for native CASA .mask image inside workdir.", min_length=1
+    )
+    workdir: str = Field(..., description="Existing working directory.", min_length=1)
+    pb_path: str | None = Field(
+        default=None, description="Optional companion .pb image (auto-inferred if omitted)."
+    )
+    pb_level: float = Field(
+        default=0.1,
+        description="Primary-beam cutoff (default 0.1); pixels with PB < pb_level are blanked.",
+        ge=0.0,
+        lt=1.0,
+    )
+    prior_mask: str | None = Field(
+        default=None,
+        description="Optional previous CASA .mask image to union (OR) with new PyBDSF islands.",
+    )
+    thresh_isl: float = Field(
+        default=3.0, description="PyBDSF island boundary threshold in sigma (default 3.0).", gt=0.0
+    )
+    thresh_pix: float = Field(
+        default=5.0, description="PyBDSF peak threshold in sigma (default 5.0).", gt=0.0
+    )
+    atrous_do: bool = Field(
+        default=False, description="Enable PyBDSF wavelet decomposition for diffuse emission."
+    )
+    adaptive_rms_box: bool = Field(
+        default=False, description="Enable PyBDSF adaptive local RMS box."
+    )
+    png_path: str | None = Field(
+        default=None, description="Optional diagnostic overlay PNG path inside workdir."
+    )
+    execute: bool = Field(
+        default=False,
+        description="False (default) writes script; True builds the native CASA .mask in-process (~0.5 s).",
+    )
+
+
+@mcp.tool(
+    name="ms_make_mask",
+    description=(
+        "Generate a native CASA .mask image from a flat-noise .image using PyBDSF island "
+        "detection (stop_at='isl', PB-blanked to avoid unblanked corner bias). Supports "
+        "iterative mask updates via prior_mask (logical OR) and optional overlay PNG. "
+        "Pass the resulting .mask to ms_tclean(usemask='user', mask=...)."
+    ),
+    annotations={
+        "title": "PyBDSF CASA Mask Generation",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def ms_make_mask(params: MakeMaskInput) -> ToolResult:
+    """Build a native CASA .mask image via PyBDSF island detection."""
+    return await _run_tool(
+        make_mask.run,
+        params.image_path,
+        params.mask_path,
+        params.workdir,
+        pb_path=params.pb_path,
+        pb_level=params.pb_level,
+        prior_mask=params.prior_mask,
+        thresh_isl=params.thresh_isl,
+        thresh_pix=params.thresh_pix,
+        atrous_do=params.atrous_do,
+        adaptive_rms_box=params.adaptive_rms_box,
+        png_path=params.png_path,
+        execute=params.execute,
     )
 
 

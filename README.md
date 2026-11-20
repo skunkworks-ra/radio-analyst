@@ -8,7 +8,7 @@
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 A Claude Code plugin for reducing radio interferometric data with CASA. It
-gives Claude 62 tools across three MCP servers, the reasoning of an
+gives Claude 63 tools across three MCP servers, the reasoning of an
 experienced interferometrist (skills), and step-by-step workflows (slash
 commands) for VLA/JVLA/EVLA, MeerKAT, and uGMRT Measurement Sets, from a raw
 ASDM to a first image.
@@ -103,7 +103,7 @@ the read-only tools.
 **Three servers, by what they can touch:**
 
 - **ms-inspect**: read-only inspection and diagnostics (39 tools).
-- **ms-modify**: flagging, calibration, imaging (19 tools, script-first).
+- **ms-modify**: flagging, calibration, imaging (20 tools, script-first).
 - **ms-create**: ASDM inspection and import, the reduction log and the report (4 tools).
 
 ---
@@ -214,10 +214,10 @@ The per-tool inventory is in [`design_docs/DESIGN.md`](design_docs/DESIGN.md)
   - Imaging and sensitivity (2): radiometer thermal noise estimate, image RMS/peak/dynamic range/beam.
   - Workflow state (1).
   - CASA docs and task/tool specs (3).
-- **ms-modify (19)**: intents, preflag, prior caltables, setjy / pol setjy,
+- **ms-modify (20)**: intents, preflag, prior caltables, setjy / pol setjy,
   initial bandpass, gaincal (incl. KCROSS), bandpass, polcal, fluxscale,
   applycal, residual and post-cal RFI flagging, caltable autoflag, manual flag
-  of a named MS selection, tclean, guarded generic CASA task and tool runners.
+  of a named MS selection, tclean, PyBDSF CASA mask generation, guarded generic CASA task and tool runners.
 - **ms-create (4)**: ASDM summary, ASDM -> MS import, reduction log, report.
 
 ### Environment variables

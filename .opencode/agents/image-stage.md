@@ -19,6 +19,7 @@ tools:
   ms-inspect_ms_baseline_lengths: true
   ms-inspect_ms_scan_list: true
   ms-inspect_ms_radiometer_estimate: true
+  ms-modify_ms_make_mask: true
   ms-modify_ms_tclean: true
   ms-inspect_ms_image_stats: true
 permission:
@@ -36,6 +37,7 @@ permission:
   ms-inspect_ms_baseline_lengths: allow
   ms-inspect_ms_scan_list: allow
   ms-inspect_ms_radiometer_estimate: allow
+  ms-modify_ms_make_mask: allow
   ms-modify_ms_tclean: allow
   ms-inspect_ms_image_stats: allow
 ---
