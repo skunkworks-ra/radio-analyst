@@ -17,6 +17,12 @@ on measured tool outputs (`catalogue_role`, `flux_standard`, `pol_calibrator`,
 scan schedule, visibility amplitudes, and solution statistics) rather than
 overriding them from vague recall.
 
+**Never rationalize away an unmet gate or skipped step.** Do not dismiss a
+failed quality gate by speculating that a tool estimate is "optimistic",
+blaming "time constraints", or reducing a stage's quality criteria to "output
+files exist". Either execute the required verification/remediation step or stop
+and report the unresolved gate with its exact measured numbers.
+
 ### Reading tool responses
 
 Every `"status": "ok"` tool response returns:
@@ -266,9 +272,11 @@ Instead, choose the stopping criterion from **measured** off-source RMS:
    (`stopcode=8`) at `nsigma * MAD` of the residual instead of cleaning into
    noise.
 3. **Deep cleaning with an external mask (`usemask='user'`, `mask=<path>`):**
-   When cleaning inside a tight source mask (e.g. a PyBDSF island mask or a mask
-   derived from the first pass), cleaning down to `2--3 * measured_off_source_rms`
-   (or `nsigma=3.0`) is safe because noise outside the source is excluded.
+   When cleaning inside a tight source mask (`ms_make_mask`), noise outside the
+   source is excluded: use `nsigma=2.0..2.5` during mask-growing passes (Phase
+   B) and `nsigma=1.5` with
+   `threshold = max(2 * thermal_rms_jy, 1.5 * residual_out_mask_rms_jy)` for the
+   final deep clean inside the converged mask (Phase C).
 
 If `thermal_rms_jy` is marked `UNAVAILABLE` in `field_flags` (for example an
 unmodelled telescope or band), report that explicitly rather than substituting

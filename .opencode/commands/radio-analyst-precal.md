@@ -95,7 +95,8 @@ until `status=done`.
    `ms_apply_initial_rflag(calibrators.ms, workdir, field=bp_field, execute=False)` -> run.
 
 10. Final decision gate (Decision gate): call `ms_workflow_status(ms_path, workdir)`
-    and confirm `initial_rflag` is complete (`next_recommended_step == "delay_bandpass_gain"`).
+    and confirm `missing_precal_steps == []` and `next_recommended_step == "delay_bandpass_gain"`.
+    Never conclude pre-calibration while `missing_precal_steps` is non-empty.
     Report go/no-go for full calibration solve.
 
 **Output:** a structured report of each stage's outcome, flagged warnings,

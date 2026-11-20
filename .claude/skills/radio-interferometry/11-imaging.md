@@ -109,35 +109,68 @@ takes them, in pixels, 0 first). `asp` chooses its own scales but is expensive
 (`ms_tclean` warns): use it last, only when multiscale still leaves extended
 flux in the residual.
 
-**Masking (two-iteration PyBDSF mask update).** `ms_tclean` supports
-`usemask='pb'` (initial pass) and `usemask='user'` with a native CASA `.mask`
-built by `ms_make_mask` (PyBDSF island detection on the flat-noise `.image`,
-with `PB < pb_level` blanked). Do **not** use CASA's automatic masking
+**Masking (physics-driven PyBDSF mask-growing + deep-clean loop).** `ms_tclean`
+supports `usemask='pb'` (initial pass) and `usemask='user'` with a native CASA
+`.mask` built by `ms_make_mask` (PyBDSF island detection on the flat-noise
+`.image`, with `PB < pb_level` blanked). Do **not** use CASA's automatic masking
 (`usemask='auto-multithresh'`): it is slow and generates poor masks, and
 `ms_tclean` rejects it.
 
-For continuum target imaging (especially extended sources and mosaics), use at
-most **two mask update iterations**, then stop:
+For continuum target imaging (compact or extended, single-pointing or mosaic),
+separate masking from deep cleaning into three physics-driven phases instead of
+stopping after an arbitrary fixed pass count:
 
-1. **Initial pass (`usemask='pb'`):** Run the first `hogbom` pass
-   (`<name>_hogbom`) with `pblimit=0.1` (on mosaics) and `nsigma=3.0` to produce
-   a flat-noise `<name>_hogbom.image` without cleaning into outer-PB noise.
-2. **Mask iteration 1:** Call `ms_make_mask(image_path=<name>_hogbom.image,
-   mask_path=<name>_r1.mask, workdir={WORKDIR}, pb_level=0.1,
-   png_path=<name>_r1_mask.png, execute=True)` (always pass the flat-noise
-   `.image`, never `.pbcor`). Run Round-1 `multiscale` (`<name>_multiscale_r1`)
-   with `usemask='user'`, `mask=<name>_r1.mask`, `pblimit=0.1`, `nsigma=3.0`.
-3. **Mask iteration 2 (stop here):** Update the mask once from
-   `<name>_multiscale_r1.image`, unioning with Round 1 via `prior_mask`:
-   `ms_make_mask(image_path=<name>_multiscale_r1.image,
-   mask_path=<name>_r2.mask, prior_mask=<name>_r1.mask, workdir={WORKDIR},
-   pb_level=0.1, png_path=<name>_r2_mask.png, execute=True)`. Run the final
-   `multiscale` pass (`<name>_multiscale`) with `usemask='user'`,
-   `mask=<name>_r2.mask`, `pblimit=0.1`, `nsigma=3.0`, `savemodel='modelcolumn'`.
-4. **Stop after 2 mask iterations:** Do not run a 3rd mask update loop. If
-   `ms_make_mask` returns `mask_pixels == 0` (no >5 sigma islands yet), fall
-   back to `usemask='pb'` with `nsigma=3.0` instead of passing an empty mask
-   (which triggers `tclean` `stopcode=7`).
+1. **Phase A -- Initial shallow pass (`usemask='pb'`):** Run the first `hogbom`
+   (or `mtmfs` when `BW/freq > 0.2`) pass (`<name>_hogbom`) with `pblimit=0.1`
+   on mosaics (or `-0.1` single-pointing) and `nsigma=3.5` (`3.0` on compact
+   single pointings) to remove bright sidelobes without cleaning outer-PB noise
+   into a bowl. Call `ms_image_stats` on it.
+2. **Phase B -- Adaptive mask-growing passes (`usemask='user'`, safety cap 4
+   rounds, early stop on convergence):**
+   - Build or update the mask on the flat-noise `.image` (never `.pbcor`) via
+     `ms_make_mask(image_path=<prev>.image, mask_path=<name>_rN.mask,
+     prior_mask=<prev_mask if N>1 else None>, workdir={WORKDIR}, pb_level=0.1,
+     png_path=<name>_rN_mask.png, execute=True)`. If `mask_pixels == 0`, fall
+     back to `usemask='pb'` with `nsigma=3.0` (never pass an empty mask to
+     `tclean`, which triggers `stopcode=7`).
+   - Run `ms_tclean` (`<name>_<deconvolver>_rN`) with `deconvolver='multiscale'`
+     (or `'mtmfs'` with `scales`), `usemask='user'`, `mask=<name>_rN.mask`,
+     `pblimit=(0.1 if mosaic else -0.1)`, and `nsigma=2.5` (or `2.0` once bright
+     sidelobes drop). Why lower than `3.0`: CASA's `nsigma` multiplies the
+     global residual MAD across the whole PB, so unmasked faint emission inflates
+     the MAD and stalls `nsigma=3.0` prematurely; `usemask='user'` already blocks
+     cleaning outside-mask noise.
+   - Call `ms_image_stats` after each pass and inspect `mask_growth_fraction`
+     (from `ms_make_mask`), `residual_out_mask_rms_jy`, and
+     `residual_out_mask_peak_snr`:
+     - **Grow the mask again** (up to round 4) when
+       `residual_out_mask_peak_snr >= 5.0` (real unmasked emission still sits
+       outside the mask) **OR** (`mask_growth_fraction >= 0.10` and
+       `residual_out_mask_rms_jy` dropped by `>= 15%` from the prior pass).
+       If diffuse extended emission still sits outside the mask after 2 standard
+       rounds (`residual_out_mask_peak_snr >= 5.0`), enable `atrous_do=True`
+       and/or relax to `thresh_pix=4.0, thresh_isl=2.5` on the next
+       `ms_make_mask` call to capture low-surface-brightness wings.
+     - **Stop growing the mask** as soon as (`mask_growth_fraction < 0.05` and
+       `residual_out_mask_peak_snr < 5.0`) -- compact point sources finish in
+       1 masked pass -- **OR** `mask_fraction_in_pb > 0.50` (guard against
+       masking noise), **OR** round 4 is reached.
+3. **Phase C -- Deep clean inside the fixed mask (only when needed):**
+   - Once mask growth stops, check the **inside-mask** residuals in
+     `ms_image_stats`. If `residual_in_mask_peak_snr >= 3.5` **OR**
+     `residual_in_to_out_rms_ratio >= 1.5` (the mask covers the source, `tclean`
+     stopped too early inside it), run **one final pass** (`<name>_<deconvolver>`)
+     with the same fixed mask, `nsigma=1.5`,
+     `threshold = max(2 * thermal_rms_jy, 1.5 * residual_out_mask_rms_jy)`, and
+     `savemodel='modelcolumn'`.
+   - If Phase B already converged inside the mask
+     (`residual_in_mask_peak_snr < 3.5` and `residual_in_to_out_rms_ratio < 1.5`),
+     ensure the final converged pass wrote `savemodel='modelcolumn'` (or run it
+     as `<name>_<deconvolver>` with `savemodel='modelcolumn'`). Once both
+     inside-mask and outside-mask residuals are noise-like and flat-noise
+     `negative_to_peak_ratio <= 0.05`, deconvolution is converged; any remaining
+     gap to `thermal_rms_jy` is calibration, residual RFI, dynamic-range/selfcal,
+     or confusion -- not masking.
 
 **Primary-beam blanking on mosaics.** On single pointings, `pblimit=-0.1` keeps
 sources in the PB sidelobes unblanked while cleaning inside `pbmask=0.1`. On
@@ -302,9 +335,11 @@ Instead, choose the stopping criterion from **measured** off-source RMS:
    (`stopcode=8`) at `nsigma * MAD` of the residual instead of cleaning into
    noise.
 3. **Deep cleaning with an external mask (`usemask='user'`, `mask=<path>`):**
-   When cleaning inside a tight source mask (e.g. a PyBDSF island mask or a mask
-   derived from the first pass), cleaning down to `2--3 * measured_off_source_rms`
-   (or `nsigma=3.0`) is safe because noise outside the source is excluded.
+   When cleaning inside a tight source mask (`ms_make_mask`), noise outside the
+   source is excluded: use `nsigma=2.0..2.5` during mask-growing passes (Phase
+   B) and `nsigma=1.5` with
+   `threshold = max(2 * thermal_rms_jy, 1.5 * residual_out_mask_rms_jy)` for the
+   final deep clean inside the converged mask (Phase C).
 
 If `thermal_rms_jy` is marked `UNAVAILABLE` in `field_flags` (for example an
 unmodelled telescope or band), report that explicitly rather than substituting
@@ -392,14 +427,18 @@ ms_image_stats(
 )
 ```
 
-**Which RMS.** Compare `residual_rms_jy` with the radiometer estimate, not
-`rms_jy`. `residual_rms_jy` is measured on the `.residual` where the `.pb` is at
-or above `pb_level`; `rms_region` gives the paths and pixel count, and you
-quote them with the number. `rms_jy` is the whole `.pbcor` plane: towards the
-PB edge the noise is divided by a small gain, so it reads high, and on an
-extended source it also includes source pixels. Always write this in the
-report: "The .pbcor image noise rises toward the PB edge; the RMS quoted is
-from the .residual inside PB >= {pb_level}."
+**Which RMS and bowl metric.** Compare `residual_out_mask_rms_jy` (or
+`residual_rms_jy` when unmasked / `mask_fraction_in_pb == 1.0`) with the
+radiometer estimate, not `rms_jy`. `residual_out_mask_rms_jy` is the robust
+`1.4826 * MAD` of `.residual` **outside `.mask`** and inside `.pb >= pb_level`,
+so uncleaned flux inside the mask does not bias the off-source noise floor.
+`rms_jy` is the whole `.pbcor` plane: towards the PB edge the noise is divided
+by a small gain, so it reads high. Similarly, `negative_to_peak_ratio` is
+measured on the sibling **flat-noise `.image`** (`flat_noise_min_jy` /
+`flat_noise_peak_jy` inside `.pb >= pb_level`) so `1/PB` edge noise
+amplification on `.pbcor` is never mistaken for a negative clean bowl. Always
+write in the report: "The .pbcor image noise rises toward the PB edge; the RMS
+quoted is from the .residual inside PB >= {pb_level}."
 
 **Look at the image (mandatory).** Always open `png_path` with Read on every
 target image before quoting a flux, reporting results, or declaring imaging
@@ -411,20 +450,26 @@ Quality gates:
 
 | Metric | Expected | Action if not met |
 |---|---|---|
-| `residual_rms_jy` | Within 2× of radiometer estimate | > 2×: separate calibration, residual RFI, and imaging causes below; do not ship unresolved |
+| `residual_out_mask_peak_snr` | < 5.0 (masked pass) | >= 5.0: unmasked emission remains outside the mask; grow the mask via `ms_make_mask(..., prior_mask=...)` (enable `atrous_do=True` / lower `thresh_pix=4.0, thresh_isl=2.5` if diffuse) and re-image |
+| `residual_in_mask_peak_snr`, `residual_in_to_out_rms_ratio` | `< 3.5` and `< 1.5` (masked pass) | Above either: mask covers the source but `tclean` stopped early inside it; run Phase C deep clean inside the fixed mask with `nsigma=1.5` and `threshold = max(2 * thermal_rms_jy, 1.5 * residual_out_mask_rms_jy)` |
+| `residual_out_mask_rms_jy` (else `residual_rms_jy`) | Within 2x of `thermal_rms_jy` | > 2x after deconvolution converges: separate calibration, residual RFI, and self-cal/confusion causes below; do not ship unresolved or dismiss `thermal_rms_jy` as "optimistic" without testing a point-source calibrator |
 | `residual_dynamic_range` | > 100 for calibrators; > 20 for typical targets | < 20: imaging artefacts dominant; check PSF sidelobes |
-| `min_jy`, `negative_to_peak_ratio` | `negative_to_peak_ratio` <= 0.05 (Stokes I, inside PB >= `pb_level`) | > 0.05 (severe if > 0.10): negative clean bowl from over-cleaning unmasked noise, too-low threshold, or missing short spacings; verify mask and `nsigma`, re-image with tighter masking/threshold before self-cal or shipping |
+| `flat_noise_min_jy`, `negative_to_peak_ratio` | `negative_to_peak_ratio` <= 0.05 (Stokes I, flat-noise `.image` inside PB >= `pb_level`) | > 0.05 (severe if > 0.10): negative clean bowl from over-cleaning unmasked noise, too-low threshold, or missing short spacings; verify mask and `nsigma`, re-image with tighter masking/threshold before self-cal or shipping |
 | `beam_major_arcsec` | Close to `lambda/max_baseline_m * (180*3600/pi)` | Large deviation: uv coverage gaps or flagging holes |
 | `peak_jy` | Positive, above threshold | Negative peak > rms: clean diverged; reduce gain or niter |
 
-When `residual_rms_jy` exceeds 2x the radiometer estimate (including > 3x), do
-not assume a single cause and do not ship the image unresolved. Separate the
-causes in order: (A) image the phase calibrator as a point-source noise check
-to test calibration quality, (B) inspect target `CORRECTED_DATA` amplitudes vs
-frequency and time for residual RFI and flag if present, and (C) if
-calibration and data are clean, address the imaging gap (masking/negative
-bowls, convergence/deconvolver choice, or phase self-calibration when
-`dynamic_range >= 30` and the model is bowl-free).
+When `residual_out_mask_rms_jy` (or `residual_rms_jy` if unmasked) exceeds 2x
+the radiometer estimate (including > 3x), do not assume a single cause, do not
+dismiss `thermal_rms_jy` as "optimistic", and do not ship the image unresolved.
+First verify deconvolution converged (`residual_out_mask_peak_snr < 5.0`,
+`residual_in_mask_peak_snr < 3.5`, `residual_in_to_out_rms_ratio < 1.5`,
+flat-noise `negative_to_peak_ratio <= 0.05`). Once deconvolution is converged,
+separate the remaining causes in strict order: (A) image the phase calibrator
+as a point-source noise check to empirically test calibration and `thermal_rms_jy`,
+(B) inspect target `CORRECTED_DATA` amplitudes vs frequency and time for
+residual RFI and flag if present, and (C) if calibration and data are clean,
+evaluate phase self-calibration when `dynamic_range >= 30` and the model is
+bowl-free (or document sky confusion / dynamic-range limits).
 
 ### Reading `detection`
 

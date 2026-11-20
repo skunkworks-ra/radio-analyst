@@ -68,43 +68,61 @@ until `status=done`.
      check first), `'wproject'` single-pointing + W, else `'standard'`
    - threshold (Step 7): do NOT clean an unmasked (`usemask='pb'`) dynamic-range-limited mosaic down to `3 * thermal_rms_jy` alone. Use `nsigma=3.0` (or `3.5--5.0` on unmasked mosaics) with `threshold = max(3 * thermal_rms_jy, 3..5 * measured_off_source_rms)` (measured from the first/shallow pass via `ms_image_stats`), and positive `pblimit=0.1` on mosaics. Use `usemask='user'` + `mask=<path>` when a tight external/PyBDSF mask is available; never use `auto-multithresh`.
 
-5. First pass (initial `usemask='pb'`): `ms_tclean(ms_path, imagename=<name>_hogbom, field, stokes,
-   specmode, deconvolver, nterms, gridder, wprojplanes, cell, imsize,
-   weighting='briggs', robust=0.5, niter=50000, threshold, nsigma=3.0,
+5. **Phase A -- Initial shallow pass (`usemask='pb'`):** `ms_tclean(ms_path,
+   imagename=<name>_hogbom, field, stokes, specmode, deconvolver, nterms,
+   gridder, wprojplanes, cell, imsize, weighting='briggs', robust=0.5,
+   niter=50000, threshold, nsigma=(3.5 if mosaic else 3.0),
    pblimit=(0.1 if mosaic else -0.1), usemask='pb',
    savemodel='modelcolumn', workdir, execute=False)` -> run.
    Then step 6 on it (use its `residual_rms_jy` to check/raise the threshold).
 
-   Second pass (two-iteration PyBDSF mask update per 11-imaging.md Step 2; stop after 2 mask updates):
-   - **Mask iteration 1:** `ms_make_mask(image_path=<name>_hogbom.image,
-     mask_path=<name>_r1.mask, workdir=workdir, pb_level=0.1,
-     png_path=<name>_r1_mask.png, execute=True)` (flat-noise `.image`, never `.pbcor`;
-     if `mask_pixels == 0`, skip masking and run `usemask='pb'` with `nsigma=3.0`).
-     Run `ms_tclean(..., imagename=<name>_<deconvolver>_r1, deconvolver=<second-pass>,
-     scales=<scales>, usemask='user', mask=<name>_r1.mask, pblimit=(0.1 if mosaic else -0.1),
-     nsigma=3.0, savemodel='none', execute=False)` -> run.
-   - **Mask iteration 2 (final; stop here):** `ms_make_mask(
-     image_path=<name>_<deconvolver>_r1.image, mask_path=<name>_r2.mask,
-     prior_mask=<name>_r1.mask, workdir=workdir, pb_level=0.1,
-     png_path=<name>_r2_mask.png, execute=True)`.
-     Run `ms_tclean(..., imagename=<name>_<deconvolver>, deconvolver=<second-pass>,
-     scales=<scales>, usemask='user', mask=<name>_r2.mask, pblimit=(0.1 if mosaic else -0.1),
-     nsigma=3.0, savemodel='modelcolumn', execute=False)` -> run. Then step 6 on it.
-   MODEL_DATA now holds the final masked second-pass model (all calls record automatically in
-   `stage_log.jsonl`). Do not run a 3rd mask iteration.
+   **Phase B -- Adaptive PyBDSF mask-growing passes (safety cap 4 rounds, stop
+   early on convergence per 11-imaging.md Step 2):**
+   - For `N = 1..4`: call `ms_make_mask(image_path=<prev>.image,
+     mask_path=<name>_rN.mask, prior_mask=(<name>_r{N-1}.mask if N>1 else None),
+     workdir=workdir, pb_level=abs(pblimit), png_path=<name>_rN_mask.png,
+     execute=True)` (flat-noise `.image`, never `.pbcor`; if `mask_pixels == 0`,
+     fall back to `usemask='pb'` with `nsigma=3.0`).
+     Run `ms_tclean(..., imagename=<name>_<deconvolver>_rN,
+     deconvolver=<second-pass>, scales=<scales>, usemask='user',
+     mask=<name>_rN.mask, pblimit=(0.1 if mosaic else -0.1), nsigma=2.5,
+     savemodel='modelcolumn', execute=False)` -> run, then step 6 on it.
+   - Continue to round `N+1` (up to 4) if `residual_out_mask_peak_snr >= 5.0`
+     OR (`mask_growth_fraction >= 0.10` and `residual_out_mask_rms_jy` dropped
+     by `>= 15%` from the previous round). If diffuse extended emission still
+     sits outside the mask after round 2 (`residual_out_mask_peak_snr >= 5.0`),
+     set `atrous_do=True` and/or `thresh_pix=4.0, thresh_isl=2.5` on the next
+     `ms_make_mask` call.
+   - Stop growing as soon as (`mask_growth_fraction < 0.05` and
+     `residual_out_mask_peak_snr < 5.0`), OR `mask_fraction_in_pb > 0.50`, OR
+     `N == 4`.
+
+   **Phase C -- Deep clean inside the fixed mask (only if inside-mask residuals
+   remain high):**
+   - If `residual_in_mask_peak_snr >= 3.5` OR `residual_in_to_out_rms_ratio >= 1.5`,
+     run one final pass `ms_tclean(..., imagename=<name>_<deconvolver>,
+     deconvolver=<second-pass>, scales=<scales>, usemask='user',
+     mask=<final_mask>, pblimit=(0.1 if mosaic else -0.1), nsigma=1.5,
+     threshold=max(2 * thermal_rms_jy, 1.5 * residual_out_mask_rms_jy),
+     savemodel='modelcolumn', execute=False)` -> run, then step 6 on it.
+   MODEL_DATA now holds the final masked model (all calls record automatically in
+   `stage_log.jsonl`).
 
 6. `ms_image_stats(imagename.image.pbcor, psf_path=imagename.psf,
    pb_level=abs(pblimit), png_path=imagename.png)` (for mtmfs the image is the
    `.tt0` one: use the pbcor name on disk) -- quality metrics (including
-   `residual_rms_jy`, `min_jy`, `negative_to_peak_ratio`, `dynamic_range`);
-   always open `png_path` with Read and report what is visible inside the PB
-   contour.
+   `residual_out_mask_rms_jy`, `residual_out_mask_peak_snr`,
+   `residual_in_mask_peak_snr`, `residual_in_to_out_rms_ratio`,
+   `residual_rms_jy`, `flat_noise_min_jy`, `negative_to_peak_ratio`,
+   `dynamic_range`); always open `png_path` with Read and report what is visible
+   inside the PB contour.
 
-7. Apply 11-imaging.md Step 9 gates to the second-pass image; report the
-   first-pass numbers beside them:
-   - `residual_rms_jy` vs. `thermal_rms_jy` from `ms_radiometer_estimate` (2x tolerance)
+7. Apply 11-imaging.md Step 9 gates to the final masked image; report the
+   first-pass and mask-growth numbers beside them:
+   - `residual_out_mask_rms_jy` (or `residual_rms_jy` if unmasked) vs. `thermal_rms_jy` from `ms_radiometer_estimate` (2x tolerance)
+   - deconvolution convergence: `residual_out_mask_peak_snr` (< 5.0), `residual_in_mask_peak_snr` (< 3.5), `residual_in_to_out_rms_ratio` (< 1.5), `mask_growth_fraction`
    - `residual_dynamic_range` thresholds per field type
-   - `min_jy` and `negative_to_peak_ratio` (Stokes I clean-bowl check inside PB >= `pb_level`)
+   - `flat_noise_min_jy` and `negative_to_peak_ratio` (Stokes I clean-bowl check on flat-noise `.image` inside PB >= `pb_level`)
    - `beam_major_arcsec` vs. `lambda / max_baseline_m * (180*3600/pi)` (20% tolerance)
    - `peak_jy` sanity check
 
@@ -123,9 +141,12 @@ until `status=done`.
    against Quality gates (per-plane) in place of step 7.
 
 **Output:** the derived tclean parameters (including `thermal_rms_jy` from
-`ms_radiometer_estimate`), image and mask paths, `png_path` visual findings,
-and all measured image-quality metrics (`residual_rms_jy`, `rms_jy`, `peak_jy`,
-`min_jy`, `negative_to_peak_ratio`, `residual_dynamic_range`, `dynamic_range`,
-`detection`, restoring beam) compared against Step 9 thresholds. Report numbers
-only -- do not recommend skipping re-imaging, calibration review, or downstream
-stages.
+`ms_radiometer_estimate`), image and mask paths (plus per-round `mask_pixels`
+and `mask_growth_fraction`), `png_path` visual findings, and all measured
+image-quality metrics (`residual_out_mask_rms_jy`, `residual_out_mask_peak_snr`,
+`residual_in_mask_rms_jy`, `residual_in_mask_peak_snr`,
+`residual_in_to_out_rms_ratio`, `residual_rms_jy`, `rms_jy`, `peak_jy`,
+`flat_noise_min_jy`, `negative_to_peak_ratio`, `residual_dynamic_range`,
+`dynamic_range`, `detection`, restoring beam) compared against Step 9
+thresholds. Report numbers only -- do not recommend skipping re-imaging,
+calibration review, or downstream stages.

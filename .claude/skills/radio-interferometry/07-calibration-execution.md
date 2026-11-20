@@ -840,3 +840,12 @@ without it forces a full recalibration from scratch once polcal is added.
 `parang=False`. Precal's initial bandpass bootstrap does not set it, which is fine: its
 tables (`init_gain.g`, `BP0.b`) only drive the residual rflag, and the final
 solves replace them.
+
+---
+
+## Next stage
+
+Once Step 7c target `applycal` completes and `ms_workflow_status` advances past
+`applycal_target`:
+- If polarization calibration is in scope: **Read `09-polcal-execution.md`** before calling `ms_polcal`.
+- Before calling `ms_tclean` for any target or calibrator imaging: **you MUST Read `11-imaging.md`** (never guess `cell`, `imsize`, `gridder`, `threshold`, `nsigma`, `pblimit`, or masking parameters from memory).

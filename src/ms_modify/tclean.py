@@ -362,6 +362,24 @@ def run(
 
         raise ComputationError(f"nsigma must be >= 0, got {nsigma}", ms_path=ms_path)
 
+    if ("," in field or "~" in field) and gridder == "standard":
+        warnings.append(
+            f"Multiple fields ({field!r}) selected with gridder='standard': CASA's "
+            "'standard' gridder does not apply mosaic primary-beam weighting across "
+            "pointings. Use gridder='mosaic' for multi-pointing mosaics (11-imaging.md Step 6)."
+        )
+    if gridder == "mosaic" and pblimit < 0:
+        warnings.append(
+            f"gridder='mosaic' with negative pblimit={pblimit}: low-gain mosaic edges "
+            "remain unblanked and can amplify edge noise. Prefer positive pblimit=0.1 on mosaics."
+        )
+    if usemask == "pb" and nsigma is None and niter > 0:
+        warnings.append(
+            "usemask='pb' without nsigma: cleaning unmasked PB regions down to a low "
+            "threshold can clean into noise and create negative bowls. Consider nsigma=3.0..3.5 "
+            "or a tight mask via ms_make_mask + usemask='user'."
+        )
+
     if gridder in ("wproject", "awp2", "awproject") and wprojplanes is None:
         warnings.append(
             f"gridder='{gridder}' with wprojplanes unset: CASA defaults to "

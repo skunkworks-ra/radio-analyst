@@ -6,8 +6,12 @@ Post-imaging quality metrics from a CASA native image.
 Reads the restored (or pbcor) image and returns:
   - rms_jy:                  robust RMS (1.4826 × MAD, noise estimate)
   - peak_jy:                 peak pixel value
-  - min_jy:                  minimum finite pixel inside sibling .pb >= pb_level (or whole-image fallback)
-  - negative_to_peak_ratio:  abs(min(0, min_jy)) / peak_jy for Stokes I / total intensity
+  - min_jy:                  minimum finite pixel of image_path inside sibling .pb >= pb_level (or whole-image fallback)
+  - flat_noise_peak_jy / flat_noise_min_jy: peak/min on sibling flat-noise .image (inside .pb >= pb_level)
+  - negative_to_peak_ratio:  abs(min(0, flat_noise_min_jy)) / flat_noise_peak_jy for Stokes I / total intensity
+  - mask-partitioned residual metrics inside .pb >= pb_level when sibling (or explicit) .mask exists:
+    mask_pixels, mask_fraction_in_pb, residual_out_mask_{rms_jy,peak_jy,min_jy,peak_snr},
+    residual_in_mask_{rms_jy,peak_jy,peak_snr}, residual_in_to_out_rms_ratio
   - dynamic_range:           abs(peak) / rms
   - beam_major_arcsec, beam_minor_arcsec, beam_pa_deg: restoring beam
 
@@ -416,6 +420,36 @@ def _siblings(image_path: str) -> tuple[Path, Path]:
     return p.parent / f"{name}.residual", p.parent / f"{name}.pb"
 
 
+def _sibling_flat_image(image_path: str) -> Path | None:
+    """Flat-noise .image (or .image.tt0) sibling when image_path is a .pbcor image."""
+    p = Path(image_path).expanduser().resolve()
+    name = p.name
+    for pbcor_suf, flat_suf in ((".image.pbcor.tt0", ".image.tt0"), (".image.pbcor", ".image")):
+        if name.endswith(pbcor_suf):
+            cand = p.parent / f"{name[: -len(pbcor_suf)]}{flat_suf}"
+            return cand if cand.exists() else None
+    return None
+
+
+def _sibling_mask(image_path: str) -> Path | None:
+    """Sibling CASA .mask directory next to an .image / .image.pbcor (including mtmfs .tt0)."""
+    p = Path(image_path).expanduser().resolve()
+    name = p.name
+    for suffix in (".image.pbcor.tt0", ".image.tt0", ".image.pbcor", ".image"):
+        if name.endswith(suffix):
+            base = name[: -len(suffix)]
+            tt = ".tt0" if suffix.endswith(".tt0") else ""
+            candidates = [p.parent / f"{base}.mask"]
+            if tt:
+                candidates.append(p.parent / f"{base}.mask{tt}")
+            for cand in candidates:
+                if cand.exists():
+                    return cand
+            return None
+    cand = p.parent / f"{name}.mask"
+    return cand if cand.exists() else None
+
+
 def _residual_rms(
     image_path: str, pb_level: float, casa_calls: list[str]
 ) -> tuple[float | None, dict, str | None]:
@@ -448,20 +482,27 @@ def _residual_rms(
     return _MAD_TO_SIGMA * mad, region, None
 
 
-def _pb_masked_min(
+def _pb_masked_extrema(
     ia,
     image_path: str,
     pb_level: float,
+    fallback_max: float | None,
     fallback_min: float | None,
     casa_calls: list[str],
     warnings: list[str],
-) -> tuple[float | None, str]:
-    """Minimum finite pixel value inside sibling .pb >= pb_level, else whole-image fallback."""
+    tag: str = "min_jy",
+) -> tuple[float | None, float | None, str]:
+    """(max, min) finite pixel values inside sibling .pb >= pb_level, else whole-image fallback."""
     _, pb_path = _siblings(image_path)
+    img_name = Path(image_path).name
     if not pb_path.exists():
-        if fallback_min is None:
-            return None, "min not returned by ia.statistics() and sibling .pb not found"
-        return fallback_min, "whole-image min (sibling .pb not found)"
+        if fallback_min is None and fallback_max is None:
+            return (
+                None,
+                None,
+                f"extrema not returned by ia.statistics() and {pb_path.name} not found",
+            )
+        return fallback_max, fallback_min, f"whole-image on {img_name} (sibling .pb not found)"
 
     import numpy as np
 
@@ -473,26 +514,248 @@ def _pb_masked_min(
         if pb_bcast is None:
             warnings.append(
                 f"Sibling PB shape {pb_pix.shape} incompatible with image shape "
-                f"{img_pix.shape}; falling back to whole-image min_jy."
+                f"{img_pix.shape}; falling back to whole-image {tag}."
             )
-            if fallback_min is None:
-                return None, "min unavailable (sibling .pb shape mismatch)"
-            return fallback_min, "whole-image min (sibling .pb shape mismatch)"
-        casa_calls.append(
-            f"ia.getchunk() on {Path(image_path).name} where {pb_path.name} >= {pb_level} [min_jy]"
-        )
+            return (
+                fallback_max,
+                fallback_min,
+                f"whole-image on {img_name} (sibling .pb shape mismatch)",
+            )
+        casa_calls.append(f"ia.getchunk() on {img_name} where {pb_path.name} >= {pb_level} [{tag}]")
         vals = img_pix[(pb_bcast >= pb_level) & np.isfinite(img_pix)]
         if vals.size == 0:
-            return None, f"no finite pixels with {pb_path.name} >= {pb_level}"
-        return float(np.min(vals)), f"min pixel inside {pb_path.name} >= {pb_level}"
+            return None, None, f"no finite pixels on {img_name} with {pb_path.name} >= {pb_level}"
+        return (
+            float(np.max(vals)),
+            float(np.min(vals)),
+            f"inside {pb_path.name} >= {pb_level} on {img_name}",
+        )
     except Exception as exc:
         warnings.append(
-            f"Could not apply sibling PB mask ({pb_path.name}) for min_jy: {exc}; "
-            "falling back to whole-image min_jy."
+            f"Could not apply sibling PB mask ({pb_path.name}) for {tag}: {exc}; "
+            f"falling back to whole-image {tag}."
         )
-        if fallback_min is None:
-            return None, f"min unavailable ({exc})"
-        return fallback_min, "whole-image min (sibling .pb read failed)"
+        return fallback_max, fallback_min, f"whole-image on {img_name} (sibling .pb read failed)"
+
+
+def _pb_masked_min(
+    ia,
+    image_path: str,
+    pb_level: float,
+    fallback_min: float | None,
+    casa_calls: list[str],
+    warnings: list[str],
+) -> tuple[float | None, str]:
+    """Minimum finite pixel value inside sibling .pb >= pb_level, else whole-image fallback."""
+    _, min_v, note = _pb_masked_extrema(
+        ia, image_path, pb_level, None, fallback_min, casa_calls, warnings, tag="min_jy"
+    )
+    return min_v, f"min pixel {note}" if min_v is not None else note
+
+
+def _flat_noise_extrema(
+    ia,
+    image_path: str,
+    pb_level: float,
+    primary_max: float | None,
+    primary_min: float | None,
+    primary_note: str,
+    casa_calls: list[str],
+    warnings: list[str],
+) -> tuple[float | None, float | None, str]:
+    """(peak, min, note) on sibling flat-noise .image inside PB >= pb_level, else image_path."""
+    flat_path = _sibling_flat_image(image_path)
+    if flat_path is None:
+        return primary_max, primary_min, primary_note
+
+    try:
+        with open_image(str(flat_path)) as ia_flat:
+            st = ia_flat.statistics()
+            fmax = float(st["max"][0]) if st.get("max") is not None and len(st["max"]) > 0 else None
+            fmin = float(st["min"][0]) if st.get("min") is not None and len(st["min"]) > 0 else None
+            return _pb_masked_extrema(
+                ia_flat,
+                str(flat_path),
+                pb_level,
+                fmax,
+                fmin,
+                casa_calls,
+                warnings,
+                tag="flat_noise",
+            )
+    except Exception as exc:
+        warnings.append(
+            f"Could not read sibling flat-noise image ({flat_path.name}): {exc}; "
+            "falling back to image_path extrema."
+        )
+        return primary_max, primary_min, f"{primary_note} (flat-noise sibling read failed)"
+
+
+def _mask_partitioned_residual_stats(
+    image_path: str,
+    pb_level: float,
+    mask_path: str | None,
+    casa_calls: list[str],
+    warnings: list[str],
+) -> dict:
+    """Residual RMS/peak/SNR split inside vs outside the clean mask within PB >= pb_level."""
+    residual, pb = _siblings(image_path)
+    resolved_mask: Path | None = (
+        Path(mask_path).expanduser().resolve() if mask_path else _sibling_mask(image_path)
+    )
+
+    def _unavailable_all(reason: str) -> dict:
+        keys = (
+            "mask_pixels",
+            "mask_fraction_in_pb",
+            "residual_out_mask_rms_jy",
+            "residual_out_mask_peak_jy",
+            "residual_out_mask_min_jy",
+            "residual_out_mask_peak_snr",
+            "residual_in_mask_rms_jy",
+            "residual_in_mask_peak_jy",
+            "residual_in_mask_peak_snr",
+            "residual_in_to_out_rms_ratio",
+        )
+        return {k: fmt_field(None, flag="UNAVAILABLE", note=reason) for k in keys}
+
+    if resolved_mask is None or not resolved_mask.exists():
+        reason = f"mask_path not found: {mask_path}" if mask_path else "sibling .mask not found"
+        return _unavailable_all(reason)
+
+    missing = [str(x.name) for x in (residual, pb) if not x.exists()]
+    if missing:
+        return _unavailable_all(f"sibling image not found: {', '.join(missing)}")
+
+    import numpy as np
+
+    try:
+        with open_image(str(pb)) as ia_pb:
+            pb_pix = np.asarray(ia_pb.getchunk(), dtype=float)
+        with open_image(str(residual)) as ia_res:
+            res_pix = np.asarray(ia_res.getchunk(), dtype=float)
+        with open_image(str(resolved_mask)) as ia_msk:
+            msk_pix = np.asarray(ia_msk.getchunk(), dtype=float)
+    except Exception as exc:
+        warnings.append(f"Could not read mask-partitioned residual images: {exc}")
+        return _unavailable_all(f"read failed: {exc}")
+
+    pb_bcast = _broadcast_pb(pb_pix, res_pix.shape)
+    msk_bcast = _broadcast_pb(msk_pix, res_pix.shape)
+    if pb_bcast is None or msk_bcast is None:
+        reason = (
+            f"shape mismatch: residual {res_pix.shape}, pb {pb_pix.shape}, mask {msk_pix.shape}"
+        )
+        warnings.append(f"Mask-partitioned residual stats skipped ({reason}).")
+        return _unavailable_all(reason)
+
+    casa_calls.append(
+        f"ia.getchunk() on {residual.name} partitioned by {resolved_mask.name} "
+        f"where {pb.name} >= {pb_level}"
+    )
+
+    valid = (pb_bcast >= pb_level) & np.isfinite(res_pix)
+    n_valid = int(valid.sum())
+    if n_valid == 0:
+        return _unavailable_all(f"no finite pixels with {pb.name} >= {pb_level}")
+
+    msk_bool = np.nan_to_num(msk_bcast, nan=0.0) > 0.5
+    in_vals = res_pix[valid & msk_bool]
+    out_vals = res_pix[valid & ~msk_bool]
+    n_in = int(in_vals.size)
+    n_out = int(out_vals.size)
+
+    mask_frac = round(n_in / n_valid, 6)
+
+    out_rms: float | None = None
+    out_peak: float | None = None
+    out_min: float | None = None
+    out_peak_snr: float | None = None
+    if n_out > 0:
+        out_med = float(np.median(out_vals))
+        out_rms = _MAD_TO_SIGMA * float(np.median(np.abs(out_vals - out_med)))
+        out_peak = float(np.max(out_vals))
+        out_min = float(np.min(out_vals))
+        if out_rms > 0:
+            out_peak_snr = out_peak / out_rms
+
+    in_rms: float | None = None
+    in_peak: float | None = None
+    in_peak_snr: float | None = None
+    in_to_out_ratio: float | None = None
+    if n_in > 0:
+        in_rms = float(np.sqrt(np.mean(in_vals * in_vals)))
+        in_peak = float(np.max(np.abs(in_vals)))
+        if out_rms is not None and out_rms > 0:
+            in_peak_snr = in_peak / out_rms
+            in_to_out_ratio = in_rms / out_rms
+
+    mask_label = resolved_mask.name
+    out_note = (
+        f"1.4826 x MAD of {residual.name} outside {mask_label} where {pb.name} >= {pb_level}"
+        if out_rms is not None
+        else f"no pixels outside {mask_label} with {pb.name} >= {pb_level}"
+    )
+    in_note = (
+        f"RMS (sqrt(mean(x^2))) of {residual.name} inside {mask_label} where {pb.name} >= {pb_level}"
+        if in_rms is not None
+        else f"no pixels inside {mask_label} with {pb.name} >= {pb_level}"
+    )
+
+    return {
+        "mask_pixels": fmt_field(
+            n_in, note=f"masked pixels inside {pb.name} >= {pb_level} ({mask_label})"
+        ),
+        "mask_fraction_in_pb": fmt_field(
+            mask_frac, note=f"{n_in} / {n_valid} pixels inside {pb.name} >= {pb_level}"
+        ),
+        "residual_out_mask_rms_jy": fmt_field(
+            round(out_rms, 9) if out_rms is not None else None,
+            flag="COMPLETE" if out_rms is not None else "UNAVAILABLE",
+            note=out_note,
+        ),
+        "residual_out_mask_peak_jy": fmt_field(
+            round(out_peak, 9) if out_peak is not None else None,
+            flag="COMPLETE" if out_peak is not None else "UNAVAILABLE",
+            note=f"max positive pixel outside {mask_label}" if out_peak is not None else out_note,
+        ),
+        "residual_out_mask_min_jy": fmt_field(
+            round(out_min, 9) if out_min is not None else None,
+            flag="COMPLETE" if out_min is not None else "UNAVAILABLE",
+            note=f"min pixel outside {mask_label}" if out_min is not None else out_note,
+        ),
+        "residual_out_mask_peak_snr": fmt_field(
+            round(out_peak_snr, 2) if out_peak_snr is not None else None,
+            flag="COMPLETE" if out_peak_snr is not None else "UNAVAILABLE",
+            note="residual_out_mask_peak_jy / residual_out_mask_rms_jy"
+            if out_peak_snr is not None
+            else "outside-mask RMS unavailable or zero",
+        ),
+        "residual_in_mask_rms_jy": fmt_field(
+            round(in_rms, 9) if in_rms is not None else None,
+            flag="COMPLETE" if in_rms is not None else "UNAVAILABLE",
+            note=in_note,
+        ),
+        "residual_in_mask_peak_jy": fmt_field(
+            round(in_peak, 9) if in_peak is not None else None,
+            flag="COMPLETE" if in_peak is not None else "UNAVAILABLE",
+            note=f"max(|residual|) inside {mask_label}" if in_peak is not None else in_note,
+        ),
+        "residual_in_mask_peak_snr": fmt_field(
+            round(in_peak_snr, 2) if in_peak_snr is not None else None,
+            flag="COMPLETE" if in_peak_snr is not None else "UNAVAILABLE",
+            note="residual_in_mask_peak_jy / residual_out_mask_rms_jy"
+            if in_peak_snr is not None
+            else "inside-mask peak or outside-mask RMS unavailable",
+        ),
+        "residual_in_to_out_rms_ratio": fmt_field(
+            round(in_to_out_ratio, 3) if in_to_out_ratio is not None else None,
+            flag="COMPLETE" if in_to_out_ratio is not None else "UNAVAILABLE",
+            note="residual_in_mask_rms_jy / residual_out_mask_rms_jy"
+            if in_to_out_ratio is not None
+            else "inside-mask or outside-mask RMS unavailable",
+        ),
+    }
 
 
 def _write_png(image_path: str, png_path: str, pb_level: float) -> str:
@@ -536,6 +799,7 @@ def run(
     psf_path: str | None = None,
     pb_level: float = 0.1,
     png_path: str | None = None,
+    mask_path: str | None = None,
 ) -> dict:
     """
     Compute quality metrics for a CASA image.
@@ -591,8 +855,23 @@ def run(
         )
         single_stokes = _single_plane_stokes(ia)
         peak_val = _select_peak(max_val, min_val, single_stokes)
-        min_jy_val, min_jy_note = _pb_masked_min(
-            ia, image_path, pb_level, min_val, casa_calls, warnings
+        pb_max_val, min_jy_val, extrema_note = _pb_masked_extrema(
+            ia, image_path, pb_level, max_val, min_val, casa_calls, warnings, tag="min_jy"
+        )
+        min_jy_note = (
+            f"whole-image min ({extrema_note})"
+            if extrema_note.startswith("whole-image")
+            else (f"min pixel {extrema_note}" if min_jy_val is not None else extrema_note)
+        )
+        flat_peak_val, flat_min_val, flat_note = _flat_noise_extrema(
+            ia,
+            image_path,
+            pb_level,
+            pb_max_val,
+            min_jy_val,
+            extrema_note,
+            casa_calls,
+            warnings,
         )
 
         # Beam from image header.
@@ -640,15 +919,15 @@ def run(
             if single_stokes in _SIGNED_STOKES
             else "not defined across multi-Stokes image containing signed Q/U/V"
         )
-    elif min_jy_val is None:
+    elif flat_min_val is None:
         neg_to_peak = None
-        neg_to_peak_note = "min_jy unavailable"
-    elif peak_val <= 0:
+        neg_to_peak_note = "flat_noise_min_jy unavailable"
+    elif flat_peak_val is None or flat_peak_val <= 0:
         neg_to_peak = None
-        neg_to_peak_note = "peak_jy <= 0"
+        neg_to_peak_note = "flat_noise_peak_jy <= 0"
     else:
-        neg_to_peak = abs(min(0.0, min_jy_val)) / peak_val
-        neg_to_peak_note = "abs(min(0, min_jy)) / peak_jy"
+        neg_to_peak = abs(min(0.0, flat_min_val)) / flat_peak_val
+        neg_to_peak_note = f"abs(min(0, flat_noise_min_jy)) / flat_noise_peak_jy ({flat_note})"
 
     # ------------------------------------------------------------------
     # Build response
@@ -661,6 +940,16 @@ def run(
             round(min_jy_val, 9) if min_jy_val is not None else None,
             flag="COMPLETE" if min_jy_val is not None else "UNAVAILABLE",
             note=min_jy_note,
+        ),
+        "flat_noise_peak_jy": fmt_field(
+            round(flat_peak_val, 9) if flat_peak_val is not None else None,
+            flag="COMPLETE" if flat_peak_val is not None else "UNAVAILABLE",
+            note=f"peak pixel {flat_note}" if flat_peak_val is not None else flat_note,
+        ),
+        "flat_noise_min_jy": fmt_field(
+            round(flat_min_val, 9) if flat_min_val is not None else None,
+            flag="COMPLETE" if flat_min_val is not None else "UNAVAILABLE",
+            note=f"min pixel {flat_note}" if flat_min_val is not None else flat_note,
         ),
         "negative_to_peak_ratio": fmt_field(
             round(neg_to_peak, 4) if neg_to_peak is not None else None,
@@ -699,6 +988,9 @@ def run(
         note="peak_jy / residual_rms_jy",
     )
     data["rms_region"] = fmt_field(region)
+    data.update(
+        _mask_partitioned_residual_stats(image_path, pb_level, mask_path, casa_calls, warnings)
+    )
 
     if png_path:
         try:

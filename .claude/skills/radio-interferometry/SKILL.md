@@ -30,6 +30,12 @@ on measured tool outputs (`catalogue_role`, `flux_standard`, `pol_calibrator`,
 scan schedule, visibility amplitudes, and solution statistics) rather than
 overriding them from vague recall.
 
+**Never rationalize away an unmet gate or skipped step.** Do not dismiss a
+failed quality gate by speculating that a tool estimate is "optimistic",
+blaming "time constraints", or reducing a stage's quality criteria to "output
+files exist". Either execute the required verification/remediation step or stop
+and report the unresolved gate with its exact measured numbers.
+
 ### Reading tool responses
 
 Every `"status": "ok"` tool response returns:

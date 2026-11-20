@@ -555,3 +555,132 @@ class TestMinJyAndNegativeBowl:
         assert res["data"]["negative_to_peak_ratio"]["value"] is None
         assert res["data"]["negative_to_peak_ratio"]["flag"] == "UNAVAILABLE"
         assert "multi-Stokes" in res["data"]["negative_to_peak_ratio"]["note"]
+
+    def test_pbcor_uses_sibling_flat_noise_image_for_negative_to_peak_ratio(self, tmp_path):
+        import numpy as np
+
+        from ms_inspect.tools import image_stats
+
+        # .pbcor has 10x PB-edge noise spike (-0.04 Jy -> 0.20 ratio on pbcor)
+        pbcor = np.zeros((32, 32, 1, 1), dtype=float)
+        pbcor[20, 20, 0, 0] = 0.20
+        pbcor[17, 17, 0, 0] = -0.04  # at PB=0.12 edge
+
+        # Flat-noise .image has peak 0.20 Jy and real min -0.0018 Jy -> true bowl = 0.009
+        flat = np.zeros((32, 32, 1, 1), dtype=float)
+        flat[20, 20, 0, 0] = 0.20
+        flat[22, 22, 0, 0] = -0.0018
+
+        pb = np.full((32, 32, 1, 1), 0.02, dtype=float)
+        pb[16:, :, :, :] = 0.8
+        pb[17, 17, 0, 0] = 0.12
+
+        pbcor_dir = tmp_path / "target.image.pbcor"
+        flat_dir = tmp_path / "target.image"
+        pb_dir = tmp_path / "target.pb"
+        for d in (pbcor_dir, flat_dir, pb_dir):
+            d.mkdir()
+
+        ia_pbcor = MagicMock()
+        ia_pbcor.shape.return_value = list(pbcor.shape)
+        ia_pbcor.coordsys.return_value = self._mock_csys(["I"])
+        ia_pbcor.statistics.side_effect = [
+            {"medabsdevmed": [0.001]},
+            {"max": [0.20], "min": [-0.04], "rms": [0.005]},
+        ]
+        ia_pbcor.getchunk.return_value = pbcor
+        ia_pbcor.restoringbeam.return_value = self._beam()
+
+        ia_flat = MagicMock()
+        ia_flat.statistics.return_value = {"max": [0.20], "min": [-0.0018]}
+        ia_flat.getchunk.return_value = flat
+
+        ia_pb = MagicMock()
+        ia_pb.getchunk.return_value = pb
+
+        def fake_open(path):
+            name = Path(path).name
+            cm = MagicMock()
+            if name == "target.pb":
+                cm.__enter__.return_value = ia_pb
+            elif name == "target.image":
+                cm.__enter__.return_value = ia_flat
+            else:
+                cm.__enter__.return_value = ia_pbcor
+            return cm
+
+        with patch.object(image_stats, "open_image", side_effect=fake_open):
+            res = image_stats.run(str(pbcor_dir), pb_level=0.1)
+
+        d = res["data"]
+        assert d["min_jy"]["value"] == pytest.approx(-0.04)
+        assert d["flat_noise_min_jy"]["value"] == pytest.approx(-0.0018)
+        assert d["flat_noise_peak_jy"]["value"] == pytest.approx(0.20)
+        assert d["negative_to_peak_ratio"]["value"] == pytest.approx(0.009)
+        assert "target.image" in d["negative_to_peak_ratio"]["note"]
+        assert d["mask_pixels"]["flag"] == "UNAVAILABLE"
+
+    def test_mask_partitioned_residual_stats_separates_in_and_out_of_mask(self, tmp_path):
+        import numpy as np
+
+        from ms_inspect.tools import image_stats
+
+        rng = np.random.default_rng(7)
+        pb = np.zeros((64, 64, 1, 1), dtype=float)
+        pb[16:48, 16:48, 0, 0] = 0.8  # 1024 valid PB pixels
+
+        mask = np.zeros((64, 64, 1, 1), dtype=float)
+        mask[28:36, 28:36, 0, 0] = 1.0  # 64 masked pixels (6.25% of PB)
+
+        res_arr = rng.normal(0.0, 0.001, (64, 64, 1, 1))
+        # Plant uncleaned inside-mask flux (+0.010 Jy ~ 10 sigma)
+        res_arr[30:34, 30:34, 0, 0] = 0.010
+        # Plant unmasked outside-mask compact source (+0.008 Jy ~ 8 sigma)
+        res_arr[20, 20, 0, 0] = 0.008
+        # Plant loud edge outside PB (must be ignored)
+        res_arr[0, 0, 0, 0] = 5.0
+
+        pbcor_dir = tmp_path / "src.image.pbcor"
+        res_dir = tmp_path / "src.residual"
+        pb_dir = tmp_path / "src.pb"
+        msk_dir = tmp_path / "src.mask"
+        for d in (pbcor_dir, res_dir, pb_dir, msk_dir):
+            d.mkdir()
+
+        arrays = {
+            "src.residual": res_arr,
+            "src.pb": pb,
+            "src.mask": mask,
+        }
+
+        def fake_open(path):
+            ia = MagicMock()
+            ia.getchunk.return_value = arrays[Path(path).name]
+            cm = MagicMock()
+            cm.__enter__.return_value = ia
+            return cm
+
+        with patch.object(image_stats, "open_image", side_effect=fake_open):
+            out = image_stats._mask_partitioned_residual_stats(
+                str(pbcor_dir), pb_level=0.1, mask_path=None, casa_calls=[], warnings=[]
+            )
+
+        assert out["mask_pixels"]["value"] == 64
+        assert out["mask_fraction_in_pb"]["value"] == pytest.approx(64 / 1024, rel=1e-4)
+        assert 0.0008 < out["residual_out_mask_rms_jy"]["value"] < 0.0012
+        assert out["residual_out_mask_peak_jy"]["value"] == pytest.approx(0.008)
+        assert 6.5 < out["residual_out_mask_peak_snr"]["value"] < 10.0
+        assert out["residual_in_mask_peak_jy"]["value"] == pytest.approx(0.010)
+        assert out["residual_in_mask_peak_snr"]["value"] > 8.0
+        assert out["residual_in_to_out_rms_ratio"]["value"] > 4.0
+
+    def test_sibling_mask_and_flat_image_mtmfs(self, tmp_path):
+        from ms_inspect.tools.image_stats import _sibling_flat_image, _sibling_mask
+
+        pbcor = tmp_path / "wb.image.pbcor.tt0"
+        flat = tmp_path / "wb.image.tt0"
+        msk = tmp_path / "wb.mask"
+        for d in (pbcor, flat, msk):
+            d.mkdir()
+        assert _sibling_flat_image(str(pbcor)) == flat
+        assert _sibling_mask(str(pbcor)) == msk

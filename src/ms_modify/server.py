@@ -1854,8 +1854,9 @@ class TcleanInput(BaseModel):
     name="ms_tclean",
     description=(
         "First-pass imaging: generate (or execute) a tclean script. "
-        "pbcor=True always. savemodel='modelcolumn' for self-cal readiness. "
-        "Validates CORRECTED_DATA exists in the MS."
+        "Follow 11-imaging.md (derive cell/imsize/gridder/threshold from "
+        "ms_baseline_lengths + ms_radiometer_estimate; use ms_make_mask for masked "
+        "continuum cleaning). pbcor=True always. savemodel='modelcolumn' for self-cal."
     ),
     annotations={
         "title": "First-Pass Imaging",

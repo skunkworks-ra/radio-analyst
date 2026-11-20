@@ -95,8 +95,47 @@ class TestRunScriptGeneration:
         assert "pb_level = 0.15" in script
         assert f"prior_mask_path = {str(prior.resolve())!r}" in script
         assert "_record_stage(" in script
+        assert '"new_mask_pixels": new_mask_px' in script
+        assert '"mask_growth_fraction": mask_growth_frac' in script
         # Script must be valid Python
         compile(script, data["script_path"]["value"], "exec")
+
+    def test_execute_returns_new_mask_pixels_and_growth_fraction(self, tmp_path, monkeypatch):
+        wd = tmp_path / "work"
+        wd.mkdir()
+        img = wd / "src.image"
+        prior = wd / "src_r1.mask"
+        img.mkdir()
+        prior.mkdir()
+
+        def fake_exec(**kwargs):
+            Path(kwargs["mask_str"]).mkdir(parents=True, exist_ok=True)
+            return {
+                "n_islands": 2,
+                "clipped_rms_jy": 0.001,
+                "mask_pixels": 3000,
+                "pb_pixels": 50000,
+                "mask_fraction_in_pb": 0.06,
+                "prior_mask_pixels": 2000,
+                "new_mask_pixels": 1000,
+                "mask_growth_fraction": 0.5,
+            }
+
+        import ms_modify.make_mask as mm
+
+        monkeypatch.setattr(mm, "_execute_make_mask", fake_exec)
+        res = run(
+            str(img),
+            str(wd / "src_r2.mask"),
+            str(wd),
+            prior_mask=str(prior),
+            execute=True,
+        )
+        d = res["data"]
+        assert d["prior_mask_pixels"]["value"] == 2000
+        assert d["new_mask_pixels"]["value"] == 1000
+        assert d["mask_growth_fraction"]["value"] == pytest.approx(0.5)
+        assert d["mask_growth_fraction"]["flag"] == "COMPLETE"
 
     def test_pbcor_input_emits_warning(self, tmp_path):
         wd = tmp_path / "work"

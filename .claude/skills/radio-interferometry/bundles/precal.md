@@ -17,6 +17,12 @@ on measured tool outputs (`catalogue_role`, `flux_standard`, `pol_calibrator`,
 scan schedule, visibility amplitudes, and solution statistics) rather than
 overriding them from vague recall.
 
+**Never rationalize away an unmet gate or skipped step.** Do not dismiss a
+failed quality gate by speculating that a tool estimate is "optimistic",
+blaming "time constraints", or reducing a stage's quality criteria to "output
+files exist". Either execute the required verification/remediation step or stop
+and report the unresolved gate with its exact measured numbers.
+
 ### Reading tool responses
 
 Every `"status": "ok"` tool response returns:
@@ -69,10 +75,15 @@ script path without regenerating it.
 
 ## Mandatory completion checklist
 
-**Pre-calibration is NOT complete after `ms_setjy`.** Stopping after `ms_setjy` leaves
-statistical RFI on `calibrators.ms` unflagged and leaves `BP0.b` / `init_gain.g` unwritten.
-Pre-calibration is complete **only** when every step below has executed (`rc=0`) on
-`calibrators.ms` and passed its check:
+**Pre-calibration is NOT complete after `ms_setjy`.** Do **not** confuse
+`ms_apply_preflag` (`tfcrop` on raw uncalibrated `DATA`) with residual
+statistical RFI flagging (`ms_apply_initial_rflag` on `CORRECTED - MODEL` after
+`ms_initial_bandpass`). Even if a request summarizes pre-calibration as
+"statistical flagging, calibrator split, and flux model population", stopping
+after `ms_setjy` leaves statistical RFI on `calibrators.ms` unflagged and
+leaves `BP0.b` / `init_gain.g` unwritten. Pre-calibration is complete **only**
+when every step below has executed (`rc=0`) on `calibrators.ms` and passed its
+check:
 
 1. `ms_set_intents` (if intents are missing)
 2. `ms_apply_preflag` -> splits `calibrators.ms`
@@ -82,7 +93,7 @@ Pre-calibration is complete **only** when every step below has executed (`rc=0`)
 6. **`ms_initial_bandpass` on `calibrators.ms` -> run** (produces `init_gain.g`, `BP0.b`, and populates `CORRECTED_DATA` on `bp_field`)
 7. `ms_verify_model(calibrators.ms, field=bp_field)`
 8. **`ms_apply_initial_rflag` on `calibrators.ms` -> run** (flags statistical RFI on `CORRECTED - MODEL` residuals)
-9. Final `ms_workflow_status(ms_path, workdir)` confirms `initial_rflag` is done (`next_recommended_step == 'delay_bandpass_gain'`).
+9. Final `ms_workflow_status(ms_path, workdir)` confirms `missing_precal_steps == []` and `next_recommended_step == 'delay_bandpass_gain'`. **Never conclude or summarize pre-calibration while `missing_precal_steps` is non-empty or `next_recommended_step` is earlier than `'delay_bandpass_gain'`.**
 
 ---
 

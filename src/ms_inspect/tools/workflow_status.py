@@ -44,6 +44,8 @@ _IMPORT = "import_asdm"
 _INTENTS = "set_intents"
 _PREFLAG = "preflag"
 _PRIORCALS = "priorcals"
+_SETJY = "setjy"
+_SETJY_POLCAL = "setjy_polcal"
 _INITIAL_BANDPASS = "initial_bandpass"
 _INITIAL_RFLAG = "initial_rflag"
 _APPLYCAL = "applycal"
@@ -209,9 +211,24 @@ def run(ms_path: str, workdir: str, stokes: str = "I") -> dict:
     # A failed probe stops the derivation there rather than falling through:
     # below a failed probe every later answer would be inferred from an unknown.
     final_solves_done = [s for s in _FINAL_SOLVES if s in done]
+    setjy_done = (_SETJY in done) or (_SETJY_POLCAL in done)
     target_applied = _target_applied(entries, p)
     pol_solves_done, pol_applied_target, unkeyed = _pol_state(entries, p)
     pol_solved = _POL_KCROSS in pol_solves_done and _POL_DTERMS in pol_solves_done
+
+    missing_precal_steps: list[str] = []
+    if _INTENTS not in done and intents_populated is False:
+        missing_precal_steps.append("set_intents")
+    if _PREFLAG not in done or (not calibrators_ms_present and _PRIORCALS not in done):
+        missing_precal_steps.append("preflag")
+    if _PRIORCALS not in done:
+        missing_precal_steps.append("priorcals")
+    if not setjy_done and _INITIAL_BANDPASS not in done:
+        missing_precal_steps.append("setjy")
+    if _INITIAL_BANDPASS not in done:
+        missing_precal_steps.append("initial_bandpass")
+    if _INITIAL_RFLAG not in done or corrected_calibrators is False:
+        missing_precal_steps.append("initial_rflag")
 
     if _IMPORT not in done and not ms_valid:
         next_step = _IMPORT
@@ -223,6 +240,8 @@ def run(ms_path: str, workdir: str, stokes: str = "I") -> dict:
         next_step = "apply_preflag"
     elif _PRIORCALS not in done:
         next_step = "generate_priorcals"
+    elif not setjy_done and _INITIAL_BANDPASS not in done:
+        next_step = "setjy"
     elif _INITIAL_BANDPASS not in done:
         next_step = _INITIAL_BANDPASS
     elif corrected_calibrators is None:
@@ -316,6 +335,7 @@ def run(ms_path: str, workdir: str, stokes: str = "I") -> dict:
             if corrected_calibrators is None
             else field(corrected_calibrators)
         ),
+        "missing_precal_steps": missing_precal_steps,
         "final_solves_completed": final_solves_done,
         "stokes": stokes,
         "workdir": str(wd),

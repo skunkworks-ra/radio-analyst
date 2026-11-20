@@ -244,7 +244,33 @@ def test_final_solves_advance_once_corrected_and_flagged(fake_ms, monkeypatch):
     monkeypatch.setattr(workflow_status, "open_table", _open)
     _log(workdir, "set_intents", "preflag", "priorcals", "initial_bandpass", "initial_rflag")
 
-    assert _run(ms, workdir)["data"]["next_recommended_step"] == "delay_bandpass_gain"
+    res = _run(ms, workdir)
+    assert res["data"]["next_recommended_step"] == "delay_bandpass_gain"
+    assert res["data"]["missing_precal_steps"] == []
+
+
+def test_precal_missing_steps_track_setjy_initial_bandpass_and_initial_rflag(fake_ms, monkeypatch):
+    ms, workdir = fake_ms
+    cal_ms = workdir / "calibrators.ms"
+    cal_ms.mkdir()
+    (cal_ms / "table.info").write_text("Type = Measurement Set\n")
+    (ms / "STATE").mkdir()
+
+    def _open(path, *_args, **_kwargs):
+        if path.endswith("/STATE"):
+            return _table(nrows=3, colnames=[])
+        return _table(colnames=["DATA"])
+
+    monkeypatch.setattr(workflow_status, "open_table", _open)
+    _log(workdir, "set_intents", "preflag", "priorcals")
+    r1 = _run(ms, workdir)["data"]
+    assert r1["next_recommended_step"] == "setjy"
+    assert r1["missing_precal_steps"] == ["setjy", "initial_bandpass", "initial_rflag"]
+
+    _log(workdir, "setjy")
+    r2 = _run(ms, workdir)["data"]
+    assert r2["next_recommended_step"] == "initial_bandpass"
+    assert r2["missing_precal_steps"] == ["initial_bandpass", "initial_rflag"]
 
 
 # ---------------------------------------------------------------------------

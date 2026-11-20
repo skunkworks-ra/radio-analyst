@@ -182,6 +182,39 @@ class TestPbMask:
         assert "mask         =" not in script
         assert any("ignored when usemask='pb'" in w for w in warnings)
 
+    def test_operational_guardrail_warnings(self, tmp_path, real_ms_calibrated):
+        from ms_modify.tclean import run
+
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        res = run(
+            real_ms_calibrated,
+            str(workdir / "mosaic_bad"),
+            field="0,1",
+            gridder="standard",
+            usemask="pb",
+            nsigma=None,
+            workdir=str(workdir),
+            execute=False,
+        )
+        warns = res["warnings"]
+        assert any("gridder='standard'" in w for w in warns)
+        assert any("usemask='pb' without nsigma" in w for w in warns)
+
+        res2 = run(
+            real_ms_calibrated,
+            str(workdir / "mosaic_negpb"),
+            field="0,1",
+            gridder="mosaic",
+            pblimit=-0.1,
+            nsigma=3.0,
+            workdir=str(workdir),
+            execute=False,
+        )
+        warns2 = res2["warnings"]
+        assert any("negative pblimit" in w for w in warns2)
+        assert not any("usemask='pb' without nsigma" in w for w in warns2)
+
     def test_execute_forwards_user_mask_pblimit_and_nsigma(
         self, tmp_path, real_ms_calibrated, monkeypatch
     ):

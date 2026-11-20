@@ -221,13 +221,19 @@ try:
         raise RuntimeError(f"Unexpected FITS mask shape: {{mf.shape}}")
     mask_bool = np.nan_to_num(mask_casa, nan=0.0) > 0.5
 
+    prior_px = None
     if prior_mask_path:
         ia.open(prior_mask_path)
         try:
             prior_arr = np.asarray(ia.getchunk(), dtype=np.float64)
         finally:
             ia.close()
-        mask_bool = mask_bool | (np.nan_to_num(prior_arr, nan=0.0) > 0.5)
+        prior_bool = np.nan_to_num(prior_arr, nan=0.0) > 0.5
+        if pb_arr is not None:
+            prior_px = int((prior_bool & np.isfinite(pb_arr) & (pb_arr >= pb_level)).sum())
+        else:
+            prior_px = int(prior_bool.sum())
+        mask_bool = mask_bool | prior_bool
 
     if pb_arr is not None:
         pb_valid = np.isfinite(pb_arr) & (pb_arr >= pb_level)
@@ -249,6 +255,10 @@ try:
 
     n_mask_px = int(mask_bool.sum())
     mask_frac = round(n_mask_px / max(1, n_pb_px), 6)
+    new_mask_px = n_mask_px - prior_px if prior_px is not None else n_mask_px
+    mask_growth_frac = (
+        round(new_mask_px / prior_px, 6) if (prior_px is not None and prior_px > 0) else None
+    )
 
     if png_path:
         import matplotlib
@@ -280,6 +290,9 @@ try:
             "mask_pixels": n_mask_px,
             "pb_pixels": n_pb_px,
             "mask_fraction_in_pb": mask_frac,
+            "prior_mask_pixels": prior_px,
+            "new_mask_pixels": new_mask_px,
+            "mask_growth_fraction": mask_growth_frac,
         }},
     )
     print(f"make_mask OK: {{mask_path}} ({{bimg.nisl}} islands, {{n_mask_px}} px, {{100*mask_frac:.2f}}% of PB)")
@@ -364,10 +377,18 @@ def _execute_make_mask(
         if prior_mask_str is not None:
             with open_image(prior_mask_str) as ia:
                 prior_arr = np.asarray(ia.getchunk(), dtype=np.float64)
-            prior_px = int((np.nan_to_num(prior_arr, nan=0.0) > 0.5).sum())
+            prior_bool = np.nan_to_num(prior_arr, nan=0.0) > 0.5
+            if pb_arr is not None:
+                prior_px = int((prior_bool & np.isfinite(pb_arr) & (pb_arr >= pb_level)).sum())
+            else:
+                prior_px = int(prior_bool.sum())
 
         combined, n_mask_px, n_pb_px = combine_masks(
             new_mask, pb_arr, pb_level, prior_mask=prior_arr
+        )
+        new_mask_px = n_mask_px - prior_px if prior_px is not None else n_mask_px
+        mask_growth_frac = (
+            round(new_mask_px / prior_px, 6) if (prior_px is not None and prior_px > 0) else None
         )
 
         mask_p = Path(mask_str)
@@ -425,6 +446,8 @@ def _execute_make_mask(
             "pb_pixels": n_pb_px,
             "mask_fraction_in_pb": mask_frac,
             "prior_mask_pixels": prior_px,
+            "new_mask_pixels": new_mask_px,
+            "mask_growth_fraction": mask_growth_frac,
         }
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -583,6 +606,9 @@ def run(
             "mask_pixels": stats["mask_pixels"],
             "pb_pixels": stats["pb_pixels"],
             "mask_fraction_in_pb": stats["mask_fraction_in_pb"],
+            "prior_mask_pixels": stats["prior_mask_pixels"],
+            "new_mask_pixels": stats["new_mask_pixels"],
+            "mask_growth_fraction": stats["mask_growth_fraction"],
         },
     )
     if stats["mask_pixels"] == 0:
@@ -590,6 +616,13 @@ def run(
             "PyBDSF produced an empty mask (0 pixels above threshold); passing an empty "
             "mask to tclean will trigger stopcode=7 (zero mask)."
         )
+
+    growth_val = stats["mask_growth_fraction"]
+    growth_note = (
+        "(mask_pixels - prior_mask_pixels) / prior_mask_pixels"
+        if growth_val is not None
+        else ("prior_mask had 0 pixels" if stats["prior_mask_pixels"] == 0 else "no prior_mask")
+    )
 
     data = {
         "script_path": fmt_field(str(script_file)),
@@ -607,6 +640,12 @@ def run(
         "pb_pixels": fmt_field(stats["pb_pixels"]),
         "mask_fraction_in_pb": fmt_field(stats["mask_fraction_in_pb"]),
         "prior_mask_pixels": fmt_field(stats["prior_mask_pixels"]),
+        "new_mask_pixels": fmt_field(stats["new_mask_pixels"]),
+        "mask_growth_fraction": fmt_field(
+            growth_val,
+            flag="COMPLETE" if growth_val is not None else "UNAVAILABLE",
+            note=growth_note,
+        ),
     }
     return response_envelope(
         tool_name=TOOL_NAME,

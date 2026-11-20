@@ -222,9 +222,10 @@ the radiometer prediction directly with
 | Check | Tool, field | Pass | On fail |
 |---|---|---|---|
 | Image measures | `ms_image_stats(<imagename>.image.pbcor, psf_path, pb_level)` | status ok | retry |
-| `residual_rms_jy` vs `thermal_rms_jy` (11 Step 9) | `ms_image_stats` vs `ms_radiometer_estimate` | within 2x | over 2x: "When noise is not met" below |
+| Deconvolution convergence (11 Step 2 & 9) | `ms_image_stats`: `residual_out_mask_peak_snr`, `residual_in_mask_peak_snr`, `residual_in_to_out_rms_ratio` | `< 5.0`, `< 3.5`, `< 1.5` (when masked) | unmasked flux outside mask (`>= 5.0`) or uncleaned flux inside mask (`>= 3.5` or ratio `>= 1.5`): retry `image-stage` with mask growth (`atrous_do=True` / lower `thresh_pix`) or Phase C deep clean (`nsigma=1.5`) BEFORE blaming calibration/RFI |
+| `residual_out_mask_rms_jy` (else `residual_rms_jy`) vs `thermal_rms_jy` (11 Step 9) | `ms_image_stats` vs `ms_radiometer_estimate` | within 2x | over 2x after deconvolution converges: "When noise is not met" below |
 | `residual_dynamic_range` (11 Step 9) | `ms_image_stats` | > 20 for a target | retry |
-| Negative clean bowl (11 Step 9) | `ms_image_stats`: `min_jy`, `negative_to_peak_ratio` | `negative_to_peak_ratio <= 0.05` (Stokes I) | > 0.05 (severe if > 0.10): negative clean bowl; check mask/`nsigma`/threshold and PNG, retry `image-stage` with tighter masking/threshold (or run "When noise is not met" if `residual_rms_jy > 2x`) |
+| Negative clean bowl (11 Step 9) | `ms_image_stats`: `flat_noise_min_jy`, `negative_to_peak_ratio` (flat-noise `.image`) | `negative_to_peak_ratio <= 0.05` (Stokes I) | > 0.05 (severe if > 0.10): negative clean bowl; check mask/`nsigma`/threshold and PNG, retry `image-stage` with tighter masking/threshold (or run "When noise is not met" if off-source RMS > 2x) |
 | Visual PNG inspection (11 Step 9) | `Read(<prefix>.png)` from `ms_image_stats` `png_path` | mandatory on every target image before any `next` or `ms_report` decision; record findings in `png_reviewed` | visible stripes, rings, or negative bowls: do not accept; run "When noise is not met" or retry `image-stage` with a concrete change |
 | `detection` label (11 Step 9) | `ms_image_stats` | report it; not a pass/fail | none |
 
@@ -233,21 +234,35 @@ Note as `not_checked` unless the handoff gives the expected beam:
 
 #### When noise is not met
 
-**No bailout on unresolved noise or bowls.** Never accept a target image and
-proceed to `ms_report` while `residual_rms_jy > 2x thermal_rms_jy`,
+**No bailout or rationalization on unresolved noise or bowls.** Never accept a
+target image and proceed to `ms_report` while `residual_out_mask_rms_jy` (or
+`residual_rms_jy` if unmasked) `> 2x thermal_rms_jy`, flat-noise
 `negative_to_peak_ratio > 0.10`, or `Read(<prefix>.png)` shows severe stripes,
-rings, or negative bowls. "Products exist", "stage status completed", or
-perceived time constraints are not a pass. You MUST either execute Checks
-A -> B -> C below and follow through (postcal, re-image, or selfcal) until the
-gate passes, or emit `decision: "stop_ask_user"` with the diagnostic numbers
-explaining why it could not be resolved.
+rings, or negative bowls. "Products exist", "stage status completed",
+"deliverable just says produce mosaic", perceived time constraints, or
+speculating that `thermal_rms_jy` is "optimistic" / "only for point sources"
+are NEVER a pass. If you suspect `thermal_rms_jy` is unreachable, **Check A
+(calibrator noise image) is the mandatory empirical test -- never skip Check A
+to jump straight to B/C and bail out.** You MUST either resolve deconvolution
+first (Check 0), execute Checks A -> B -> C in strict order and follow through
+(postcal, re-image, or selfcal) until the gate passes, or emit
+`decision: "stop_ask_user"` with the diagnostic numbers explaining why it could
+not be resolved.
 
-A dirty or lightly cleaned image of filled, extended emission cannot be at the
-noise level: the residual comes down as cleaning goes deeper. So a residual over
-2x `thermal_rms_jy` is not, by itself, a calibration failure. Rule out the
-sources of error first, in this order, then work on the image. Run A, B and C in
-that order, each one even when it is slow; a later step never stands in for an
-earlier one.
+0. **Deconvolution convergence first (from `ms_image_stats` + `stage_log.jsonl`).**
+   Before running Checks A--C, check whether deconvolution itself stalled:
+   `residual_out_mask_peak_snr >= 5.0` (unmasked emission outside mask),
+   `residual_in_mask_peak_snr >= 3.5` or `residual_in_to_out_rms_ratio >= 1.5`
+   (uncleaned flux inside mask), flat-noise `negative_to_peak_ratio > 0.05`,
+   `converged` false in `stage_log.jsonl`, or `deconvolver` still `hogbom`. If
+   any of these hold, retry `radio-analyst:image-stage` first with the concrete
+   imaging fix (continue mask growth with `atrous_do=True` / `thresh_pix=4.0,
+   thresh_isl=2.5`, run Phase C deep clean at `nsigma=1.5` inside the fixed
+   mask, or switch to `multiscale` / `asp` last).
+
+Once deconvolution is converged, rule out calibration and data errors in this
+strict order, running A, B, and C in order even when slow; a later step NEVER
+stands in for an earlier one:
 
 A. **Noise on the calibrator.** A point-source calibrator images to the noise
    when the calibration is good, so it is the representative noise test. Invoke
@@ -372,6 +387,12 @@ To choose a value that no skill or stage command gives, call
 `docs_path`, then Read only the one piece you need.
 
 ## End
+
+Before calling `ms_report`, verify: if target `residual_out_mask_rms_jy` (or
+`residual_rms_jy` when unmasked) exceeded `2x thermal_rms_jy` after
+deconvolution converged, Check A (calibrator noise image) was executed and the
+noise ladder was either resolved or closed with `decision: "stop_ask_user"`
+(never silently accepted).
 
 After the last stage (or a stop), build the report with
 `ms_report(workdir, summary, decisions, caveats, image_path=<last .image.pbcor>)`.

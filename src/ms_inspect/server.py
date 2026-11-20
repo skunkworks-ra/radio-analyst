@@ -636,6 +636,13 @@ class ImageStatsInput(BaseModel):
         default=None,
         description="If given, write plane 0 as a PNG here (open it with Read to see the image).",
     )
+    mask_path: str | None = Field(
+        default=None,
+        description=(
+            "Optional CASA .mask path for inside/outside-mask residual stats "
+            "(auto-discovers sibling .mask when omitted)."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1856,9 +1863,9 @@ async def ms_gaincal_snr_predict(params: GaincalSnrPredictInput) -> ToolResult:
     name="ms_image_stats",
     description=(
         "Image quality metrics from a CASA image: MAD-based robust RMS, peak, "
-        "PB-masked min_jy, negative_to_peak_ratio, dynamic range, restoring beam, "
-        "and residual_rms_jy from the sibling .residual where .pb >= pb_level. "
-        "png_path writes plane 0 as a PNG. Run after tclean."
+        "flat-noise min/negative_to_peak_ratio, dynamic range, restoring beam, "
+        "and residual_rms_jy (plus inside/outside-mask residual RMS/peak/SNR) "
+        "from sibling .residual/.mask where .pb >= pb_level. png_path writes plane 0."
     ),
     annotations={
         "title": "Image Statistics",
@@ -1888,7 +1895,12 @@ async def ms_image_stats(params: ImageStatsInput) -> ToolResult:
         If psf_path provided, also psf_beam_major_arcsec etc.
     """
     return await _run_tool(
-        image_stats.run, params.image_path, params.psf_path, params.pb_level, params.png_path
+        image_stats.run,
+        params.image_path,
+        params.psf_path,
+        params.pb_level,
+        params.png_path,
+        params.mask_path,
     )
 
 
