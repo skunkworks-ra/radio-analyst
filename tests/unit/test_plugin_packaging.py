@@ -172,7 +172,7 @@ def test_every_skill_has_name_and_description_frontmatter():
 
 def test_documented_tool_counts_match_registrations():
     counts = {server: len(tools) for server, tools in _registered_tools().items()}
-    assert counts == {"ms-inspect": 39, "ms-modify": 20, "ms-create": 4}
+    assert counts == {"ms-inspect": 39, "ms-modify": 20, "ms-create": 5}
     claude_path = REPO_ROOT / "CLAUDE.md"
     assert len(claude_path.read_bytes()) <= 4096
     claude_md = claude_path.read_text()
@@ -246,9 +246,9 @@ def test_orchestrator_grants_registered_read_only_tools_and_calls_each_stage():
             assert t in ("Agent", "Read"), t
             continue
         server, tool = m.groups()
-        assert server == "ms-inspect" or t.endswith("__ms_report"), (
-            f"orchestrator must not hold write tools: {t}"
-        )
+        assert server == "ms-inspect" or t.endswith(
+            ("__ms_report", "__ms_record_stage_decision")
+        ), f"orchestrator must not hold write tools: {t}"
         assert tool in registered[server], t
     body = path.read_text()
     for stage in STAGES:
@@ -385,7 +385,7 @@ def test_all_tools_suppress_output_schema():
     ins_tools, mod_tools, crt_tools = asyncio.run(_list_all())
     assert len(ins_tools) == 39
     assert len(mod_tools) == 20
-    assert len(crt_tools) == 4
+    assert len(crt_tools) == 5
     for srv_name, tools in (
         ("ms-inspect", ins_tools),
         ("ms-modify", mod_tools),
@@ -482,9 +482,12 @@ def test_orchestrator_agents_sync_with_skill_grants():
         for t in skill_tools
         if (m := _ORCH_TOOL_RE.match(t)) is not None
     )
-    assert len(want_mcp) == 16
+    assert len(want_mcp) == 17
     assert sum(1 for t in want_mcp if t.startswith("ms-inspect_")) == 15
-    assert [t for t in want_mcp if not t.startswith("ms-inspect_")] == ["ms-create_ms_report"]
+    assert [t for t in want_mcp if not t.startswith("ms-inspect_")] == [
+        "ms-create_ms_record_stage_decision",
+        "ms-create_ms_report",
+    ]
 
     tools_map = oc_fm["tools"]
     perm_map = oc_fm["permission"]

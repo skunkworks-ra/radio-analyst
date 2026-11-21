@@ -68,7 +68,8 @@
       "ms_sdm_summary": {"sdm_path": "/nonexistent/target.asdm"},
       "ms_import_asdm": {"asdm_path": "/nonexistent/target.asdm", "workdir": "/nonexistent/workdir", "ms_name": "probe.ms"},
       "ms_reduction_log": {"action": "list", "workdir": "/nonexistent/workdir"},
-      "ms_report": {"workdir": "/nonexistent/workdir"}
+      "ms_report": {"workdir": "/nonexistent/workdir"},
+      "ms_record_stage_decision": {"seq": 1, "stage": "inspect", "try": 1, "workdir": "/nonexistent/workdir", "decision": "next", "deciding_metric": "probe = ok", "reason": "probe"}
     }
   }
 }

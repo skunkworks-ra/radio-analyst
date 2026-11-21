@@ -271,8 +271,104 @@ def build_audit_records_from_transcript(
     # Active pending stage windows (populated only when a known *-stage subagent runs).
     pending_windows: list[dict] = []
     stage_attempt_counts: dict[str, int] = {}
+    recorded_keys: set[tuple[int, str, int]] = set()
     auto_seq = 0
     written_paths: list[Path] = []
+
+    def _emit_decision(dec: dict) -> None:
+        nonlocal auto_seq
+        stage = str(dec.get("stage") or "").strip()
+        if not stage:
+            return
+        safe_stage = _safe_stage_slug(stage)
+        raw_seq = dec.get("seq") or dec.get("n")
+        raw_attempt = dec.get("try") or dec.get("attempt")
+        if raw_seq is not None and raw_attempt is not None:
+            key = (int(raw_seq), safe_stage, int(raw_attempt))
+            if key in recorded_keys:
+                return
+        auto_seq += 1
+        seq = int(raw_seq or auto_seq)
+        stage_attempt_counts[safe_stage] = stage_attempt_counts.get(safe_stage, 0) + 1
+        attempt = int(raw_attempt or stage_attempt_counts[safe_stage])
+        key = (seq, safe_stage, attempt)
+        if key in recorded_keys:
+            return
+
+        dec_wd = str(dec.get("workdir") or "").strip()
+        wd_path: Path | None = None
+        if dec_wd:
+            p_dec = Path(dec_wd).expanduser()
+            if p_dec.is_dir():
+                wd_path = p_dec
+            elif default_wd_path is not None and default_wd_path.is_dir():
+                wd_path = default_wd_path
+        elif inferred_workdir and Path(inferred_workdir).is_dir():
+            wd_path = Path(inferred_workdir)
+        elif default_wd_path is not None and default_wd_path.is_dir():
+            wd_path = default_wd_path
+        if wd_path is None:
+            return
+
+        recorded_keys.add(key)
+
+        matching = [
+            cand
+            for cand in pending_windows
+            if not cand["consumed"]
+            and (
+                cand["stage_hint"] == stage
+                or (cand["stage_hint"] == "image" and stage == "image_iquv")
+            )
+        ]
+        for w in matching:
+            w["consumed"] = True
+
+        primary = matching[0] if matching else None
+        all_checks = [c for w in matching for c in w["checks"]]
+        all_pngs = [p for w in matching for p in w["png_paths_read"]]
+
+        png_reviewed = dec.get("png_reviewed")
+        if png_reviewed is None and all_pngs:
+            png_reviewed = f"viewed: {', '.join(all_pngs)}"
+
+        record: dict[str, object] = {
+            "n": seq,
+            "stage": stage,
+            "attempt": attempt,
+            "workdir": str(wd_path.resolve()),
+            "prompt": primary["prompt"] if primary is not None else "",
+            "handoff": primary["handoff"] if primary is not None else "",
+            "checks": all_checks,
+            "decision": dec.get("decision"),
+            "deciding_metric": dec.get("deciding_metric"),
+            "reason": dec.get("reason", ""),
+            "debug_directive": dec.get("debug_directive"),
+            "agent_id": primary["agent_id"] if primary is not None else None,
+            "png_reviewed": png_reviewed,
+            "agent_usage": primary["agent_usage"] if primary is not None else None,
+        }
+        if len(matching) > 1:
+            record["aux_runs"] = [
+                {
+                    "subagent_type": w["subagent_type"],
+                    "prompt": w["prompt"],
+                    "handoff": w["handoff"],
+                    "agent_id": w["agent_id"],
+                    "agent_usage": w["agent_usage"],
+                }
+                for w in matching[1:]
+            ]
+
+        orch_dir = wd_path / "orchestrator"
+        orch_dir.mkdir(parents=True, exist_ok=True)
+        out_file = orch_dir / f"{seq:02d}_{safe_stage}_try{attempt}.json"
+        payload = json.dumps(record, indent=2) + "\n"
+        if not out_file.is_file() or out_file.read_text(errors="replace") != payload:
+            tmp_file = out_file.with_suffix(".json.tmp")
+            tmp_file.write_text(payload)
+            tmp_file.replace(out_file)
+        written_paths.append(out_file)
 
     for kind, item_id, str_val, inp, res_text, tur_meta in items:
         if kind == "tool":
@@ -326,6 +422,9 @@ def build_audit_records_from_transcript(
                     )
             else:
                 params = _unwrap_params(inp)
+                if _short_tool_name(raw_name) == "ms_record_stage_decision":
+                    _emit_decision(params)
+                    continue
                 if (
                     _is_mcp_tool(raw_name)
                     and isinstance(params.get("workdir"), str)
@@ -365,87 +464,7 @@ def build_audit_records_from_transcript(
             seen_msg_text_ids.add(text_key)
 
             for dec in decisions:
-                auto_seq += 1
-                stage = str(dec.get("stage") or "").strip()
-                safe_stage = _safe_stage_slug(stage)
-                seq = int(dec.get("seq") or dec.get("n") or auto_seq)
-                stage_attempt_counts[safe_stage] = stage_attempt_counts.get(safe_stage, 0) + 1
-                attempt = int(
-                    dec.get("try") or dec.get("attempt") or stage_attempt_counts[safe_stage]
-                )
-
-                dec_wd = str(dec.get("workdir") or "").strip()
-                wd_path: Path | None = None
-                if dec_wd:
-                    p_dec = Path(dec_wd).expanduser()
-                    if p_dec.is_dir():
-                        wd_path = p_dec
-                    elif default_wd_path is not None and default_wd_path.is_dir():
-                        wd_path = default_wd_path
-                elif inferred_workdir and Path(inferred_workdir).is_dir():
-                    wd_path = Path(inferred_workdir)
-                elif default_wd_path is not None and default_wd_path.is_dir():
-                    wd_path = default_wd_path
-                if wd_path is None:
-                    continue
-
-                matching = [
-                    cand
-                    for cand in pending_windows
-                    if not cand["consumed"]
-                    and (
-                        cand["stage_hint"] == stage
-                        or (cand["stage_hint"] == "image" and stage == "image_iquv")
-                    )
-                ]
-                for w in matching:
-                    w["consumed"] = True
-
-                primary = matching[0] if matching else None
-                all_checks = [c for w in matching for c in w["checks"]]
-                all_pngs = [p for w in matching for p in w["png_paths_read"]]
-
-                png_reviewed = dec.get("png_reviewed")
-                if png_reviewed is None and all_pngs:
-                    png_reviewed = f"viewed: {', '.join(all_pngs)}"
-
-                record: dict[str, object] = {
-                    "n": seq,
-                    "stage": stage,
-                    "attempt": attempt,
-                    "workdir": str(wd_path.resolve()),
-                    "prompt": primary["prompt"] if primary is not None else "",
-                    "handoff": primary["handoff"] if primary is not None else "",
-                    "checks": all_checks,
-                    "decision": dec.get("decision"),
-                    "deciding_metric": dec.get("deciding_metric"),
-                    "reason": dec.get("reason", ""),
-                    "debug_directive": dec.get("debug_directive"),
-                    "agent_id": primary["agent_id"] if primary is not None else None,
-                    "png_reviewed": png_reviewed,
-                    "agent_usage": primary["agent_usage"] if primary is not None else None,
-                }
-                if len(matching) > 1:
-                    record["aux_runs"] = [
-                        {
-                            "subagent_type": w["subagent_type"],
-                            "prompt": w["prompt"],
-                            "handoff": w["handoff"],
-                            "agent_id": w["agent_id"],
-                            "agent_usage": w["agent_usage"],
-                        }
-                        for w in matching[1:]
-                    ]
-
-                orch_dir = wd_path / "orchestrator"
-                orch_dir.mkdir(parents=True, exist_ok=True)
-                out_file = orch_dir / f"{seq:02d}_{safe_stage}_try{attempt}.json"
-                payload = json.dumps(record, indent=2) + "\n"
-                if not out_file.is_file() or out_file.read_text(errors="replace") != payload:
-                    tmp_file = out_file.with_suffix(".json.tmp")
-                    tmp_file.write_text(payload)
-                    tmp_file.replace(out_file)
-                written_paths.append(out_file)
+                _emit_decision(dec)
 
     return written_paths
 

@@ -59,7 +59,7 @@ def test_orchestrator_mcp_schema_diet_under_quarter_of_full_surface():
                 tool.model_dump(exclude_none=True), separators=(",", ":")
             )
 
-    assert len(by_key) == 63
+    assert len(by_key) == 64
     total_bytes = sum(len(s.encode("utf-8")) for s in by_key.values())
 
     import yaml
@@ -73,7 +73,7 @@ def test_orchestrator_mcp_schema_diet_under_quarter_of_full_surface():
         and not k.endswith("_*")
         and v is True
     ]
-    assert len(granted_keys) == 16
+    assert len(granted_keys) == 17
     assert all(not k.startswith("ms-modify_") for k in granted_keys)
 
     orch_bytes = sum(len(by_key[k].encode("utf-8")) for k in granted_keys)

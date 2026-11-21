@@ -1,6 +1,6 @@
 # Contributing & Developer Reference (`radio-analyst`)
 
-Developer internals, repository layout, environment setup, full 63-tool
+Developer internals, repository layout, environment setup, full 64-tool
 inventory, wire contract, and CASA conventions for `radio-analyst`. Read
 [`CLAUDE.md`](../CLAUDE.md) first for the non-negotiable scientific and tool
 contract.
@@ -14,7 +14,7 @@ radio-analyst/
 ├── CLAUDE.md                      <- always-loaded contract (<= 4 KiB)
 ├── README.md                      <- user/install guide
 ├── docs/
-│   └── CONTRIBUTING.md            <- developer reference & 63-tool inventory
+│   └── CONTRIBUTING.md            <- developer reference & 64-tool inventory
 ├── design_docs/
 │   ├── DESIGN.md                  <- architecture, failure modes, conventions
 │   └── FLUX_STANDARD_DESIGN.md    <- per-field flux standard resolution
@@ -92,7 +92,7 @@ pixi run test-int            # integration tests (RADIO_MCP_TEST_MS or RADIO_MCP
 
 ---
 
-## Full tool inventory (63 tools)
+## Full tool inventory (64 tools)
 
 ### 1. `ms-inspect` -- read-only inspection and diagnostics (39 tools, port 8000)
 
@@ -202,13 +202,14 @@ generators default to `execute=False`.
 
 ---
 
-### 3. `ms-create` -- ingestion, ledger, and reporting (4 tools, port 8002)
+### 3. `ms-create` -- ingestion, ledger, stage decisions, and reporting (5 tools, port 8002)
 
 | Tool | Module | Summary |
 |------|--------|---------|
 | `ms_sdm_summary` | `ms_create/sdm_summary.py` | Pure-XML pre-import ASDM inspection (no `casatools` needed) |
 | `ms_import_asdm` | `ms_create/import_asdm.py` | `importasdm` (`ocorr_mode='co'`, `savecmds=True`, `applyflags=False`) |
 | `ms_reduction_log` | `ms_create/reduction_log.py` | Auto-derives effective replay steps from `stage_log.jsonl` (`list`/`render`), plus `append` for `manual` overrides |
+| `ms_record_stage_decision` | `ms_create/stage_decision.py` | Validate and write `{workdir}/orchestrator/{seq:02d}_{stage}_try{try}.json` directly as a tool call |
 | `ms_report` | `ms_create/report.py` | Build `report.html` embedding summary, decisions, caveats, auto-derived replay script, plots, and PNGs |
 
 ---

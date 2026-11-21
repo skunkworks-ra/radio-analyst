@@ -13,7 +13,10 @@ allowed-tools: mcp__plugin_radio-analyst_ms-create__ms_report,
 
 # Report: what was done, what it shows, what to keep
 
-`ms_report` lays out what the workdir already holds. You write the three parts
+`ms_report` lays out what the workdir already holds. **Prerequisite:** NEVER
+call `ms_report` while any `run-step.sh` job is still `status=running` -- wait
+until `status=done` (`rc=0`) and verify the expected output products exist on
+disk first. You write the three parts
 only you can: the summary, the decisions, the caveats. Every number in them
 comes from a tool output or a ledger entry, with the step it came from. Do not
 measure anything new for the report.

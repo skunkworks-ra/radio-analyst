@@ -59,13 +59,24 @@ live `<script>.pid` exists), `run-step.sh` launches `<python> <script>` detached
 under `setsid` writing `<script>.log` and `<script>.pid`, then waits up to 240 s
 (returning before the 5-minute prompt-cache TTL expires):
 
-- `status=done rc=0`: step succeeded; proceed to the verification tool call.
+- `status=done rc=0`: step succeeded; verify the expected output products exist
+  on disk, then proceed to the verification tool call.
 - `status=running` (`pid_alive=true`): job is still running cleanly. Re-run the
-  **exact same** `run-step.sh` command; it re-attaches to `<script>.pid` without
-  relaunching. Never STOP on elapsed time while `status=running`.
+  **exact same** `run-step.sh <python> <script> --wait 240` command; it
+  re-attaches to `<script>.pid` without relaunching. Never STOP on elapsed time
+  while `status=running`.
 - `status=done` with non-zero `rc`, or `status=crashed` (process exited without
   writing `.rc`): STOP immediately and report the tail of `<script>.log` (which
   `run-step.sh` prints). Never start the next script after a failure.
+
+**Hard rule -- NEVER exit, summarize completion, or write a final reduction
+report while any `run-step.sh` job is still `status=running`.** Do not assume a
+detached job will finish after you exit: ending the session tears down the
+headless runner/container and kills the running CASA process mid-step, leaving
+incomplete or missing output products. Keep re-invoking
+`run-step.sh <python> <script> --wait 240` until `status=done` (`rc=0`) and
+confirm the expected output products exist on disk before moving to quality
+stats or final reporting.
 
 A deliberate re-solve generates or overwrites `<script>`; remove `<script>.rc`
 first (`rm -f <script>.rc`) only when intentionally re-running the exact same

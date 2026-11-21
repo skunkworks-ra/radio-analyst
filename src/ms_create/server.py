@@ -14,7 +14,14 @@ import os
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-from ms_create import __version__, import_asdm, reduction_log, report, sdm_summary
+from ms_create import (
+    __version__,
+    import_asdm,
+    reduction_log,
+    report,
+    sdm_summary,
+    stage_decision,
+)
 from ms_inspect.util.dispatch import CASA_LOG_NOTE, ToolResult, run_tool
 from ms_inspect.util.logs import init_server_logging
 
@@ -148,6 +155,43 @@ class SDMSummaryInput(BaseModel):
     )
 
 
+class RecordStageDecisionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    seq: int = Field(..., ge=1, description="Sequential stage-attempt number starting at 1.")
+    stage: str = Field(
+        ...,
+        description="Stage name: inspect|precal|calibrate|polcal|image|postcal|selfcal|image_iquv.",
+    )
+    attempt: int = Field(
+        ...,
+        alias="try",
+        ge=1,
+        le=5,
+        description="Attempt counter (1..5) for this stage.",
+    )
+    workdir: str = Field(..., min_length=1, description="Existing reduction workdir path.")
+    decision: str = Field(..., description="Decision: next|retry|stop_ask_user.")
+    deciding_metric: str = Field(
+        ...,
+        min_length=1,
+        description="Exact '<tool>.<field> = <value> vs <threshold> (<source>)' from tool output.",
+    )
+    reason: str = Field(
+        ...,
+        min_length=1,
+        description="1-2 sentences stating which check decided it (and on retry, what changes next).",
+    )
+    debug_directive: dict | None = Field(
+        default=None,
+        description="null, or {'call': '<tool>', 'params': {...}} when debug: allowed on retry.",
+    )
+    png_reviewed: str | None = Field(
+        default=None,
+        description="null on non-imaging stages; 1-sentence PNG summary on image/selfcal/image_iquv (or 'not_viewed').",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
@@ -257,6 +301,33 @@ async def ms_report(params: ReportInput) -> ToolResult:
         params.caveats,
         params.image_path,
         params.reuse_saved,
+    )
+
+
+@mcp.tool(
+    name="ms_record_stage_decision",
+    description=(
+        "Record one orchestrator stage decision to "
+        "<workdir>/orchestrator/{seq:02d}_{stage}_try{try}.json. "
+        "Call this tool after checking every stage attempt instead of emitting "
+        "prose <stage_decision> XML."
+    ),
+    annotations={"readOnlyHint": False, "destructiveHint": False},
+)
+async def ms_record_stage_decision(params: RecordStageDecisionInput) -> ToolResult:
+    """Validate and persist one orchestrator stage decision JSON record."""
+    return await _run_tool(
+        stage_decision.run,
+        params.seq,
+        params.stage,
+        params.attempt,
+        params.workdir,
+        params.decision,
+        params.deciding_metric,
+        params.reason,
+        params.debug_directive,
+        params.png_reviewed,
+        _lock_path=params.workdir,
     )
 
 

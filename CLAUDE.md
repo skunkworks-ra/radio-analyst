@@ -1,17 +1,17 @@
 # CLAUDE.md -- radio-analyst
 
 Project contract for Claude Code and contributors. Full developer reference and
-the 63-tool inventory live in [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md);
+the 64-tool inventory live in [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md);
 architecture lives in [`design_docs/DESIGN.md`](design_docs/DESIGN.md).
 
 ## Project summary
 
 Three MCP servers for CASA radio interferometric reduction (VLA/JVLA/EVLA,
-MeerKAT, uGMRT), 63 tools total:
+MeerKAT, uGMRT), 64 tools total:
 
 - **ms-inspect** -- read-only inspection and diagnostics (39 tools, port 8000)
 - **ms-modify** -- calibration, flagging, and MS modification (20 tools, port 8001)
-- **ms-create** -- ASDM ingestion, reduction logging, and reporting (4 tools, port 8002)
+- **ms-create** -- ASDM ingestion, reduction logging, stage decisions, and reporting (5 tools, port 8002)
 
 ## Core contract -- do not violate
 

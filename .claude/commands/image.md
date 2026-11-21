@@ -30,7 +30,9 @@ Prerequisite: CORRECTED_DATA populated on the target field(s) -- run
 Every write step is recorded automatically in `<workdir>/stage_log.jsonl`.
 Every "-> run" below: run the script via `run-step.sh` (`--wait 240`), as the
 skill's "Running generated scripts" section says, re-running on `status=running`
-until `status=done`.
+until `status=done` (`rc=0`). NEVER exit, summarize completion, or move to
+`ms_image_stats` while `run-step.sh` is still `status=running`; verify the
+expected `.image.pbcor` exists on disk first.
 
 **Workflow:**
 

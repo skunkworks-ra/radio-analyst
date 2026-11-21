@@ -410,7 +410,14 @@ ms_tclean(
 
 Generate the script (`execute=False`), then run it via `run-step.sh` (`--wait 240`,
 SKILL.md "Running generated scripts"), re-running on `status=running` until
-`status=done` -- tclean on a real mosaic can run for hours.
+`status=done` (`rc=0`) -- tclean on a real mosaic can run for hours. **Hard
+rule:** NEVER write a final reduction report, summarize completion, assume
+`tclean` will finish in the background, or exit while `run-step.sh` reports
+`status=running` (exiting tears down the container/session and kills `tclean`
+mid-run, leaving zero `.image` products). Keep re-invoking
+`run-step.sh <python> <script> --wait 240` until `status=done` (`rc=0`) and
+verify `<imagename>.image.pbcor` (or `.image.pbcor.tt0`) exists on disk before
+calling `ms_image_stats` or reporting.
 
 ---
 

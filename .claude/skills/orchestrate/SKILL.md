@@ -23,6 +23,7 @@ allowed-tools: Agent,
                mcp__plugin_radio-analyst_ms-inspect__ms_pol_cal_conditions,
                mcp__plugin_radio-analyst_ms-inspect__ms_radiometer_estimate,
                mcp__plugin_radio-analyst_ms-inspect__ms_vis_amp_time_stats,
+               mcp__plugin_radio-analyst_ms-create__ms_record_stage_decision,
                mcp__plugin_radio-analyst_ms-create__ms_report
 ---
 
@@ -34,7 +35,8 @@ for it. `stokes` defaults to `I`. `IQUV` adds the polcal stage and an IQUV cube;
 every Stokes I stage and check runs as for `I`.
 
 You do not run CASA, you do not run Bash, and you do not write files directly.
-Only one write tool is granted: `ms_report`, for the HTML report at the end.
+Only two bookkeeping write tools are granted: `ms_record_stage_decision` (after
+every stage attempt) and `ms_report` (for the HTML report at the end).
 Stage agents do the work; you hand each one its inputs, read its handoff, check
 the result with the read-only tools above, and decide what happens next. Every
 MCP tool takes one argument, `params` (and returns bare values under `data` plus
@@ -43,34 +45,44 @@ non-`COMPLETE` entries in `field_flags`).
 **Retry cap: 5 attempts per stage.** On the 5th failed attempt, stop and ask
 the user, summarizing every attempt's deciding check.
 
-## The record: one `<stage_decision>` block per stage attempt
+## The record: call `ms_record_stage_decision` after every stage attempt
 
-Before each next step (and on any failed or stopped stage), emit one compact
-JSON object wrapped in `<stage_decision>...</stage_decision>` in your assistant
-text (`seq` counts every stage attempt starting at `1`; `try` is the attempt
-number `1..5` for that stage; use `"stage": "image_iquv"` for stage 6 so its
-attempt counter stays separate from Stokes I `image`). The `Stop` / `SessionEnd`
-audit hook (`scripts/plugin/audit_hook.sh`) deterministically extracts each
-block into `{workdir}/orchestrator/{seq:02d}_{stage}_try{try}.json` alongside
-`<workdir>/events.jsonl` and `<workdir>/stage_log.jsonl` -- you do NOT call
-`Write` yourself.
+After checking each stage attempt (whether proceeding, retrying, or stopping),
+call the `ms_record_stage_decision` tool (`ms-create_ms_record_stage_decision`
+in OpenCode) instead of writing prose `<stage_decision>` XML (`seq` counts every
+stage attempt starting at `1`; `try` is the attempt number `1..5` for that
+stage; use `"stage": "image_iquv"` for stage 6 so its attempt counter stays
+separate from Stokes I `image`). The tool validates every field and writes
+`{workdir}/orchestrator/{seq:02d}_{stage}_try{try}.json` directly alongside
+`<workdir>/events.jsonl` and `<workdir>/stage_log.jsonl` (and the `Stop` /
+`SessionEnd` audit hook `scripts/plugin/audit_hook.sh` enriches it with full
+handoff and check provenance) -- you do NOT call `Write` and do NOT emit prose
+`<stage_decision>` XML.
 
-**Same-turn tool call rule (prevents headless early exit).** Whenever
-`decision` is `"next"` or `"retry"`, you MUST emit the `<stage_decision>` block
-in the **same** assistant turn as the next `Agent` / `task(...)` stage call (or
-the next diagnostic tool call / `ms_report` call). NEVER end an assistant turn
-with text-only `<stage_decision>` (no tool call) unless `decision` is
-`"stop_ask_user"` or the final `ms_report` has already completed -- in headless
-runners (`opencode run`, `claude -p`), a text-only turn terminates the session
-immediately (`reason="stop"`).
+**Never end a turn with text-only output after a `"next"` or `"retry"` decision.**
+Because `ms_record_stage_decision` is a tool call, control always returns to you
+after it completes -- immediately invoke the next `Agent` / `task(...)` stage
+call (or diagnostic / `ms_report` tool call). Only end a turn with plain text
+(no tool call) when `decision` is `"stop_ask_user"` or after the final
+`ms_report` has completed.
+
+Example tool call:
 
 ```
-<stage_decision>
-{"seq": 1, "stage": "precal", "try": 1, "workdir": "<workdir>", "decision": "next", "deciding_metric": "ms_workflow_status.next_recommended_step = delay_bandpass_gain (commands/calibrate.md:48)", "reason": "Priorcals, BP0.b, and bandpass model verified.", "debug_directive": null, "png_reviewed": null}
-</stage_decision>
+ms_record_stage_decision(
+    seq=1,
+    stage="precal",
+    try=1,
+    workdir="<workdir>",
+    decision="next",
+    deciding_metric="ms_workflow_status.next_recommended_step = delay_bandpass_gain (commands/calibrate.md:48)",
+    reason="Priorcals, BP0.b, and bandpass model verified.",
+    debug_directive=None,
+    png_reviewed=None,
+)
 ```
 
-Required keys in every `<stage_decision>` JSON object:
+Required arguments in every `ms_record_stage_decision` call:
 - `seq`: integer `1, 2, ...` across all stage attempts in this run
 - `stage`: `"inspect" | "precal" | "calibrate" | "polcal" | "image" | "postcal" | "selfcal" | "image_iquv"`
 - `try`: integer attempt counter (`1..5`) for this `stage`
@@ -310,10 +322,10 @@ remaining gap is the imaging. Work down this order, one step per attempt:
    `threshold` to eliminate the bowl, `deconvolver: multiscale`, or
    `deconvolver: asp` last: 11 Step 2; asp is expensive, say so in `reason`).
 2. **Verify the image visually.** Confirm `Read(<prefix>.png)` from the primary
-   check table (re-Read after any retry) and record what you see in
-   `<stage_decision>`'s `png_reviewed`: is the source structure clean, or are
-   there stripes, rings or negative bowls around it? Never run selfcal against a
-   bowled model.
+   check table (re-Read after any retry) and pass what you see in
+   `ms_record_stage_decision(..., png_reviewed=...)`: is the source structure
+   clean, or are there stripes, rings or negative bowls around it? Never run
+   selfcal against a bowled model.
 3. **Selfcal, if the model is good.** Apply 12 Step 0 (12:36-62): `dynamic_range`
    from `ms_image_stats` (< 30: selfcal unlikely to help, stop and ask; 30 and
    up: proceed), and `ms_residual_stats` on each target pointing (any SpW with
