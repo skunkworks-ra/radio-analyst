@@ -542,6 +542,29 @@ def run(
             ms_path=ms_path,
         )
 
+    # Preflight warning: if stage_log.jsonl shows applycal completed on this MS
+    # with no subsequent target spectrum check (ms_spw_amp_severity) or post-cal
+    # rflag (ms_postcal_flag / ms_apply_rflag), warn before imaging so unflagged
+    # target RFI cannot silently enter tclean.
+    try:
+        from ms_inspect.tools.workflow_status import _target_applied, _target_postcal_checked
+        from ms_inspect.util.stage_log import read_stage_log
+
+        _entries = read_stage_log(workdir_path)
+        _ms_resolved = Path(ms_str).expanduser().resolve()
+        if _target_applied(_entries, _ms_resolved) and not _target_postcal_checked(
+            _entries, _ms_resolved
+        ):
+            warnings.append(
+                "Pre-imaging target spectrum check missing: stage_log.jsonl records applycal "
+                f"on {ms_str} with no subsequent ms_spw_amp_severity, ms_postcal_flag, or "
+                "ms_apply_rflag call on this MS. Run ms_spw_amp_severity(ms_path, "
+                "datacolumn='CORRECTED_DATA', field=..., workdir=...) and follow "
+                "11-imaging.md Step 0.5 before imaging targets."
+            )
+    except Exception:
+        pass
+
     script_file = _script_path(workdir_path, imagename)
     script_content = _build_script(
         workdir=str(workdir_path),

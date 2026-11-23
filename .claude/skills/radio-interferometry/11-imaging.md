@@ -252,15 +252,35 @@ clean boundary inside the primary beam:
   `residual_outer_pb_peak_j2000` (measured in `0 < PB < pb_level`) to detect
   offending outer-PB sources.
 
+**Quick-look (`usemask='pb'`) pass vs. Delivered Noise-Limited Science Image.**
+An initial shallow `usemask='pb'` pass (Phase A) is a **quick-look image only**
+-- NOT a finished science deliverable whenever uncleaned source flux or elevated
+noise remains. Before declaring target imaging complete, ALL THREE criteria
+below must be met:
+- **(a) Hard convergence:** `converged == True` (`stopcode in (2, 8)`) on the
+  final delivered image.
+- **(b) Masked deep clean required when quick-look is not noise-limited:** Run
+  Phase B (`ms_make_mask` + `usemask='user'` deconvolver pass, plus Phase C if
+  needed) whenever the initial pass has `residual_in_model_rms_ratio > 1.5` (or
+  `residual_in_to_out_rms_ratio > 1.5`) **OR** `residual_rms_jy > 1.3 * thermal_rms_jy`.
+  Do NOT stop after Phase A just because `usemask='pb'` converged (`stopcode=8`).
+- **(c) Quantitative outer-PB baby-peel probe trigger:** Whenever
+  `residual_outer_pb_peak_snr >= 20` **AND** science-PB RMS (`residual_out_mask_rms_jy`,
+  else `residual_rms_jy`) `> 1.3 * thermal_rms_jy`, run the Version-1 baby-peel
+  probe below (compare science-PB dirty mosaic RMS before vs. after peeling):
+  keep the peeled MS and re-image if science-PB RMS improves, otherwise keep the
+  unpeeled image and report the measured before/after probe delta.
+
 **Outer-PB Offending Source Workflow (phasecal inclusion, outlier fields, and baby peeling).**
 Uncleaned sources outside `PB >= 0.1` are common and are NOT a failure by
 themselves (some outer-PB sources cannot be deconvolved directly inside a
 wideband mosaic). Check `residual_outer_pb_peak_*` in `ms_image_stats` and
 follow this decision tree:
-1. **Is it hurting the science region?** If `residual_out_mask_rms_jy` inside
-   `PB >= 0.1` is near thermal and no sidelobes degrade the science target,
-   leave the outer-PB source uncleaned and report its position/SNR in the
-   summary.
+1. **Quantitative trigger:** If `residual_outer_pb_peak_snr < 20` **OR**
+   science-PB RMS (`residual_out_mask_rms_jy`, else `residual_rms_jy`)
+   `<= 1.3 * thermal_rms_jy`, leave the outer-PB source uncleaned and report its
+   position/SNR in the summary. Otherwise (`residual_outer_pb_peak_snr >= 20`
+   AND science-PB RMS `> 1.3 * thermal_rms_jy`), test Steps 2--3 below.
 2. **Is it the phase calibrator (or another observed pointing)?** Cross-match
    `(residual_outer_pb_peak_ra_deg, residual_outer_pb_peak_dec_deg)` against
    `ms_field_list`. If it matches the phasecal (or another calibrated pointing
@@ -299,10 +319,11 @@ follow this decision tree:
         model), then run `ms_casa_task(task='uvsub', params={'vis':
         '<workdir>/target_peeled.ms'})` and `ms_casa_task(task='delmod',
         params={'vis': '<workdir>/target_peeled.ms', 'otf': True, 'scr': True})`.
-     4. **Probe mosaic after peeling:** Run a dirty image (`niter=0`) on
-        `target_peeled.ms` and compare the offending source peak before vs after.
-        If it is removed or reduced enough that its sidelobes no longer limit
-        the science region, proceed with main imaging on `target_peeled.ms`.
+     4. **Probe mosaic before vs. after peeling:** Run a dirty image (`niter=0`)
+        on `target_peeled.ms` and compare both the offending source peak AND
+        science-PB (`PB >= 0.1`) dirty RMS before vs. after. Keep the peeled MS
+        and re-image if science-PB RMS improves; otherwise keep the unpeeled
+        image and report the measured before/after probe delta.
      5. **Version 2 (Fallback -- per-pointing peel when mosaic PB gain varies
         across pointings):** Only if the post-peel mosaic dirty image after
         Version 1 still leaves significant residual flux at the offender
@@ -578,6 +599,14 @@ for `mtmfs`) exists on disk before calling `ms_image_stats` or reporting.
   aliasing.
 - **On `stopcode=1` (iteration limit):** raise `niter` (or tighten the mask if
   cleaning noise) and re-run until `stopcode in (2, 8)`.
+- **Quarantine or remove rejected/diverged image products immediately (HARD RULE):**
+  Whenever a `tclean` pass fails convergence (`stopcode not in (2, 8)`) or is
+  rejected for divergence / negative-dominated `.model`, immediately move all
+  `<rejected_imagename>.*` CASA image products into `{WORKDIR}/rejected/` (or
+  delete them) BEFORE running the recovery pass. Never leave a stale rejected
+  image (e.g. `mosaic.image.tt0`) sitting in `{WORKDIR}` where downstream
+  reports or consumers could mistake it for the converged deliverable, and
+  verify that your handoff/summary lists ONLY the exact converged final prefix.
 
 ---
 
@@ -626,8 +655,8 @@ Quality gates (every delivered target image MUST report and verify all convergen
 | `tclean` convergence (`stage_log.jsonl`) | `converged == True` (`stopcode` is `2` or `8`) | **HARD FAIL** on `stopcode=1`, `5`, or `6`: NEVER deliver. Fix root cause (shallow Phase A `nsigma=5.0` + tight PyBDSF `usemask='user'` mask inside `PB >= 0.1`, clean target spectrum, full `imsize`, or higher `niter`) -- NEVER raise `threshold` above `~3--5x` rms to mask divergence |
 | `.model` positivity (Stokes I: `model_neg_to_pos_flux_ratio`, `model_neg_pixel_fraction`, `model_neg_to_pos_peak_ratio`, `model_outer_pb_flux_frac`) | Predominantly positive (`model_neg_to_pos_flux_ratio < 0.25`, `model_neg_to_pos_peak_ratio < 0.25`, `model_outer_pb_flux_frac` small) | Surging negative model flux/components: stop deepening, tighten mask or drop overly large `scales`, or keep the cleaner earlier round (never subtract or deliver a negative-dominated Stokes I model) |
 | `residual_out_mask_peak_snr` | `< 5.0` (masked pass, inside `PB >= 0.1`) | `>= 5.0`: unmasked emission remains inside `PB >= 0.1`; grow mask via `ms_make_mask(..., pb_level=0.1, prior_mask=...)` (enable `atrous_do=True` / `thresh_pix=4.0, thresh_isl=2.5` if diffuse) and re-image |
-| `residual_outer_pb_peak_snr`, `residual_outer_pb_peak_pb`, `residual_outer_pb_peak_j2000` (`0 < PB < 0.1`) | Diagnostic (uncleaned outer-PB sources are normal and NOT an automatic failure) | If bright enough to throw sidelobes into `PB >= 0.1`: (1) cross-match `(ra_deg, dec_deg)` against `ms_field_list` (if phasecal, include pointing), else (2) `outlierfile` or fast baby peeling (`gridder='standard'`, `phasecenter=<j2000>`, `mtmfs nterms=2`, `savemodel='modelcolumn'`, `uvsub`, confirm via dirty image) |
-| `residual_in_mask_peak_snr`, `residual_in_to_out_rms_ratio` | `< 3.5` and `< 1.5` (near `1.0`, masked pass) | Above either: mask covers the source but `tclean` stopped early inside it (or threshold was set too high); run Phase C deep clean inside the fixed mask with `nsigma=1.5` and `threshold = max(2 * thermal_rms_jy, 1.5 * residual_out_mask_rms_jy)` |
+| `residual_outer_pb_peak_snr`, `residual_outer_pb_peak_pb`, `residual_outer_pb_peak_j2000` (`0 < PB < 0.1`) | Diagnostic (uncleaned outer-PB sources are normal; probe required when `>= 20` AND science-PB RMS `> 1.3 * thermal_rms_jy`) | If `residual_outer_pb_peak_snr >= 20` AND `residual_out_mask_rms_jy` (else `residual_rms_jy`) `> 1.3 * thermal_rms_jy`: (1) cross-match `(ra_deg, dec_deg)` against `ms_field_list` (if phasecal, include pointing), else (2) run the Version-1 baby-peel probe (before/after dirty mosaic RMS) -- keep the peeled MS and re-image if science-PB RMS improves, otherwise keep unpeeled and report the probe delta |
+| `residual_in_mask_peak_snr`, `residual_in_to_out_rms_ratio`, `residual_in_model_rms_ratio` | `< 3.5` and `< 1.5` (near `1.0`, checked even on `usemask='pb'` passes via `residual_in_model_rms_ratio`) | Above `1.5` on Phase A (`usemask='pb'`): quick-look only -- MUST run Phase B masked deep clean (`ms_make_mask` + `usemask='user'`). Above either on a masked pass: run Phase C deep clean inside the fixed mask (`nsigma=1.5`, `threshold = max(2 * thermal_rms_jy, 1.5 * residual_out_mask_rms_jy)`) |
 | `residual_out_mask_rms_jy` (else `residual_rms_jy`) | Within 2x of `thermal_rms_jy` | > 2x after deconvolution converges: separate outer-PB sidelobes, calibration, residual RFI, and self-cal/confusion causes below; do not ship unresolved or dismiss `thermal_rms_jy` as "optimistic" without testing a point-source calibrator |
 | `residual_dynamic_range` | > 100 for calibrators; > 20 for typical targets | < 20: imaging artefacts dominant; check PSF sidelobes |
 | `flat_noise_min_jy`, `negative_to_peak_ratio` | `negative_to_peak_ratio` <= 0.05 (Stokes I, flat-noise `.image` inside PB >= `pb_level`) | > 0.05 (severe if > 0.10): negative clean bowl from over-cleaning unmasked noise, too-low threshold, or missing short spacings; verify mask and `nsigma`, re-image with tighter masking/threshold before self-cal or shipping |
@@ -650,6 +679,16 @@ as a point-source noise check to empirically test calibration and `thermal_rms_j
 present, and (C) if calibration and data are clean, evaluate phase
 self-calibration when `dynamic_range >= 30` and the model is bowl-free (or
 document sky confusion / dynamic-range limits).
+
+**Mandatory delivered-image handoff/report block.** Every imaging handoff and
+final summary MUST report these exact fields for the converged final deliverable
+prefix ONLY (never a rejected/quarantined prefix):
+- Exact delivered image prefix on disk (e.g. `{WORKDIR}/mosaic_mtmfs_r2.image.tt0.pbcor`)
+- `stopcode` and `converged` (`True`, `stopcode in (2, 8)`)
+- `residual_out_mask_rms_jy` (else `residual_rms_jy`) and ratio to `thermal_rms_jy`
+- `residual_in_to_out_rms_ratio` and `residual_in_model_rms_ratio`
+- `residual_out_mask_peak_snr` and `.model` positivity (`model_neg_to_pos_flux_ratio`, `model_neg_to_pos_peak_ratio`)
+- `residual_outer_pb_peak_snr` (and Version-1 peel probe before/after RMS delta if triggered)
 
 ### Reading `detection`
 

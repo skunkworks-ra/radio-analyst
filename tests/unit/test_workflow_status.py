@@ -412,10 +412,39 @@ def test_stokes_i_chain_is_unchanged_and_says_which_stokes(fake_ms, monkeypatch)
     ms, workdir = fake_ms
     _stokes_i_done(ms, workdir, monkeypatch)
     data = _run(ms, workdir)["data"]
-    assert data["next_recommended_step"] == "first_image"
+    assert data["next_recommended_step"] == "postcal_target_rfi"
+    assert data["target_spectrum_checked"]["value"] is False
     assert data["stokes"] == "I"
     assert "polcal_solves_completed" not in data
     assert "pol_applied_target" not in data
+
+
+def test_postcal_target_rfi_advances_to_first_image_only_after_applycal(fake_ms, monkeypatch):
+    """Target spectrum check or rflag must happen on target MS AFTER applycal_target."""
+    ms, workdir = fake_ms
+    # Early rflag or DATA-only spw_amp_severity BEFORE applycal must not satisfy the gate.
+    _log(workdir, "rflag", product=str(ms))
+    _stokes_i_done(ms, workdir, monkeypatch)
+    _log(workdir, "spw_amp_severity", product=str(ms), measurement={"datacolumn": "DATA"})
+    _log(workdir, "postcal_flag", product=str(workdir / "calibrators.ms"))
+    data = _run(ms, workdir)["data"]
+    assert data["target_spectrum_checked"]["value"] is False
+    assert data["next_recommended_step"] == "postcal_target_rfi"
+
+    # CORRECTED_DATA spectrum check on target MS advances to first_image.
+    _log(workdir, "spw_amp_severity", product=str(ms), measurement={"datacolumn": "CORRECTED_DATA"})
+    data2 = _run(ms, workdir)["data"]
+    assert data2["target_spectrum_checked"]["value"] is True
+    assert data2["next_recommended_step"] == "first_image"
+
+
+def test_postcal_flag_or_rflag_on_target_also_advances_to_first_image(fake_ms, monkeypatch):
+    ms, workdir = fake_ms
+    _stokes_i_done(ms, workdir, monkeypatch)
+    _log(workdir, "postcal_flag", product=str(ms))
+    data = _run(ms, workdir)["data"]
+    assert data["target_spectrum_checked"]["value"] is True
+    assert data["next_recommended_step"] == "first_image"
 
 
 def test_stokes_i_apply_on_calibrators_ms_does_not_satisfy_target_even_with_scratch_col(
@@ -476,7 +505,7 @@ def test_stokes_i_apply_matches_target_through_symlink(fake_ms, monkeypatch, tmp
     )
     data = _run(ms, workdir)["data"]
     assert data["corrected_populated_target"]["value"] is True
-    assert data["next_recommended_step"] == "first_image"
+    assert data["next_recommended_step"] == "postcal_target_rfi"
 
 
 def test_iquv_with_no_pol_solve_asks_for_polcal(fake_ms, monkeypatch):
@@ -514,7 +543,9 @@ def test_iquv_pol_apply_on_the_target_reaches_first_image(fake_ms, monkeypatch):
     _pol_apply(workdir, ms)
     data = _run(ms, workdir, "IQUV")["data"]
     assert data["pol_applied_target"]["value"] is True
-    assert data["next_recommended_step"] == "first_image"
+    assert data["next_recommended_step"] == "postcal_target_rfi"
+    _log(workdir, "spw_amp_severity", product=str(ms), measurement={"datacolumn": "CORRECTED_DATA"})
+    assert _run(ms, workdir, "IQUV")["data"]["next_recommended_step"] == "first_image"
 
 
 def test_iquv_pol_apply_on_calibrators_ms_does_not_count(fake_ms, monkeypatch):
@@ -534,7 +565,7 @@ def test_iquv_pol_apply_matches_the_target_through_a_symlink(fake_ms, monkeypatc
     link = tmp_path / "link.ms"
     link.symlink_to(ms)
     _pol_apply(workdir, link)
-    assert _run(ms, workdir, "IQUV")["data"]["next_recommended_step"] == "first_image"
+    assert _run(ms, workdir, "IQUV")["data"]["next_recommended_step"] == "postcal_target_rfi"
 
 
 def test_iquv_apply_without_dterms_table_does_not_count(fake_ms, monkeypatch):
@@ -555,7 +586,7 @@ def test_iquv_xf_is_reported_but_not_required(fake_ms, monkeypatch):
     _pol_apply(workdir, ms, pol_types=("Kcross", "Df", "Xf"))
     data = _run(ms, workdir, "IQUV")["data"]
     assert data["polcal_solves_completed"] == ["Kcross", "Df", "Xf"]
-    assert data["next_recommended_step"] == "first_image"
+    assert data["next_recommended_step"] == "postcal_target_rfi"
 
 
 def test_iquv_lines_without_the_solve_kind_do_not_count_and_warn(fake_ms, monkeypatch):

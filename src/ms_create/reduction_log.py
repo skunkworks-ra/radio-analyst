@@ -117,6 +117,9 @@ _STAGE_TO_TOOL: dict[str, str] = {
 }
 
 _MULTI_PRODUCT_STAGES = frozenset({"import_asdm", "preflag", "priorcals", "initial_bandpass"})
+# Read-only check stages recorded in stage_log.jsonl for workflow state only;
+# they do not mutate data and should not appear as replay steps.
+_NON_MUTATING_STAGES = frozenset({"spw_amp_severity"})
 _PRODUCT_SOLVE_STAGES = frozenset(
     {
         "import_asdm",
@@ -453,7 +456,11 @@ def load_effective_records(wd: Path) -> list[dict]:
     from ms_inspect.util.formatting import normalize_field_sel
 
     manual_records = _strip_unsupported_execute(_read_records(wd / _LOG_NAME))
-    stage_entries = [e for e in read_stage_log(wd) if e.get("exists") is True and e.get("stage")]
+    stage_entries = [
+        e
+        for e in read_stage_log(wd)
+        if e.get("exists") is True and e.get("stage") and e.get("stage") not in _NON_MUTATING_STAGES
+    ]
     if not stage_entries:
         return manual_records
 

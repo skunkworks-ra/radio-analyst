@@ -1117,6 +1117,117 @@ def _model_positivity_stats(
     }
 
 
+def _in_model_residual_stats(
+    image_path: str,
+    pb_level: float,
+    ref_rms_jy: float | None,
+    casa_calls: list[str],
+    warnings: list[str],
+) -> dict:
+    """Residual RMS/peak/ratio on |model| > 0 inside PB >= pb_level.
+
+    Always computed when sibling .residual, .pb, and .model exist so shallow
+    unmasked (usemask='pb') passes -- where .mask is absent or covers 100% of
+    PB >= pb_level and residual_out_mask_rms_jy is unavailable -- still expose
+    uncleaned on-source residuals directly.
+    """
+    keys = (
+        "residual_in_model_rms_jy",
+        "residual_in_model_peak_jy",
+        "residual_in_model_peak_snr",
+        "residual_in_model_rms_ratio",
+    )
+
+    def _unavail(reason: str) -> dict:
+        return {k: fmt_field(None, flag="UNAVAILABLE", note=reason) for k in keys}
+
+    residual, pb = _siblings(image_path)
+    model_path = _sibling_model(image_path)
+    missing = [str(x.name) for x in (residual, pb) if not x.exists()]
+    if model_path is None or not model_path.exists():
+        missing.append(".model")
+    if missing:
+        return _unavail(f"sibling image not found: {', '.join(missing)}")
+
+    import numpy as np
+
+    try:
+        with open_image(str(pb)) as ia_pb:
+            pb_pix = np.asarray(ia_pb.getchunk(), dtype=float)
+        with open_image(str(residual)) as ia_res:
+            res_pix = np.asarray(ia_res.getchunk(), dtype=float)
+        with open_image(str(model_path)) as ia_mod:
+            mod_pix = np.asarray(ia_mod.getchunk(), dtype=float)
+    except Exception as exc:
+        warnings.append(f"Could not read in-model residual images: {exc}")
+        return _unavail(f"read failed: {exc}")
+
+    pb_bcast = _broadcast_pb(pb_pix, res_pix.shape)
+    mod_bcast = _broadcast_pb(mod_pix, res_pix.shape)
+    if pb_bcast is None or mod_bcast is None:
+        reason = (
+            f"shape mismatch: residual {res_pix.shape}, pb {pb_pix.shape}, model {mod_pix.shape}"
+        )
+        warnings.append(f"In-model residual stats skipped ({reason}).")
+        return _unavail(reason)
+
+    casa_calls.append(
+        f"ia.getchunk() on {residual.name} over |{model_path.name}| > 0 where {pb.name} >= {pb_level}"
+    )
+    valid = (pb_bcast >= pb_level) & np.isfinite(res_pix) & np.isfinite(mod_bcast)
+    in_mod = valid & (np.abs(mod_bcast) > 0.0)
+    if not np.any(in_mod):
+        return _unavail(f"no nonzero pixels in {model_path.name} inside {pb.name} >= {pb_level}")
+
+    in_vals = res_pix[in_mod]
+    in_rms = float(np.sqrt(np.mean(in_vals * in_vals)))
+    in_peak = float(np.max(np.abs(in_vals)))
+
+    # Off-source denominator: prefer outside-mask MAD RMS when available, else
+    # MAD RMS of |model| == 0 pixels inside PB >= pb_level, else whole-PB ref_rms_jy.
+    off_rms: float | None = None
+    off_label = ""
+    if ref_rms_jy is not None and ref_rms_jy > 0:
+        off_rms = float(ref_rms_jy)
+        off_label = "off-source residual RMS"
+    off_mod = valid & (np.abs(mod_bcast) == 0.0)
+    if off_rms is None and np.any(off_mod):
+        off_vals = res_pix[off_mod]
+        off_med = float(np.median(off_vals))
+        cand = _MAD_TO_SIGMA * float(np.median(np.abs(off_vals - off_med)))
+        if cand > 0:
+            off_rms = cand
+            off_label = f"1.4826 x MAD of {residual.name} where |{model_path.name}| == 0"
+
+    ratio = (in_rms / off_rms) if (off_rms is not None and off_rms > 0) else None
+    peak_snr = (in_peak / off_rms) if (off_rms is not None and off_rms > 0) else None
+    in_note = (
+        f"RMS (sqrt(mean(x^2))) of {residual.name} on |{model_path.name}| > 0 "
+        f"where {pb.name} >= {pb_level} ({int(in_vals.size)} px)"
+    )
+    return {
+        "residual_in_model_rms_jy": fmt_field(round(in_rms, 9), note=in_note),
+        "residual_in_model_peak_jy": fmt_field(
+            round(in_peak, 9),
+            note=f"max(|{residual.name}|) on |{model_path.name}| > 0 inside {pb.name} >= {pb_level}",
+        ),
+        "residual_in_model_peak_snr": fmt_field(
+            round(peak_snr, 2) if peak_snr is not None else None,
+            flag="COMPLETE" if peak_snr is not None else "UNAVAILABLE",
+            note=f"residual_in_model_peak_jy / {off_label}"
+            if peak_snr is not None
+            else "off-source residual RMS unavailable or zero",
+        ),
+        "residual_in_model_rms_ratio": fmt_field(
+            round(ratio, 3) if ratio is not None else None,
+            flag="COMPLETE" if ratio is not None else "UNAVAILABLE",
+            note=f"residual_in_model_rms_jy / {off_label}"
+            if ratio is not None
+            else "off-source residual RMS unavailable or zero",
+        ),
+    }
+
+
 def _write_png(image_path: str, png_path: str, pb_level: float) -> str:
     """Plane 0 as a PNG, viridis over the 1st to 99.9th percentile, PB contour in white."""
     import numpy as np
@@ -1364,6 +1475,28 @@ def run(
     data.update(
         _model_positivity_stats(image_path, pb_level, has_signed_stokes, casa_calls, warnings)
     )
+    in_model_stats = _in_model_residual_stats(
+        image_path,
+        pb_level,
+        mask_stats["residual_out_mask_rms_jy"]["value"],
+        casa_calls,
+        warnings,
+    )
+    data.update(in_model_stats)
+    # When .mask is absent or covers 100% of PB >= pb_level (e.g. usemask='pb'),
+    # expose the |model| > 0 ratio via residual_in_to_out_rms_ratio as well so
+    # shallow pb-mask passes never hide uncleaned source residuals behind null.
+    if (
+        data["residual_in_to_out_rms_ratio"]["value"] is None
+        and in_model_stats["residual_in_model_rms_ratio"]["value"] is not None
+    ):
+        data["residual_in_to_out_rms_ratio"] = fmt_field(
+            in_model_stats["residual_in_model_rms_ratio"]["value"],
+            note=(
+                "fallback to residual_in_model_rms_ratio (|model| > 0 vs |model| == 0 "
+                f"inside PB >= {pb_level}; no outside-mask pixels available)"
+            ),
+        )
 
     if png_path:
         try:

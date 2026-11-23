@@ -41,8 +41,8 @@ until `status=done`.
 
 1. `ms_workflow_status(ms_path, workdir, stokes='IQUV')` -- confirm calibration
    is complete. If `next_recommended_step` is neither `polcal` nor
-   `applycal_pol_target`, STOP. Exception: `first_image` with a `retry:` line
-   in the arguments means redo the polcal: continue.
+   `applycal_pol_target`, STOP. Exception: `postcal_target_rfi` or `first_image`
+   with a `retry:` line in the arguments means redo the polcal: continue.
 
 2. `ms_pol_cal_conditions(calibrators.ms)` -- measure the conditions, then decide.
    Apply 09-polcal-execution.md Reading the conditions:

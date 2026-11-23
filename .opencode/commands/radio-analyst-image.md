@@ -90,7 +90,7 @@ expected `.image.pbcor` exists on disk first.
      `.model` positivity stats and outer-PB peak sky coordinates `residual_outer_pb_peak_j2000`).
    - threshold (Step 7): do NOT clean an unmasked (`usemask='pb'`) dynamic-range-limited mosaic down to `3 * thermal_rms_jy` alone. Use `nsigma=5.0` on unmasked `mtmfs` mosaics (`3.5` on narrowband `hogbom` mosaics, `3.0` single-pointing) with `threshold = max(3 * thermal_rms_jy, 3..5 * measured_off_source_rms)`. NEVER raise `threshold` above `~3--5 * off_source_rms` to mask divergence. Use `usemask='user'` + `mask=<path>` when a tight external/PyBDSF mask is available; never use `auto-multithresh`.
 
-5. **Phase A -- Initial shallow pass (`usemask='pb'`):** `ms_tclean(ms_path,
+5. **Phase A -- Initial shallow pass (`usemask='pb'`, quick-look only):** `ms_tclean(ms_path,
    imagename=<name>_hogbom, field, spw=<spw or ''>, stokes, specmode,
    deconvolver, nterms, gridder, wprojplanes, cell, imsize,
    weighting='briggs', robust=0.5, niter=50000, threshold,
@@ -99,7 +99,10 @@ expected `.image.pbcor` exists on disk first.
    pbmask=(user pbmask or 0.1), usemask='pb',
    savemodel='modelcolumn', workdir, execute=False)` -> run.
    Verify `converged=True` (`stopcode in (2, 8)`), then step 6 on it (use its
-   `residual_rms_jy` to check/raise the threshold).
+   `residual_rms_jy` and `residual_in_model_rms_ratio` to decide Phase B:
+   **Phase B masked deep clean is MANDATORY whenever `residual_in_model_rms_ratio > 1.5`
+   OR `residual_rms_jy > 1.3 * thermal_rms_jy`** -- never stop at a quick-look
+   `usemask='pb'` pass).
 
    **Phase B -- Adaptive PyBDSF mask-growing passes (safety cap 4 rounds, stop
    early on convergence per 11-imaging.md Step 2):**
@@ -144,23 +147,25 @@ expected `.image.pbcor` exists on disk first.
      (`stopcode in (2, 8)`), then step 6 on it (verify `.model` positivity did
      not degrade compared to Phase B).
    **Outer-PB offending source handling (11-imaging.md Step 2):** Uncleaned
-   outer-PB sources (`0 < PB < 0.1`) are normal and NOT an automatic failure.
-   If `residual_outer_pb_peak_snr` is bright enough to throw sidelobes into the
-   science region: (1) cross-match `(ra_deg, dec_deg)` against `ms_field_list`
-   (if it is the phasecal, include that pointing in the mosaic), else (2) use
-   `outlierfile` (set `gridder=standard` inside the outlier file on mosaic runs)
-   or two-tier baby peeling on a split working MS (`split` +
-   `clearcal(addmodel=False)` -> **Version 1 primary:** single-call
-   `gridder='standard'` across all target fields at
+   outer-PB sources (`0 < PB < 0.1`) are normal and NOT an automatic failure,
+   EXCEPT when **`residual_outer_pb_peak_snr >= 20` AND science-PB RMS
+   (`residual_out_mask_rms_jy`, else `residual_rms_jy`) `> 1.3 * thermal_rms_jy`**:
+   (1) cross-match `(ra_deg, dec_deg)` against `ms_field_list` (if it is the
+   phasecal, include that pointing in the mosaic), else (2) run the Version-1
+   baby-peel probe on a split working MS (`split` + `clearcal(addmodel=False)`
+   -> single-call `gridder='standard'` across all target fields at
    `phasecenter=<residual_outer_pb_peak_j2000>` + `mtmfs nterms=2` + tight mask
    + `savemodel='modelcolumn'` -> verify `.model` positivity -> `uvsub` ->
-   `delmod` -> mosaic dirty check before/after; **Version 2 fallback** only if
-   pointing-to-pointing PB gain leaves strong residual: per-pointing
-   `gridder='standard'` populating/zeroing all fields in `MODEL_DATA` -> single
-   `uvsub` -> `delmod` -> dirty check -> re-image).
-   **Hard convergence rule:** NEVER deliver an image with `converged=False`
-   (`stopcode=1`, `5`, or `6`) and NEVER raise `threshold` above
-   `~3--5 * off_source_rms` to hide divergence.
+   `delmod` -> mosaic dirty check before/after): keep the peeled MS and re-image
+   if science-PB RMS improves (escalate to Version-2 per-pointing peel only if
+   needed), otherwise keep the unpeeled image and report the measured probe delta.
+   **Hard convergence & rejected-artifact rule:** NEVER deliver an image with
+   `converged=False` (`stopcode=1`, `5`, or `6`) and NEVER raise `threshold`
+   above `~3--5 * off_source_rms` to hide divergence. Whenever any `tclean` pass
+   fails convergence or is rejected, immediately move all `<rejected>.*` CASA
+   products into `<workdir>/rejected/` (or remove them) BEFORE running the
+   recovery pass, and verify your handoff/summary lists ONLY the converged final
+   deliverable prefix.
    MODEL_DATA now holds the final masked model (all calls record automatically in
    `stage_log.jsonl`).
 
@@ -171,21 +176,23 @@ expected `.image.pbcor` exists on disk first.
    `pb_level=0.1`) -- programmatic quality metrics (including
    `residual_out_mask_rms_jy`, `residual_out_mask_peak_snr`,
    `residual_in_mask_peak_snr`, `residual_in_to_out_rms_ratio`,
-   `model_neg_to_pos_flux_ratio`, `model_neg_pixel_fraction`,
-   `model_neg_to_pos_peak_ratio`, `model_outer_pb_flux_frac`,
-   `residual_outer_pb_peak_snr`, `residual_outer_pb_peak_pb`,
-   `residual_outer_pb_peak_j2000`, `residual_rms_jy`, `flat_noise_min_jy`,
-   `negative_to_peak_ratio`, `dynamic_range`); do not assume vision -- rely on
-   the numeric metrics above (open `png_path` with Read only if vision is
-   available).
+   `residual_in_model_rms_ratio`, `model_neg_to_pos_flux_ratio`,
+   `model_neg_pixel_fraction`, `model_neg_to_pos_peak_ratio`,
+   `model_outer_pb_flux_frac`, `residual_outer_pb_peak_snr`,
+   `residual_outer_pb_peak_pb`, `residual_outer_pb_peak_j2000`,
+   `residual_rms_jy`, `flat_noise_min_jy`, `negative_to_peak_ratio`,
+   `dynamic_range`); do not assume vision -- rely on the numeric metrics above
+   (open `png_path` with Read only if vision is available).
 
-7. Apply 11-imaging.md Step 9 gates to the final masked image; report the
-   first-pass and mask-growth numbers beside them:
+7. Apply 11-imaging.md Step 9 gates to the final converged image and report
+   ALL mandatory handoff fields for the exact delivered prefix ONLY (never a
+   rejected/quarantined basename):
+   - exact delivered image prefix on disk (e.g. `<workdir>/<name>_mtmfs_r2.image.tt0.pbcor`)
    - `tclean` convergence: `converged == True` (`stopcode in (2, 8)` in `stage_log.jsonl`) -- HARD GATE
    - `.model` positivity (Stokes I): `model_neg_to_pos_flux_ratio`, `model_neg_pixel_fraction`, `model_neg_to_pos_peak_ratio`, `model_outer_pb_flux_frac` (mostly positive)
-   - `residual_out_mask_rms_jy` (or `residual_rms_jy` if unmasked) vs. `thermal_rms_jy` from `ms_radiometer_estimate` (2x tolerance)
-   - deconvolution convergence inside `PB >= 0.1`: `residual_out_mask_peak_snr` (< 5.0), `residual_in_mask_peak_snr` (< 3.5), `residual_in_to_out_rms_ratio` (< 1.5), `mask_growth_fraction`
-   - outer-PB diagnostic (`0 < PB < 0.1`): report `residual_outer_pb_peak_snr`, `residual_outer_pb_peak_pb`, `residual_outer_pb_peak_j2000` (and whether phasecal-included, peeled, or left uncleaned)
+   - `residual_out_mask_rms_jy` (or `residual_rms_jy` if unmasked) and ratio to `thermal_rms_jy` from `ms_radiometer_estimate` (2x tolerance)
+   - deconvolution convergence inside `PB >= 0.1`: `residual_out_mask_peak_snr` (< 5.0), `residual_in_mask_peak_snr` (< 3.5), `residual_in_to_out_rms_ratio` (< 1.5), `residual_in_model_rms_ratio` (< 1.5), `mask_growth_fraction`
+   - outer-PB diagnostic (`0 < PB < 0.1`): report `residual_outer_pb_peak_snr`, `residual_outer_pb_peak_pb`, `residual_outer_pb_peak_j2000` (and Version-1 peel probe before/after RMS delta if triggered)
    - `residual_dynamic_range` thresholds per field type
    - `flat_noise_min_jy` and `negative_to_peak_ratio` (Stokes I clean-bowl check on flat-noise `.image` inside PB >= `pb_level`)
    - `beam_major_arcsec` vs. `lambda / max_baseline_m * (180*3600/pi)` (20% tolerance)

@@ -49,6 +49,10 @@ _SETJY_POLCAL = "setjy_polcal"
 _INITIAL_BANDPASS = "initial_bandpass"
 _INITIAL_RFLAG = "initial_rflag"
 _APPLYCAL = "applycal"
+_SPW_AMP_SEVERITY = "spw_amp_severity"
+_POSTCAL_FLAG = "postcal_flag"
+_RFLAG = "rflag"
+_POSTCAL_STAGES = frozenset({_SPW_AMP_SEVERITY, _POSTCAL_FLAG, _RFLAG})
 _TCLEAN = "tclean"
 
 #: Final-solve stages. The reduction has a delay, a bandpass and a gain when
@@ -122,6 +126,39 @@ def _target_applied(entries: list[dict], target: Path) -> bool:
         if isinstance(product, str) and Path(product).expanduser().resolve() == target:
             return True
     return False
+
+
+def _target_postcal_checked(entries: list[dict], target: Path) -> bool:
+    """True when target spectrum check or postcal rflag ran on ``target`` after its last applycal."""
+    last_applycal_idx: int | None = None
+    last_postcal_idx: int | None = None
+    for idx, e in enumerate(entries):
+        if e.get("exists") is not True:
+            continue
+        product = e.get("product")
+        if not isinstance(product, str):
+            continue
+        try:
+            prod_path = Path(product).expanduser().resolve()
+        except Exception:
+            continue
+        if prod_path != target:
+            continue
+        stage = e.get("stage")
+        if stage == _APPLYCAL:
+            last_applycal_idx = idx
+        elif stage in _POSTCAL_STAGES:
+            if stage == _SPW_AMP_SEVERITY:
+                m = _measurement(e)
+                col = str(m.get("datacolumn", "CORRECTED_DATA")).upper()
+                if col != "CORRECTED_DATA":
+                    continue
+            last_postcal_idx = idx
+    return (
+        last_applycal_idx is not None
+        and last_postcal_idx is not None
+        and last_postcal_idx > last_applycal_idx
+    )
 
 
 def _probe_corrected(ms_str: str) -> tuple[bool | None, str | None]:
@@ -213,6 +250,7 @@ def run(ms_path: str, workdir: str, stokes: str = "I") -> dict:
     final_solves_done = [s for s in _FINAL_SOLVES if s in done]
     setjy_done = (_SETJY in done) or (_SETJY_POLCAL in done)
     target_applied = _target_applied(entries, p)
+    target_postcal_checked = _target_postcal_checked(entries, p)
     pol_solves_done, pol_applied_target, unkeyed = _pol_state(entries, p)
     pol_solved = _POL_KCROSS in pol_solves_done and _POL_DTERMS in pol_solves_done
 
@@ -258,6 +296,8 @@ def run(ms_path: str, workdir: str, stokes: str = "I") -> dict:
         next_step = "polcal"
     elif pol and not pol_applied_target:
         next_step = "applycal_pol_target"
+    elif not target_postcal_checked and _TCLEAN not in done:
+        next_step = "postcal_target_rfi"
     elif _TCLEAN not in done:
         next_step = "first_image"
     else:
@@ -337,6 +377,7 @@ def run(ms_path: str, workdir: str, stokes: str = "I") -> dict:
         ),
         "missing_precal_steps": missing_precal_steps,
         "final_solves_completed": final_solves_done,
+        "target_spectrum_checked": field(target_postcal_checked),
         "stokes": stokes,
         "workdir": str(wd),
         "next_recommended_step": next_step,

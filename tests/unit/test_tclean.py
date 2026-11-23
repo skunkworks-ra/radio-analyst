@@ -575,3 +575,55 @@ class TestMtmfsNtermsAndPathguard:
             execute=False,
         )
         assert any("MosaicFTNew" in w for w in res_warn["warnings"])
+
+    def test_preflight_warning_when_applycal_target_lacks_spectrum_check(
+        self, tmp_path, real_ms_calibrated
+    ):
+        from ms_inspect.util.stage_log import record_stage
+        from ms_modify.tclean import run
+
+        workdir = tmp_path / "work_postcal_warn"
+        workdir.mkdir()
+
+        # No stage_log yet (standalone imaging): no missing-spectrum warning.
+        res_standalone = run(
+            real_ms_calibrated,
+            str(workdir / "standalone_img"),
+            field="0",
+            workdir=str(workdir),
+            execute=False,
+        )
+        assert not any(
+            "Pre-imaging target spectrum check missing" in w for w in res_standalone["warnings"]
+        )
+
+        # After applycal on target MS without subsequent spectrum check: warning fires.
+        record_stage(str(workdir), "applycal", real_ms_calibrated, {"field": "0"})
+        res_unverified = run(
+            real_ms_calibrated,
+            str(workdir / "unverified_img"),
+            field="0",
+            workdir=str(workdir),
+            execute=False,
+        )
+        assert any(
+            "Pre-imaging target spectrum check missing" in w for w in res_unverified["warnings"]
+        )
+
+        # Once ms_spw_amp_severity (CORRECTED_DATA) runs on target MS: warning clears.
+        record_stage(
+            str(workdir),
+            "spw_amp_severity",
+            real_ms_calibrated,
+            {"datacolumn": "CORRECTED_DATA", "field": "0"},
+        )
+        res_verified = run(
+            real_ms_calibrated,
+            str(workdir / "verified_img"),
+            field="0",
+            workdir=str(workdir),
+            execute=False,
+        )
+        assert not any(
+            "Pre-imaging target spectrum check missing" in w for w in res_verified["warnings"]
+        )

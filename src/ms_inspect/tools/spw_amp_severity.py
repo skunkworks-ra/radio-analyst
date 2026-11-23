@@ -792,6 +792,33 @@ def run(
         warnings=warnings,
     )
 
+    # Record a lightweight check marker in stage_log.jsonl when inspecting
+    # CORRECTED_DATA with a workdir, so ms_workflow_status and ms_tclean can
+    # tell whether target spectrum verification ran after applycal.
+    if workdir and datacolumn.upper() == "CORRECTED_DATA":
+        try:
+            wd_path = Path(workdir)
+            if wd_path.is_dir():
+                from ms_inspect.util.stage_log import record_stage
+
+                record_stage(
+                    str(wd_path),
+                    "spw_amp_severity",
+                    str(p),
+                    {
+                        "datacolumn": datacolumn.upper(),
+                        "field": field or "",
+                        "chan_diff_std_over_mad": data["chan_diff_std_over_mad"]["value"],
+                        "max_spw_chan_diff_std_over_mad": data["max_spw_chan_diff_std_over_mad"][
+                            "value"
+                        ],
+                        "chan_diff_gt10sigma_frac": data["chan_diff_gt10sigma_frac"]["value"],
+                        "spw_rms_ratio": data["spw_rms_ratio"]["value"],
+                    },
+                )
+        except Exception:
+            pass
+
     return response_envelope(
         tool_name=TOOL_NAME,
         ms_path=ms_path,

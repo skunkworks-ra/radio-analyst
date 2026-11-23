@@ -44,6 +44,20 @@ Every `"status": "ok"` tool response returns:
 - `field_flags`: sparse map of non-`COMPLETE` or annotated dotted paths (`{"path": {"flag": "...", "note": "..."}}`); `COMPLETE` fields with no note are omitted.
 - `warnings`: human-readable operational advisories.
 
+## 5-Stage E2E Reduction Contract (mandatory stage-by-stage reads)
+
+Every end-to-end MS reduction runs these five stages in order. **Read each
+stage's required file BEFORE calling that stage's write tools -- NEVER jump
+from calibration straight to `ms_tclean`:**
+
+| Stage | Required skill file to Read | Mandatory gate before advancing |
+|---|---|---|
+| 1. Inspect | `01-workflow.md` + `01b-workflow-phase2.md` | Field roles, SPWs, antennas, elevation, flagging baseline |
+| 2. Precal | `10-precal-workflow.md` | `ms_workflow_status.missing_precal_steps == []` (`next_recommended_step == 'delay_bandpass_gain'`) |
+| 3. Calibrate (+ Polcal if IQUV) | `07-calibration-execution.md` (+ `09-polcal-execution.md`) | `ms_workflow_status.corrected_populated_target == True` (and `pol_applied_target == True` for IQUV) |
+| 4. Postcal target spectrum gate | `13-postcal-rfi-flagging.md` (and `11-imaging.md` Step 0.5) | **NEVER SKIP:** run `ms_spw_amp_severity(ms_path, datacolumn='CORRECTED_DATA', field=<targets>, workdir=workdir)`. If `chan_diff_std_over_mad >= 1.5`, `max_spw_chan_diff_std_over_mad >= 1.8`, `chan_diff_gt10sigma_frac >= 0.001`, or `spw_rms_ratio >= 1.5`, run conservative target `rflag` (`ms_apply_rflag` / `ms_postcal_flag`, NEVER clip targets) and re-measure until clean (`ms_workflow_status.next_recommended_step == 'first_image'`). |
+| 5. Image (noise-limited) | `11-imaging.md` | **Read `11-imaging.md` BEFORE calling `ms_tclean`.** Derive `cell`/`imsize`/`pblimit`/`deconvolver`, run masked deep clean whenever `residual_in_model_rms_ratio > 1.5` or `residual_rms_jy > 1.3 * thermal_rms_jy`, remove/quarantine any rejected non-converged image, and deliver ONLY a converged (`stopcode in (2, 8)`) science image. |
+
 ## Locating the supporting files
 
 Every file named below is a **sibling of this `SKILL.md`**, in the same

@@ -860,3 +860,71 @@ class TestMinJyAndNegativeBowl:
         assert mod["model_neg_to_pos_peak_ratio"]["value"] == pytest.approx(0.15)
         assert mod["model_outer_pb_flux_frac"]["value"] == pytest.approx(0.015 / 0.18, abs=1e-4)
         assert mod_q["model_neg_to_pos_flux_ratio"]["flag"] == "UNAVAILABLE"
+
+    def test_in_model_residual_ratio_computed_when_mask_absent(self, tmp_path):
+        """When .mask is absent (or full-PB usemask='pb'), residual_in_model_rms_ratio
+        and residual_in_to_out_rms_ratio fallback expose elevated on-source residuals."""
+        import numpy as np
+
+        from ms_inspect.tools import image_stats
+
+        pbcor = tmp_path / "pbpass.image.tt0.pbcor"
+        res_dir = tmp_path / "pbpass.residual.tt0"
+        pb_dir = tmp_path / "pbpass.pb.tt0"
+        mod_dir = tmp_path / "pbpass.model.tt0"
+        for d in (pbcor, res_dir, pb_dir, mod_dir):
+            d.mkdir()
+        # Intentionally no .mask directory on disk.
+
+        rng = np.random.default_rng(7)
+        pb = np.zeros((64, 64, 1, 1), dtype=float)
+        pb[8:56, 8:56, 0, 0] = 0.8
+
+        res_arr = rng.normal(0.0, 0.0002, (64, 64, 1, 1))
+        mod_arr = np.zeros((64, 64, 1, 1), dtype=float)
+        # Put a small modeled region with 3x elevated uncleaned residuals.
+        mod_arr[28:36, 28:36, 0, 0] = 0.05
+        res_arr[28:36, 28:36, 0, 0] = 0.0006
+
+        img_arr = mod_arr + res_arr
+        arrays = {
+            "pbpass.image.tt0.pbcor": img_arr,
+            "pbpass.residual.tt0": res_arr,
+            "pbpass.pb.tt0": pb,
+            "pbpass.model.tt0": mod_arr,
+        }
+
+        def fake_open(path):
+            name = Path(path).name
+            arr = arrays[name]
+            ia = MagicMock()
+            ia.getchunk.return_value = arr
+            ia.shape.return_value = list(arr.shape)
+            ia.statistics.side_effect = lambda robust=False, **kw: (
+                {"medabsdevmed": [0.000135]}
+                if robust
+                else {"max": [float(np.max(arr))], "min": [float(np.min(arr))], "rms": [0.0002]}
+            )
+            csys = MagicMock()
+            csys.stokes.return_value = ["I"]
+            ia.coordsys.return_value = csys
+            ia.restoringbeam.return_value = {
+                "major": {"value": 10.0, "unit": "arcsec"},
+                "minor": {"value": 8.0, "unit": "arcsec"},
+                "positionangle": {"value": 15.0, "unit": "deg"},
+            }
+            cm = MagicMock()
+            cm.__enter__.return_value = ia
+            return cm
+
+        with patch.object(image_stats, "open_image", side_effect=fake_open):
+            out = image_stats.run(str(pbcor), pb_level=0.1)["data"]
+
+        assert out["residual_out_mask_rms_jy"]["value"] is None
+        assert out["residual_in_model_rms_ratio"]["value"] > 2.5
+        assert out["residual_in_to_out_rms_ratio"]["value"] == pytest.approx(
+            out["residual_in_model_rms_ratio"]["value"]
+        )
+        assert (
+            "fallback to residual_in_model_rms_ratio" in out["residual_in_to_out_rms_ratio"]["note"]
+        )
