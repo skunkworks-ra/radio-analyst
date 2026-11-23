@@ -561,3 +561,17 @@ class TestMtmfsNtermsAndPathguard:
                 workdir=str(workdir),
                 execute=False,
             )
+
+        # gridder='mosaic' + outlierfile missing gridder=standard warns against MosaicFTNew abort
+        res_warn = run(
+            real_ms_calibrated,
+            str(workdir / "mosaic_out_warn"),
+            field="0",
+            gridder="mosaic",
+            pblimit=-0.01,
+            pbmask=0.1,
+            outlierfile=str(outlier),
+            workdir=str(workdir),
+            execute=False,
+        )
+        assert any("MosaicFTNew" in w for w in res_warn["warnings"])

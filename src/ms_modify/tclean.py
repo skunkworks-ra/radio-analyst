@@ -501,6 +501,16 @@ def run(
                 ms_path=ms_path,
             )
         outlierfile_str = str(of_path)
+        if gridder == "mosaic":
+            of_text = of_path.read_text(errors="replace").lower()
+            if "gridder=standard" not in of_text.replace(" ", ""):
+                warnings.append(
+                    "gridder='mosaic' with outlierfile that does not specify "
+                    "'gridder=standard': CASA MosaicFTNew aborts (weights all zero) "
+                    "on off-axis outlier cutouts that exclude pointing centers. "
+                    "Set 'gridder=standard' inside the outlierfile or use single-call "
+                    "gridder='standard' + phasecenter for baby peeling."
+                )
 
     if (
         usemask == "user"

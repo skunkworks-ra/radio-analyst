@@ -266,41 +266,56 @@ follow this decision tree:
    `ms_field_list`. If it matches the phasecal (or another calibrated pointing
    in the MS), include that pointing in the mosaic `field` selection so its
    primary beam covers the source cleanly.
-3. **Outlier field (`outlierfile`) or baby peeling (preferred for fast clean removal):**
-   - **Outlier field:** Write a CASA outlier-field text file centered on
-     `residual_outer_pb_peak_j2000` and pass `outlierfile=<path>` to `ms_tclean`.
-   - **Baby peeling (image only the offending source, subtract with `uvsub`, then
-     confirm it is gone):**
+3. **Outlier field (`outlierfile`) or two-tier baby peeling (probe mosaic before and after):**
+   - **Outlier field (joint imaging without subtracting):** Write a CASA
+     outlier-field text file centered on `residual_outer_pb_peak_j2000` and
+     pass `outlierfile=<path>` to `ms_tclean`. On `gridder='mosaic'` runs,
+     always set `gridder=standard` inside the outlier file (inheriting
+     `gridder='mosaic'` on an off-axis cutout that excludes pointing centers
+     aborts CASA `MosaicFTNew` with zero weights).
+   - **Baby peeling (image only the offending source, subtract with `uvsub`, and
+     confirm on the full mosaic dirty image before and after):**
      1. Split calibrated target visibilities to a working MS so the original MS
         stays untouched: `ms_casa_task(task='split', params={'vis': ms_path,
         'outputvis': '<workdir>/target_peeled.ms', 'field': <target>,
         'datacolumn': 'corrected'})`, then `ms_casa_task(task='clearcal',
         params={'vis': '<workdir>/target_peeled.ms', 'addmodel': False})` so
         `CORRECTED_DATA = DATA`.
-     2. Image ONLY the offending source per pointing with
-        `ms_tclean(ms_path='<workdir>/target_peeled.ms', field=<pointing>,
-        gridder='standard', phasecenter=<residual_outer_pb_peak_j2000>,
-        specmode='mfs', deconvolver='mtmfs', nterms=2, imsize=[128, 128],
-        cell=<CELL>, pblimit=-0.01, pbmask=0.0, usemask='user',
-        mask=<tight mask around real component(s) only>, niter=1000,
+     2. **Version 1 (Primary -- fast single-call peel across the full target
+        selection):** Run ONE `ms_tclean(ms_path='<workdir>/target_peeled.ms',
+        field=<target>, gridder='standard',
+        phasecenter=<residual_outer_pb_peak_j2000>, specmode='mfs',
+        deconvolver='mtmfs', nterms=2, imsize=[128, 128], cell=<CELL>,
+        pblimit=-0.01, pbmask=0.0, usemask='user',
+        mask=<tight mask around real component(s) only>, niter=500,
         threshold=<above dirty-cutout sidelobe floor>, savemodel='modelcolumn')`.
         Using `gridder='standard'` + `deconvolver='mtmfs'` (`nterms=2`) models
         the apparent (sky * PB) spectral structure directly without PB-division
-        singularity and runs in tens of seconds per pointing.
-     3. Verify `.model` positivity on each peel cutout (`model_neg_to_pos_flux_ratio`
-        low, e.g. `< 0.30`; never subtract an overcleaned negative-dominated model).
-     4. **Critical CASA `MODEL_DATA` safety rule:** When `tclean(field=f,
-        savemodel='modelcolumn')` creates `MODEL_DATA`, CASA initializes all
-        unselected fields to `1+0j`. Either peel every field in
-        `target_peeled.ms` into `MODEL_DATA` before calling a single `uvsub`, or
-        explicitly zero `MODEL_DATA` on unpeeled fields before calling `uvsub`.
-        Never run `uvsub` if any unpeeled field still holds default `1+0j`.
-     5. Subtract and clean up: `ms_casa_task(task='uvsub', params={'vis':
-        '<workdir>/target_peeled.ms'})`, then `ms_casa_task(task='delmod',
+        singularity, populates `MODEL_DATA` across all target fields in one pass
+        (zero unselected-field risk), and is ~3x faster than an `outlierfile`
+        mosaic pass.
+     3. Verify `.model` positivity on the peel cutout (`model_neg_to_pos_flux_ratio`
+        low, e.g. `< 0.30`; never subtract an overcleaned negative-dominated
+        model), then run `ms_casa_task(task='uvsub', params={'vis':
+        '<workdir>/target_peeled.ms'})` and `ms_casa_task(task='delmod',
         params={'vis': '<workdir>/target_peeled.ms', 'otf': True, 'scr': True})`.
-     6. Confirm with a dirty image (`niter=0`) on `target_peeled.ms` that the
-        offending source is removed, then run subsequent imaging passes on
-        `target_peeled.ms`.
+     4. **Probe mosaic after peeling:** Run a dirty image (`niter=0`) on
+        `target_peeled.ms` and compare the offending source peak before vs after.
+        If it is removed or reduced enough that its sidelobes no longer limit
+        the science region, proceed with main imaging on `target_peeled.ms`.
+     5. **Version 2 (Fallback -- per-pointing peel when mosaic PB gain varies
+        across pointings):** Only if the post-peel mosaic dirty image after
+        Version 1 still leaves significant residual flux at the offender
+        (because different mosaic pointings see different PB gains/spectra at
+        the offender), peel each mosaic pointing individually with
+        `gridder='standard'`, `phasecenter=<residual_outer_pb_peak_j2000>`,
+        `mtmfs nterms=2`, `savemodel='modelcolumn'` into `MODEL_DATA`, then run
+        ONE `uvsub` + `delmod` + dirty check. **Critical CASA `MODEL_DATA`
+        safety rule for Version 2:** when `tclean(field=f, savemodel='modelcolumn')`
+        creates `MODEL_DATA`, CASA initializes unselected fields to `1+0j`;
+        either populate `MODEL_DATA` for every field in `target_peeled.ms`
+        before the single `uvsub`, or zero `MODEL_DATA` on unpeeled fields
+        before calling `uvsub`.
 
 ---
 

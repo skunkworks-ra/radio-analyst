@@ -148,11 +148,16 @@ expected `.image.pbcor` exists on disk first.
    If `residual_outer_pb_peak_snr` is bright enough to throw sidelobes into the
    science region: (1) cross-match `(ra_deg, dec_deg)` against `ms_field_list`
    (if it is the phasecal, include that pointing in the mosaic), else (2) use
-   `outlierfile` or baby-peel on a split working MS (`split` + `clearcal(addmodel=False)`
-   -> small `gridder='standard'` + `phasecenter=<residual_outer_pb_peak_j2000>`
-   + `mtmfs nterms=2` + tight mask + `savemodel='modelcolumn'` -> verify `.model`
-   positivity and populate/zero all fields in `MODEL_DATA` -> `uvsub` -> `delmod`
-   -> dirty-image check -> re-image).
+   `outlierfile` (set `gridder=standard` inside the outlier file on mosaic runs)
+   or two-tier baby peeling on a split working MS (`split` +
+   `clearcal(addmodel=False)` -> **Version 1 primary:** single-call
+   `gridder='standard'` across all target fields at
+   `phasecenter=<residual_outer_pb_peak_j2000>` + `mtmfs nterms=2` + tight mask
+   + `savemodel='modelcolumn'` -> verify `.model` positivity -> `uvsub` ->
+   `delmod` -> mosaic dirty check before/after; **Version 2 fallback** only if
+   pointing-to-pointing PB gain leaves strong residual: per-pointing
+   `gridder='standard'` populating/zeroing all fields in `MODEL_DATA` -> single
+   `uvsub` -> `delmod` -> dirty check -> re-image).
    **Hard convergence rule:** NEVER deliver an image with `converged=False`
    (`stopcode=1`, `5`, or `6`) and NEVER raise `threshold` above
    `~3--5 * off_source_rms` to hide divergence.
