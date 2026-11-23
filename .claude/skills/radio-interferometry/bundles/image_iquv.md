@@ -144,7 +144,9 @@ value and record it as `{CELL}`.
 
 ## Step 4 -- Derive image size
 
-Primary beam FWHM:
+Primary beam FWHM (on wideband observations with `{FRACTIONAL_SPAN} > 0.2`, use
+`min_freq_hz` for `lambda_max = c / min_freq_hz` so the PB tapers cleanly below
+`0.01` inside the image edge with no PB-edge aliasing):
 ```
 pb_fwhm_arcsec = (1.02 * lambda_m / {DISH_DIAMETER_M}) * (180 * 3600 / pi)
 ```

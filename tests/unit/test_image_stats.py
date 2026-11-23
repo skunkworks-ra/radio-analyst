@@ -739,3 +739,124 @@ class TestMinJyAndNegativeBowl:
 
         assert res["data"]["peak_jy"]["value"] == pytest.approx(0.50)
         assert res["data"]["dynamic_range"]["value"] < 1000.0
+
+    def test_tt0_pbcor_siblings_and_full_map_outer_pb_residual_detection(self, tmp_path):
+        """CASA mtmfs writes .image.tt0.pbcor (as well as .image.pbcor.tt0), and
+        _full_residual_peak_stats exposes a 35-sigma outer-PB source even when pb_level=0.1."""
+        import numpy as np
+
+        from ms_inspect.tools import image_stats
+
+        pbcor = tmp_path / "mtmfs.image.tt0.pbcor"
+        flat = tmp_path / "mtmfs.image.tt0"
+        res_dir = tmp_path / "mtmfs.residual.tt0"
+        pb_dir = tmp_path / "mtmfs.pb.tt0"
+        msk_dir = tmp_path / "mtmfs.mask"
+        for d in (pbcor, flat, res_dir, pb_dir, msk_dir):
+            d.mkdir()
+
+        assert image_stats._siblings(str(pbcor)) == (res_dir, pb_dir)
+        assert image_stats._sibling_flat_image(str(pbcor)) == flat
+        assert image_stats._sibling_mask(str(pbcor)) == msk_dir
+
+        rng = np.random.default_rng(13)
+        pb = np.zeros((64, 64, 1, 1), dtype=float)
+        pb[16:48, 16:48, 0, 0] = 0.8
+        pb[4:16, 4:16, 0, 0] = 0.05
+
+        res_arr = rng.normal(0.0, 0.0002, (64, 64, 1, 1))
+        res_arr[8, 8, 0, 0] = 0.007
+
+        arrays = {"mtmfs.residual.tt0": res_arr, "mtmfs.pb.tt0": pb}
+
+        def fake_open(path):
+            ia = MagicMock()
+            ia.getchunk.return_value = arrays[Path(path).name]
+            cm = MagicMock()
+            cm.__enter__.return_value = ia
+            return cm
+
+        with patch.object(image_stats, "open_image", side_effect=fake_open):
+            full = image_stats._full_residual_peak_stats(
+                str(pbcor), pb_level=0.1, ref_rms_jy=0.0002, casa_calls=[], warnings=[]
+            )
+
+        assert full["residual_full_peak_jy"]["value"] == pytest.approx(0.007)
+        assert full["residual_full_peak_snr"]["value"] == pytest.approx(35.0)
+        assert full["residual_full_peak_pb"]["value"] == pytest.approx(0.05)
+        assert full["residual_outer_pb_peak_jy"]["value"] == pytest.approx(0.007)
+        assert full["residual_outer_pb_peak_snr"]["value"] == pytest.approx(35.0)
+        assert full["residual_outer_pb_peak_pb"]["value"] == pytest.approx(0.05)
+
+    def test_outer_pb_sky_coords_and_model_positivity_stats(self, tmp_path):
+        """ms_image_stats returns J2000 coords for outer-PB peak and programmatic .model positivity."""
+        import math
+
+        import numpy as np
+
+        from ms_inspect.tools import image_stats
+
+        pbcor = tmp_path / "mfs.image.tt0.pbcor"
+        res_dir = tmp_path / "mfs.residual.tt0"
+        pb_dir = tmp_path / "mfs.pb.tt0"
+        mod_dir = tmp_path / "mfs.model.tt0"
+        for d in (pbcor, res_dir, pb_dir, mod_dir):
+            d.mkdir()
+
+        assert image_stats._sibling_model(str(pbcor)) == mod_dir
+
+        pb = np.zeros((32, 32, 1, 1), dtype=float)
+        pb[8:24, 8:24, 0, 0] = 0.8
+        pb[2:8, 2:8, 0, 0] = 0.045
+
+        res_arr = np.zeros((32, 32, 1, 1), dtype=float)
+        res_arr[4, 5, 0, 0] = 0.0055
+
+        mod_arr = np.zeros((32, 32, 1, 1), dtype=float)
+        mod_arr[16, 16, 0, 0] = 0.10
+        mod_arr[16, 17, 0, 0] = 0.05
+        mod_arr[15, 16, 0, 0] = -0.015
+        mod_arr[4, 5, 0, 0] = 0.015  # outer PB flux
+
+        arrays = {
+            "mfs.residual.tt0": res_arr,
+            "mfs.pb.tt0": pb,
+            "mfs.model.tt0": mod_arr,
+        }
+
+        def fake_open(path):
+            ia = MagicMock()
+            ia.getchunk.return_value = arrays[Path(path).name]
+            csys = MagicMock()
+            csys.toworld.return_value = {
+                "numeric": [math.radians(52.6092), math.radians(30.0624), 0.0, 1.5e9]
+            }
+            csys.units.return_value = ["rad", "rad", "", "Hz"]
+            ia.coordsys.return_value = csys
+            cm = MagicMock()
+            cm.__enter__.return_value = ia
+            return cm
+
+        with patch.object(image_stats, "open_image", side_effect=fake_open):
+            full = image_stats._full_residual_peak_stats(
+                str(pbcor), pb_level=0.1, ref_rms_jy=0.00016, casa_calls=[], warnings=[]
+            )
+            mod = image_stats._model_positivity_stats(
+                str(pbcor), pb_level=0.1, has_signed_stokes=False, casa_calls=[], warnings=[]
+            )
+            mod_q = image_stats._model_positivity_stats(
+                str(pbcor), pb_level=0.1, has_signed_stokes=True, casa_calls=[], warnings=[]
+            )
+
+        assert full["residual_outer_pb_peak_ra_deg"]["value"] == pytest.approx(52.6092, abs=1e-4)
+        assert full["residual_outer_pb_peak_dec_deg"]["value"] == pytest.approx(30.0624, abs=1e-4)
+        assert full["residual_outer_pb_peak_j2000"]["value"] == "J2000 03h30m26.21s +30d03m44.6s"
+
+        assert mod["model_nonzero_pixels"]["value"] == 4
+        assert mod["model_neg_pixel_fraction"]["value"] == pytest.approx(0.25)
+        assert mod["model_sum_pos_jy"]["value"] == pytest.approx(0.165)
+        assert mod["model_sum_neg_jy"]["value"] == pytest.approx(-0.015)
+        assert mod["model_neg_to_pos_flux_ratio"]["value"] == pytest.approx(0.015 / 0.165, abs=1e-4)
+        assert mod["model_neg_to_pos_peak_ratio"]["value"] == pytest.approx(0.15)
+        assert mod["model_outer_pb_flux_frac"]["value"] == pytest.approx(0.015 / 0.18, abs=1e-4)
+        assert mod_q["model_neg_to_pos_flux_ratio"]["flag"] == "UNAVAILABLE"

@@ -13,6 +13,7 @@ tools:
   "ms-create_*": false
   ms-inspect_ms_field_list: true
   ms-inspect_ms_flag_summary: true
+  ms-inspect_ms_spw_amp_severity: true
   ms-modify_ms_apply_rflag: true
 permission:
   edit: deny
@@ -23,6 +24,7 @@ permission:
   "ms-create_*": deny
   ms-inspect_ms_field_list: allow
   ms-inspect_ms_flag_summary: allow
+  ms-inspect_ms_spw_amp_severity: allow
   ms-modify_ms_apply_rflag: allow
 ---
 

@@ -184,13 +184,22 @@ _POSTCAL_BODY = """\
   verified against `ms_field_list`). Never run an amplitude clip on target
   fields: the target has no a-priori sky model in `MODEL_DATA`, so clipping
   `|CORRECTED|` clips real sky emission.
-- Measure `ms_flag_summary(ms_path, field=<target fields>)` before and after
-  flagging and report `per_field` `flag_fraction` for every target field.
+- **Prove the target spectrum is clean (before and after):** run BOTH
+  `ms_flag_summary(ms_path, field=<target fields>)` AND
+  `ms_spw_amp_severity(ms_path, datacolumn='CORRECTED_DATA', field=<target fields>,
+  workdir=workdir)` BEFORE and AFTER flagging.
+- Adjacent-channel complex difference stats (`chan_diff_std_over_mad`,
+  `max_spw_chan_diff_std_over_mad`, `chan_diff_gt10sigma_frac`, `spw_rms_ratio`)
+  cancel smooth continuum sky emission on all baselines: clean thermal spectra
+  sit near `chan_diff_std_over_mad < 1.5`, `max_spw_chan_diff_std_over_mad < 1.8`,
+  `chan_diff_gt10sigma_frac < 0.001`, and `spw_rms_ratio < 1.5`, whereas
+  unflagged RFI elevates them sharply.
 - Generate the rflag script with `ms_apply_rflag(ms_path, workdir,
   field=<target fields>, datacolumn='corrected', execute=False)` using default
   thresholds unless a retry explicitly overrides them, then run it via
-  `run-step.sh`. The script saves flag backup `before_rflag` first (re-running
-  would overwrite that backup name) and uses CASA's default `extendflags=True`."""
+  `run-step.sh`. The script saves a flag backup first and uses CASA's default
+  `extendflags=True`. Report both before/after flag fractions and before/after
+  `ms_spw_amp_severity` spectrum metrics in the handoff."""
 
 _TOOL_REG_RE = re.compile(r'@mcp\.tool\(\s*name="(ms_\w+)"')
 _PLUGIN_GRANT_RE = re.compile(r"^mcp__plugin_[\w-]+?_ms-\w+__(ms_\w+)$")

@@ -252,48 +252,58 @@ the Xf PA residual and the `Df+QU` recovered Q/U (09 "Decision summary").
 
 Run right after Stage 3 `calibrate` passes (for `stokes=I`), or right after
 Stage 3b `polcal` passes (for `stokes=IQUV`), **before** launching Stage 4
-`image`. Imaging unflagged target RFI wastes a full `tclean` pass and inflates
-residual RMS even when calibration is spotless; on clean data this check is a
-fast read-only no-op.
+`image`. Imaging unflagged target RFI wastes a full `tclean` pass, causes
+`stopcode=6` divergence, and inflates residual RMS even when calibration is
+spotless; on clean data this check is a fast read-only no-op.
 
 Run both read-only tools on the target fields:
-1. `ms_spw_amp_severity({ms}, datacolumn='CORRECTED_DATA', field=<targets>)`
+1. `ms_spw_amp_severity({ms}, datacolumn='CORRECTED_DATA', field=<targets>, workdir=workdir)`
 2. `ms_vis_amp_time_stats({ms}, field=<targets>, datacolumn='CORRECTED_DATA', top_k=5)`
-(also use Stage 3's `ms_corrected_stats({ms}, field=<targets>, ...)` `amp_p95`,
-`amp_median`, `amp_robust_std` when checked).
 
 Trigger `radio-analyst:postcal-stage` (conservative `rflag` only on target
 `CORRECTED_DATA`, NEVER amplitude clip) BEFORE Stage 4 `image` if ANY of these
-residual target RFI indicators is measured:
-- Any science SPW has `severity >= 1.5` or `discardable_fraction >= 0.05` in `ms_spw_amp_severity`, OR
-- Any well-populated integration (`npts >= 0.25 * median_npts`) in `ms_vis_amp_time_stats.top_outliers` has `ratio_to_median >= 2.0`, OR
-- `ms_corrected_stats` shows `amp_p95 / amp_median >= 3.0` or `amp_robust_std / amp_median >= 1.5`.
+sky-cancelling adjacent-channel spectrum or time-outlier indicators is measured:
+- `chan_diff_std_over_mad >= 1.5` OR `max_spw_chan_diff_std_over_mad >= 1.8` in `ms_spw_amp_severity`, OR
+- `chan_diff_gt10sigma_frac >= 0.001` (`>= 0.1%` >10-sigma adjacent-channel outliers), OR
+- `spw_rms_ratio >= 1.5` (`max_spw_rms / median_spw_rms`), OR
+- Any well-populated integration (`npts >= 0.25 * median_npts`) in `ms_vis_amp_time_stats.top_outliers` has `ratio_to_median >= 2.0`.
 
-If NONE of these hold (clean data), skip `postcal-stage` and proceed directly to
-Stage 4 `image`. If `postcal-stage` runs here:
-- Verify it against the Section 4b checks (`rc 0`, before/after `ms_flag_summary` per target field).
-- Re-run `ms_spw_amp_severity` and `ms_vis_amp_time_stats` to record post-rflag levels, call `ms_record_stage_decision(stage="postcal", ...)`, and proceed to Stage 4 `image`.
-- Postcal runs at most once per reduction; if it ran in 3c, do not re-run it in Section 4 Step D.
+If NONE of these hold (clean target spectrum, e.g. `chan_diff_std_over_mad ~ 1.02`
+on clean C-band or L-band), skip `postcal-stage` and proceed directly to Stage 4
+`image`. If `postcal-stage` runs here:
+- Verify it against the Section 4b checks (`rc 0`, before/after `ms_flag_summary`,
+  AND after-flagging `ms_spw_amp_severity` proving `chan_diff_std_over_mad < 1.5`,
+  `max_spw_chan_diff_std_over_mad < 1.8`, `chan_diff_gt10sigma_frac < 0.001`, and
+  `spw_rms_ratio < 1.5`).
+- Call `ms_record_stage_decision(stage="postcal", ...)` with the before/after
+  spectrum numbers, and proceed to Stage 4 `image`.
+- Postcal runs at most once per reduction (unless a retry is required because
+  default `5.0/5.0` still left `chan_diff_std_over_mad >= 1.5`); if it already
+  cleaned the spectrum in 3c, do not repeat it in Section 4 Step D.
 
 ### 4. image (11-imaging.md:327-365, quality gates)
 
-The image stage makes an initial shallow pass (`hogbom` or `mtmfs nterms=2` when
-`fractional_span > 0.2`) followed by adaptive masked `multiscale` / `mtmfs`
-passes (commands/image.md steps 4-5, 11-imaging.md Step 2). Run the checks on
-the final image (`.image.pbcor`, or `.image.pbcor.tt0` + `.psf.tt0` for `mtmfs`)
-using `pb_level=0.1` (or user `pbmask`; NEVER `abs(pblimit)=0.01`); report the
-first-pass numbers beside them. Compute the radiometer prediction directly with
+The image stage makes an initial shallow pass (`hogbom`, or `mtmfs nterms=2`
+with `specmode='mfs'` and `nsigma=5.0` when `fractional_span > 0.2` on a mosaic)
+followed by adaptive masked `multiscale` / `mtmfs` passes (commands/image.md
+steps 4-5, 11-imaging.md Step 2). Run the checks on the final image
+(`.image.pbcor`, or `.image.tt0.pbcor` / `.image.pbcor.tt0` + `.psf.tt0` for
+`mtmfs`) using `pb_level=0.1` (or user `pbmask`); report the first-pass numbers
+beside them. Compute the radiometer prediction directly with
 `ms_radiometer_estimate({ms}, field=<targets>, spw=<user spw or ''>, stokes='I', weighting='briggs', robust=0.5)`
 (`thermal_rms_jy`, `fractional_span`).
 
 | Check | Tool, field | Pass | On fail |
 |---|---|---|---|
 | Image measures | `ms_image_stats(<imagename>.image.pbcor, psf_path, pb_level)` | status ok | retry |
-| Deconvolution convergence (11 Step 2 & 9) | `ms_image_stats`: `residual_out_mask_peak_snr`, `residual_in_mask_peak_snr`, `residual_in_to_out_rms_ratio` | `< 5.0`, `< 3.5`, `< 1.5` (when masked) | unmasked flux outside mask (`>= 5.0`) or uncleaned flux inside mask (`>= 3.5` or ratio `>= 1.5`): retry `image-stage` with mask growth (`atrous_do=True` / lower `thresh_pix`) or Phase C deep clean (`nsigma=1.5`) BEFORE blaming calibration/RFI |
+| `tclean` convergence (11 Step 8 & 9) | Read last `tclean` entry in `{workdir}/stage_log.jsonl`: `measurement.converged`, `measurement.stopcode` | `converged == true` (`stopcode` is `2` or `8`) | **HARD FAIL** on `stopcode=1`, `5`, or `6`: NEVER accept or ship. On `stopcode=5/6` keep Phase A `usemask='pb'` shallow (`nsigma=5.0`), keep PyBDSF `usemask='user'` mask inside `PB >= 0.1`, verify clean target spectrum and full `imsize` (NEVER raise `threshold` above `~3--5x` rms); on `stopcode=1` raise `niter` or tighten mask |
+| `.model` positivity (Stokes I, 11 Step 9) | `ms_image_stats`: `model_neg_to_pos_flux_ratio`, `model_neg_pixel_fraction`, `model_neg_to_pos_peak_ratio`, `model_outer_pb_flux_frac` | Predominantly positive (`model_neg_to_pos_flux_ratio < 0.25`, `model_neg_to_pos_peak_ratio < 0.25`) | Negative-dominated or surging negative `.model`: retry `image-stage` with tighter mask/scales or revert to cleaner earlier round (programmatic check; does not require vision) |
+| Deconvolution convergence inside `PB >= 0.1` (11 Step 2 & 9) | `ms_image_stats`: `residual_out_mask_peak_snr`, `residual_in_mask_peak_snr`, `residual_in_to_out_rms_ratio` | `< 5.0`, `< 3.5`, `< 1.5` (when masked) | unmasked flux outside mask (`>= 5.0`) or uncleaned flux inside mask (`>= 3.5` or ratio `>= 1.5`): retry `image-stage` with mask growth (`pb_level=0.1`, `atrous_do=True` / lower `thresh_pix`) or Phase C deep clean (`nsigma=1.5`) BEFORE blaming calibration/RFI |
+| Outer-PB residual diagnostic (`0 < PB < 0.1`, 11 Step 2 & 9) | `ms_image_stats`: `residual_outer_pb_peak_snr`, `residual_outer_pb_peak_pb`, `residual_outer_pb_peak_j2000` | Diagnostic (uncleaned outer-PB sources are normal and NOT an automatic failure) | If bright enough to throw sidelobes raising off-source RMS: cross-match `(ra_deg, dec_deg)` against `ms_field_list` (if phasecal, include pointing), else retry `image-stage` with `outlierfile` or fast baby peeling (`gridder='standard'`, `phasecenter=<j2000>`, `mtmfs nterms=2`, `savemodel='modelcolumn'`, `uvsub`, dirty confirmation) |
 | `residual_out_mask_rms_jy` (else `residual_rms_jy`) vs `thermal_rms_jy` (11 Step 9) | `ms_image_stats` vs `ms_radiometer_estimate` | within 2x | over 2x after deconvolution converges: "When noise is not met" below |
 | `residual_dynamic_range` (11 Step 9) | `ms_image_stats` | > 20 for a target | retry |
-| Negative clean bowl (11 Step 9) | `ms_image_stats`: `flat_noise_min_jy`, `negative_to_peak_ratio` (flat-noise `.image`) | `negative_to_peak_ratio <= 0.05` (Stokes I) | > 0.05 (severe if > 0.10): negative clean bowl; check mask/`nsigma`/threshold and PNG, retry `image-stage` with tighter masking/threshold (or run "When noise is not met" if off-source RMS > 2x) |
-| Visual PNG inspection (11 Step 9) | `Read(<prefix>.png)` from `ms_image_stats` `png_path` | mandatory on every target image before any `next` or `ms_report` decision; record findings in `png_reviewed` | visible stripes, rings, or negative bowls: do not accept; run "When noise is not met" or retry `image-stage` with a concrete change |
+| Negative clean bowl (11 Step 9) | `ms_image_stats`: `flat_noise_min_jy`, `negative_to_peak_ratio` (flat-noise `.image`) | `negative_to_peak_ratio <= 0.05` (Stokes I) | > 0.05 (severe if > 0.10): negative clean bowl; check mask/`nsigma`/threshold and `.model` positivity, retry `image-stage` with tighter masking/threshold (or run "When noise is not met" if off-source RMS > 2x) |
+| Visual PNG inspection (optional when vision available, 11 Step 9) | `Read(<prefix>.png)` from `ms_image_stats` `png_path` | Do not assume vision -- programmatic `.model` positivity and residual stats are primary; open PNG if vision is available | visible stripes, rings, or negative bowls: do not accept; run "When noise is not met" or retry `image-stage` with a concrete change |
 | `detection` label (11 Step 9) | `ms_image_stats` | report it; not a pass/fail | none |
 
 Note as `not_checked` unless the handoff gives the expected beam:
@@ -395,6 +405,7 @@ remaining gap is the imaging. Work down this order, one step per attempt:
 |---|---|---|---|
 | rflag ran on the targets | handoff `scripts` (`.rc` 0) and `ms_workflow_status` | rc 0 | retry |
 | Flagged fraction before and after, per target field | the stage's `ms_flag_summary` numbers, from the handoff | report it | none |
+| Target spectrum clean after rflag | `ms_spw_amp_severity({ms}, datacolumn='CORRECTED_DATA', field=<targets>, workdir=workdir)` | `chan_diff_std_over_mad < 1.5`, `max_spw_chan_diff_std_over_mad < 1.8`, `chan_diff_gt10sigma_frac < 0.001`, `spw_rms_ratio < 1.5` | retry once with tighter thresholds (`timedevscale=4.0, freqdevscale=4.0`) or stop and ask |
 
 ### 5. selfcal (12-selfcal.md:193-246)
 

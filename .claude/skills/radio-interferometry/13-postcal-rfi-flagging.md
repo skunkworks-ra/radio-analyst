@@ -98,9 +98,24 @@ that is the only whole-SpW drop this skill makes.
 
 ---
 
-## Step 3 — Channel triage on the target (no clip)
+## Step 3 — Target spectrum check & channel triage (no clip)
 
-Measure per-channel robust noise on the target: sigma = 1.4826 × MAD of
+Before imaging any science target, run `ms_spw_amp_severity(ms_path,
+datacolumn='CORRECTED_DATA', field='<target fields>')`. Its adjacent-channel
+complex difference metrics (`|V(ch) - V(ch-1)| / sqrt(2)` on unflagged parallel
+hands) cancel smooth continuum sky emission on all baselines (including bright
+extended sources such as 3C391 where raw `|V|` is heavy-tailed):
+
+- Clean target spectrum: `chan_diff_std_over_mad < 1.5`,
+  `max_spw_chan_diff_std_over_mad < 1.8`, `chan_diff_gt10sigma_frac < 0.001`, and
+  `spw_rms_ratio < 1.5`.
+- Elevated target RFI: run `ms_apply_rflag(field='<target fields>',
+  datacolumn='corrected', timedevscale=5.0, freqdevscale=5.0)` first (never
+  amplitude-clip targets), then re-run `ms_spw_amp_severity` to confirm the
+  spectrum is clean.
+
+If broad channel- or half-SpW-level contamination still persists after `rflag`,
+measure per-channel robust noise on the target: sigma = 1.4826 × MAD of
 Re(CORRECTED), parallel hands, pooled over target fields, against the median
 sigma of the clean SpWs (the floor). The target's visibilities are noise-dominated
 (its sources wash out per visibility), so this is a clean RFI gauge — check it:

@@ -12,8 +12,8 @@ Find your current state in the left column. Run the right-column tool
 | MS imported, intents present | Run `/inspect` or read `01-workflow.md` |
 | Phase 1 + 2 inspection done, go decision | Run `/precal` or read `10-precal-workflow.md` |
 | Pre-cal complete (`ms_workflow_status.next_recommended_step == 'delay_bandpass_gain'`, `missing_precal_steps == []`) | Run `/calibrate` or read `07-calibration-execution.md` |
-| Calibration solve done (G/B/K/fluxscale + target applycal) | For pol: `/polcal` or read `09-polcal-execution.md`; then run target `CORRECTED_DATA` RFI triage (`11-imaging.md` Step 0.5 -> `/postcal` only if outliers detected) before `/image` (**MUST read `11-imaging.md` before calling `ms_tclean`**) |
-| Polcal done | Target `CORRECTED_DATA` RFI triage (`11-imaging.md` Step 0.5 -> `/postcal` if outliers), then `/image` with `stokes='I'` followed by `stokes='IQUV'` |
+| Calibration solve done (G/B/K/fluxscale + target applycal) | For pol: `/polcal` or read `09-polcal-execution.md`; then **MUST run `ms_spw_amp_severity(datacolumn='CORRECTED_DATA', field=<targets>)`** (11-imaging.md Step 0.5: if `chan_diff_std_over_mad >= 1.5` or `max_spw_chan_diff_std_over_mad >= 1.8` or `chan_diff_gt10sigma_frac >= 0.001` or `spw_rms_ratio >= 1.5`, run `ms_apply_rflag` / `/postcal` and re-measure until clean) before `/image` (**MUST read `11-imaging.md` before calling `ms_tclean`**) |
+| Polcal done | **MUST run `ms_spw_amp_severity` target spectrum gate** (11-imaging.md Step 0.5 -> `/postcal` until clean), then `/image` with `stokes='I'` followed by `stokes='IQUV'` |
 | First-pass image done | Read `12-selfcal.md` — one-pass phase selfcal with before/after assessment |
 | Final applycal done, RFI on target/phase cal | Read `13-postcal-rfi-flagging.md` — residual clip on the primaries, per-channel triage on the target |
 

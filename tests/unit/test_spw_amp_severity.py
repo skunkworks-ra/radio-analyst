@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ms_inspect.tools.spw_amp_severity import _ChanReservoir, _corr_first_axis
+from ms_inspect.tools.spw_amp_severity import _ChanDiffTracker, _ChanReservoir, _corr_first_axis
 
 
 def test_corr_first_axis_folds_corr_and_rows():
@@ -87,3 +87,53 @@ def test_run_unmatched_field_raises(real_ms_calibrated):
 
     with pytest.raises(ComputationError, match="matches no field"):
         run(real_ms_calibrated, field="NOPE")
+
+
+def test_chan_diff_tracker_cancels_extended_sky_and_detects_rfi():
+    """Adjacent-channel complex diff cancels smooth extended sky (std/MAD ~ 1.0)
+    and strongly flags narrow-band/burst RFI (std/MAD >> 1, gt10sigma > 0)."""
+    rng = np.random.default_rng(7)
+    n_par, n_chan, n_rows = 2, 64, 500
+    sky = rng.exponential(scale=3.0, size=(n_par, 1, n_rows)) * np.exp(
+        1j * rng.uniform(-np.pi, np.pi, size=(n_par, 1, n_rows))
+    )
+    noise = 0.05 * (
+        rng.normal(0, 1, (n_par, n_chan, n_rows)) + 1j * rng.normal(0, 1, (n_par, n_chan, n_rows))
+    )
+    clean = sky + noise
+    dv_clean = np.abs(clean[:, 1:, :] - clean[:, :-1, :]).ravel() / np.sqrt(2.0)
+
+    tr_clean = _ChanDiffTracker(50_000)
+    for batch in np.array_split(dv_clean, 4):
+        tr_clean.add(batch, rng)
+    st_clean = tr_clean.stats()
+    assert st_clean is not None
+    assert 0.90 < st_clean["std_over_mad"] < 1.15
+    assert st_clean["gt10sigma_frac"] == 0.0
+
+    dirty = clean.copy()
+    dirty[:, 20:22, :300] += 5.0
+    dv_dirty = np.abs(dirty[:, 1:, :] - dirty[:, :-1, :]).ravel() / np.sqrt(2.0)
+    tr_dirty = _ChanDiffTracker(50_000)
+    tr_dirty.add(dv_dirty, rng)
+    st_dirty = tr_dirty.stats()
+    assert st_dirty is not None
+    assert st_dirty["std_over_mad"] > 5.0
+    assert st_dirty["gt10sigma_frac"] > 0.01
+    assert st_dirty["rms"] > 2.0 * st_clean["rms"]
+
+
+def test_run_emits_chan_diff_and_spw_rms_ratio(real_ms_calibrated):
+    from ms_inspect.tools.spw_amp_severity import run
+
+    out = run(real_ms_calibrated, datacolumn="CORRECTED_DATA", max_per_chan_records=0)
+    assert out["status"] == "ok"
+    d = out["data"]
+    assert d["chan_diff_rms"]["flag"] == "COMPLETE"
+    assert d["chan_diff_std_over_mad"]["flag"] == "COMPLETE"
+    assert d["max_spw_chan_diff_std_over_mad"]["flag"] == "COMPLETE"
+    assert d["spw_rms_ratio"]["flag"] == "COMPLETE"
+    assert d["spw_rms_ratio"]["value"] >= 1.0
+    for e in d["per_spw"]:
+        assert e["chan_diff_rms"]["flag"] == "COMPLETE"
+        assert e["chan_diff_std_over_mad"]["flag"] == "COMPLETE"

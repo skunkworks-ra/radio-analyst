@@ -409,13 +409,18 @@ def _extract_beam(beam_info: dict) -> tuple[float | None, float | None, float | 
 
 
 def _siblings(image_path: str) -> tuple[Path, Path]:
-    """(.residual, .pb) next to an .image or .image.pbcor (or .tt0 variants)."""
+    """(.residual, .pb) next to an .image or .image.pbcor (including .tt0 variants)."""
     p = Path(image_path).expanduser().resolve()
     name = p.name
-    for suffix in (".image.pbcor.tt0", ".image.tt0", ".image.pbcor", ".image"):
+    for suffix, tt in (
+        (".image.pbcor.tt0", ".tt0"),
+        (".image.tt0.pbcor", ".tt0"),
+        (".image.tt0", ".tt0"),
+        (".image.pbcor", ""),
+        (".image", ""),
+    ):
         if name.endswith(suffix):
             base = name[: -len(suffix)]
-            tt = ".tt0" if suffix.endswith(".tt0") else ""
             return p.parent / f"{base}.residual{tt}", p.parent / f"{base}.pb{tt}"
     return p.parent / f"{name}.residual", p.parent / f"{name}.pb"
 
@@ -424,7 +429,11 @@ def _sibling_flat_image(image_path: str) -> Path | None:
     """Flat-noise .image (or .image.tt0) sibling when image_path is a .pbcor image."""
     p = Path(image_path).expanduser().resolve()
     name = p.name
-    for pbcor_suf, flat_suf in ((".image.pbcor.tt0", ".image.tt0"), (".image.pbcor", ".image")):
+    for pbcor_suf, flat_suf in (
+        (".image.pbcor.tt0", ".image.tt0"),
+        (".image.tt0.pbcor", ".image.tt0"),
+        (".image.pbcor", ".image"),
+    ):
         if name.endswith(pbcor_suf):
             cand = p.parent / f"{name[: -len(pbcor_suf)]}{flat_suf}"
             return cand if cand.exists() else None
@@ -435,10 +444,15 @@ def _sibling_mask(image_path: str) -> Path | None:
     """Sibling CASA .mask directory next to an .image / .image.pbcor (including mtmfs .tt0)."""
     p = Path(image_path).expanduser().resolve()
     name = p.name
-    for suffix in (".image.pbcor.tt0", ".image.tt0", ".image.pbcor", ".image"):
+    for suffix, tt in (
+        (".image.pbcor.tt0", ".tt0"),
+        (".image.tt0.pbcor", ".tt0"),
+        (".image.tt0", ".tt0"),
+        (".image.pbcor", ""),
+        (".image", ""),
+    ):
         if name.endswith(suffix):
             base = name[: -len(suffix)]
-            tt = ".tt0" if suffix.endswith(".tt0") else ""
             candidates = [p.parent / f"{base}.mask"]
             if tt:
                 candidates.append(p.parent / f"{base}.mask{tt}")
@@ -448,6 +462,75 @@ def _sibling_mask(image_path: str) -> Path | None:
             return None
     cand = p.parent / f"{name}.mask"
     return cand if cand.exists() else None
+
+
+def _sibling_model(image_path: str) -> Path | None:
+    """Sibling CASA .model (or .model.tt0) directory next to an .image / .image.pbcor."""
+    p = Path(image_path).expanduser().resolve()
+    name = p.name
+    for suffix, tt in (
+        (".image.pbcor.tt0", ".tt0"),
+        (".image.tt0.pbcor", ".tt0"),
+        (".image.tt0", ".tt0"),
+        (".image.pbcor", ""),
+        (".image", ""),
+    ):
+        if name.endswith(suffix):
+            base = name[: -len(suffix)]
+            candidates = [p.parent / f"{base}.model{tt}"]
+            if tt:
+                candidates.append(p.parent / f"{base}.model")
+            for cand in candidates:
+                if cand.exists():
+                    return cand
+            return None
+    cand = p.parent / f"{name}.model"
+    return cand if cand.exists() else None
+
+
+def _format_j2000(ra_deg: float, dec_deg: float) -> str:
+    """Format (ra_deg, dec_deg) as a CASA J2000 direction string."""
+    ra_norm = ra_deg % 360.0
+    ra_total_sec = round((ra_norm / 15.0) * 3600.0, 2)
+    if ra_total_sec >= 86400.0:
+        ra_total_sec -= 86400.0
+    ra_h = int(ra_total_sec // 3600)
+    ra_rem = ra_total_sec - ra_h * 3600
+    ra_m = int(ra_rem // 60)
+    ra_s = ra_rem - ra_m * 60
+
+    sign = "+" if dec_deg >= 0.0 else "-"
+    dec_total_arcsec = round(abs(dec_deg) * 3600.0, 1)
+    dec_d = int(dec_total_arcsec // 3600)
+    dec_rem = dec_total_arcsec - dec_d * 3600
+    dec_m = int(dec_rem // 60)
+    dec_s = dec_rem - dec_m * 60
+    return f"J2000 {ra_h:02d}h{ra_m:02d}m{ra_s:05.2f}s {sign}{dec_d:02d}d{dec_m:02d}m{dec_s:04.1f}s"
+
+
+def _pixel_to_sky_deg(ia_res, pixel_idx: tuple[int, ...]) -> tuple[float | None, float | None]:
+    """Convert an N-D pixel index on ia_res to (ra_deg, dec_deg), or (None, None)."""
+    try:
+        csys = ia_res.coordsys()
+        w = csys.toworld([float(i) for i in pixel_idx])
+        numeric = w["numeric"] if isinstance(w, dict) and "numeric" in w else w
+        if numeric is None or len(numeric) < 2:
+            return None, None
+        units: list[str] = []
+        try:
+            u = csys.units()
+            units = [str(x).lower() for x in u] if u else []
+        except Exception:
+            units = []
+        u0 = units[0] if len(units) > 0 else "rad"
+        u1 = units[1] if len(units) > 1 else "rad"
+        ra_deg = float(numeric[0]) * _DEG_PER_UNIT.get(u0, 180.0 / math.pi)
+        dec_deg = float(numeric[1]) * _DEG_PER_UNIT.get(u1, 180.0 / math.pi)
+        if not (math.isfinite(ra_deg) and math.isfinite(dec_deg)):
+            return None, None
+        return ra_deg % 360.0, dec_deg
+    except Exception:
+        return None, None
 
 
 def _residual_rms(
@@ -758,6 +841,282 @@ def _mask_partitioned_residual_stats(
     }
 
 
+def _full_residual_peak_stats(
+    image_path: str,
+    pb_level: float,
+    ref_rms_jy: float | None,
+    casa_calls: list[str],
+    warnings: list[str],
+) -> dict:
+    """Full-unmasked residual peak metrics across all PB > 0 (and outer annulus 0 < PB < pb_level).
+
+    Reports sky coordinates (RA, Dec, J2000) of the outer-PB peak so an agent
+    can cross-match it against ms_field_list (is it the phasecal?) or target it
+    directly with phasecenter / outlierfile for baby peeling.
+    """
+    residual, pb = _siblings(image_path)
+    keys = (
+        "residual_full_peak_jy",
+        "residual_full_peak_snr",
+        "residual_full_peak_pb",
+        "residual_outer_pb_peak_jy",
+        "residual_outer_pb_peak_snr",
+        "residual_outer_pb_peak_pb",
+        "residual_outer_pb_peak_ra_deg",
+        "residual_outer_pb_peak_dec_deg",
+        "residual_outer_pb_peak_j2000",
+    )
+
+    def _unavail(reason: str) -> dict:
+        return {k: fmt_field(None, flag="UNAVAILABLE", note=reason) for k in keys}
+
+    missing = [str(x.name) for x in (residual, pb) if not x.exists()]
+    if missing:
+        return _unavail(f"sibling image not found: {', '.join(missing)}")
+
+    import numpy as np
+
+    outer_ra: float | None = None
+    outer_dec: float | None = None
+    outer_j2000: str | None = None
+    try:
+        with open_image(str(pb)) as ia_pb:
+            pb_pix = np.asarray(ia_pb.getchunk(), dtype=float)
+        with open_image(str(residual)) as ia_res:
+            res_pix = np.asarray(ia_res.getchunk(), dtype=float)
+            pb_bcast = _broadcast_pb(pb_pix, res_pix.shape)
+            if pb_bcast is None:
+                reason = f"shape mismatch: residual {res_pix.shape}, pb {pb_pix.shape}"
+                warnings.append(f"Full-map residual peak stats skipped ({reason}).")
+                return _unavail(reason)
+
+            casa_calls.append(f"ia.getchunk() on {residual.name} where {pb.name} > 0 [full_map]")
+            full_valid = (pb_bcast > 0.0) & np.isfinite(res_pix) & np.isfinite(pb_bcast)
+            if not np.any(full_valid):
+                return _unavail(f"no finite pixels with {pb.name} > 0")
+
+            full_abs = np.abs(res_pix[full_valid])
+            full_pbs = pb_bcast[full_valid]
+            idx = int(np.argmax(full_abs))
+            full_peak_jy = float(full_abs[idx])
+            full_peak_pb = float(full_pbs[idx])
+            full_peak_snr = (
+                (full_peak_jy / ref_rms_jy) if (ref_rms_jy is not None and ref_rms_jy > 0) else None
+            )
+
+            outer_valid = full_valid & (pb_bcast < pb_level)
+            if np.any(outer_valid):
+                outer_scores = np.where(outer_valid, np.abs(res_pix), -1.0)
+                outer_idx = tuple(
+                    int(i) for i in np.unravel_index(int(np.argmax(outer_scores)), res_pix.shape)
+                )
+                outer_peak_jy: float | None = float(abs(res_pix[outer_idx]))
+                outer_peak_pb: float | None = float(pb_bcast[outer_idx])
+                outer_peak_snr: float | None = (
+                    (outer_peak_jy / ref_rms_jy)
+                    if (ref_rms_jy is not None and ref_rms_jy > 0)
+                    else None
+                )
+                outer_ra, outer_dec = _pixel_to_sky_deg(ia_res, outer_idx)
+                if outer_ra is not None and outer_dec is not None:
+                    outer_j2000 = _format_j2000(outer_ra, outer_dec)
+                outer_note = f"max(|{residual.name}|) in 0 < {pb.name} < {pb_level}"
+            else:
+                outer_peak_jy = None
+                outer_peak_pb = None
+                outer_peak_snr = None
+                outer_note = f"no finite pixels in 0 < {pb.name} < {pb_level}"
+    except Exception as exc:
+        warnings.append(f"Could not read full-map residual images: {exc}")
+        return _unavail(f"read failed: {exc}")
+
+    coord_note = (
+        f"sky coordinate at residual_outer_pb_peak_jy (0 < PB < {pb_level})"
+        if outer_j2000 is not None
+        else (outer_note if outer_peak_jy is None else "coordsys.toworld() unavailable")
+    )
+
+    return {
+        "residual_full_peak_jy": fmt_field(
+            round(full_peak_jy, 9),
+            note=f"max(|{residual.name}|) across all {pb.name} > 0",
+        ),
+        "residual_full_peak_snr": fmt_field(
+            round(full_peak_snr, 2) if full_peak_snr is not None else None,
+            flag="COMPLETE" if full_peak_snr is not None else "UNAVAILABLE",
+            note="residual_full_peak_jy / off-source residual RMS across all PB > 0"
+            if full_peak_snr is not None
+            else "off-source residual RMS unavailable or zero",
+        ),
+        "residual_full_peak_pb": fmt_field(
+            round(full_peak_pb, 4),
+            note=f"{pb.name} gain at residual_full_peak_jy pixel",
+        ),
+        "residual_outer_pb_peak_jy": fmt_field(
+            round(outer_peak_jy, 9) if outer_peak_jy is not None else None,
+            flag="COMPLETE" if outer_peak_jy is not None else "UNAVAILABLE",
+            note=outer_note,
+        ),
+        "residual_outer_pb_peak_snr": fmt_field(
+            round(outer_peak_snr, 2) if outer_peak_snr is not None else None,
+            flag="COMPLETE" if outer_peak_snr is not None else "UNAVAILABLE",
+            note=f"residual_outer_pb_peak_jy / off-source residual RMS (0 < PB < {pb_level})"
+            if outer_peak_snr is not None
+            else outer_note,
+        ),
+        "residual_outer_pb_peak_pb": fmt_field(
+            round(outer_peak_pb, 4) if outer_peak_pb is not None else None,
+            flag="COMPLETE" if outer_peak_pb is not None else "UNAVAILABLE",
+            note=f"{pb.name} gain at residual_outer_pb_peak_jy pixel"
+            if outer_peak_pb is not None
+            else outer_note,
+        ),
+        "residual_outer_pb_peak_ra_deg": fmt_field(
+            round(outer_ra, 6) if outer_ra is not None else None,
+            flag="COMPLETE" if outer_ra is not None else "UNAVAILABLE",
+            note=coord_note,
+        ),
+        "residual_outer_pb_peak_dec_deg": fmt_field(
+            round(outer_dec, 6) if outer_dec is not None else None,
+            flag="COMPLETE" if outer_dec is not None else "UNAVAILABLE",
+            note=coord_note,
+        ),
+        "residual_outer_pb_peak_j2000": fmt_field(
+            outer_j2000,
+            flag="COMPLETE" if outer_j2000 is not None else "UNAVAILABLE",
+            note=coord_note,
+        ),
+    }
+
+
+def _model_positivity_stats(
+    image_path: str,
+    pb_level: float,
+    has_signed_stokes: bool,
+    casa_calls: list[str],
+    warnings: list[str],
+) -> dict:
+    """Programmatic Stokes I positivity diagnostics on sibling .model / .model.tt0.
+
+    Replaces visual inspection of .model for non-vision models: a physical
+    Stokes I clean model is predominantly positive; growing negative flux or
+    negative-dominated pixels signal overcleaning, bad scales, or divergence.
+    """
+    keys = (
+        "model_nonzero_pixels",
+        "model_neg_pixel_fraction",
+        "model_sum_pos_jy",
+        "model_sum_neg_jy",
+        "model_neg_to_pos_flux_ratio",
+        "model_max_jy",
+        "model_min_jy",
+        "model_neg_to_pos_peak_ratio",
+        "model_outer_pb_flux_frac",
+    )
+
+    def _unavail(reason: str) -> dict:
+        return {k: fmt_field(None, flag="UNAVAILABLE", note=reason) for k in keys}
+
+    if has_signed_stokes:
+        return _unavail("positivity metrics not defined for signed Stokes (Q/U/V/cross-hands)")
+
+    model_path = _sibling_model(image_path)
+    if model_path is None or not model_path.exists():
+        return _unavail("sibling .model not found")
+
+    import numpy as np
+
+    try:
+        with open_image(str(model_path)) as ia_mod:
+            mod_pix = np.asarray(ia_mod.getchunk(), dtype=float)
+    except Exception as exc:
+        warnings.append(f"Could not read sibling model image ({model_path.name}): {exc}")
+        return _unavail(f"read failed: {exc}")
+
+    casa_calls.append(f"ia.getchunk() on {model_path.name} [model_positivity]")
+    finite = np.isfinite(mod_pix)
+    if not np.any(finite):
+        return _unavail(f"no finite pixels in {model_path.name}")
+
+    vals = mod_pix[finite]
+    nz = vals[vals != 0.0]
+    n_nz = int(nz.size)
+    pos = nz[nz > 0.0]
+    neg = nz[nz < 0.0]
+    sum_pos = float(pos.sum()) if pos.size else 0.0
+    sum_neg = float(neg.sum()) if neg.size else 0.0
+    max_v = float(np.max(vals))
+    min_v = float(np.min(vals))
+
+    neg_px_frac = (int(neg.size) / n_nz) if n_nz > 0 else None
+    neg_to_pos_flux = (abs(sum_neg) / sum_pos) if sum_pos > 0.0 else None
+    neg_to_pos_peak = (abs(min(0.0, min_v)) / max_v) if max_v > 0.0 else None
+
+    outer_flux_frac: float | None = None
+    outer_note = "sibling .pb not found"
+    _, pb_path = _siblings(image_path)
+    if pb_path.exists():
+        try:
+            with open_image(str(pb_path)) as ia_pb:
+                pb_pix = np.asarray(ia_pb.getchunk(), dtype=float)
+            pb_bcast = _broadcast_pb(pb_pix, mod_pix.shape)
+            total_abs = float(np.sum(np.abs(nz))) if n_nz > 0 else 0.0
+            if pb_bcast is None:
+                outer_note = f"shape mismatch: model {mod_pix.shape}, pb {pb_pix.shape}"
+            elif total_abs <= 0.0:
+                outer_note = "model is empty (zero flux)"
+            else:
+                outer_mask = finite & np.isfinite(pb_bcast) & (pb_bcast < pb_level)
+                outer_abs = float(np.sum(np.abs(mod_pix[outer_mask])))
+                outer_flux_frac = outer_abs / total_abs
+                outer_note = f"sum(|{model_path.name}| where PB < {pb_level}) / sum(|model|)"
+        except Exception as exc:
+            outer_note = f"sibling .pb read failed: {exc}"
+
+    return {
+        "model_nonzero_pixels": fmt_field(
+            n_nz,
+            note=f"nonzero pixels in {model_path.name} ({int(pos.size)} pos, {int(neg.size)} neg)",
+        ),
+        "model_neg_pixel_fraction": fmt_field(
+            round(neg_px_frac, 4) if neg_px_frac is not None else None,
+            flag="COMPLETE" if neg_px_frac is not None else "UNAVAILABLE",
+            note="negative nonzero pixels / total nonzero pixels"
+            if neg_px_frac is not None
+            else "model is empty",
+        ),
+        "model_sum_pos_jy": fmt_field(
+            round(sum_pos, 9),
+            note=f"sum of positive clean components in {model_path.name}",
+        ),
+        "model_sum_neg_jy": fmt_field(
+            round(sum_neg, 9),
+            note=f"sum of negative clean components in {model_path.name}",
+        ),
+        "model_neg_to_pos_flux_ratio": fmt_field(
+            round(neg_to_pos_flux, 4) if neg_to_pos_flux is not None else None,
+            flag="COMPLETE" if neg_to_pos_flux is not None else "UNAVAILABLE",
+            note="abs(model_sum_neg_jy) / model_sum_pos_jy"
+            if neg_to_pos_flux is not None
+            else "model_sum_pos_jy <= 0",
+        ),
+        "model_max_jy": fmt_field(round(max_v, 9), note=f"max pixel in {model_path.name}"),
+        "model_min_jy": fmt_field(round(min_v, 9), note=f"min pixel in {model_path.name}"),
+        "model_neg_to_pos_peak_ratio": fmt_field(
+            round(neg_to_pos_peak, 4) if neg_to_pos_peak is not None else None,
+            flag="COMPLETE" if neg_to_pos_peak is not None else "UNAVAILABLE",
+            note="abs(min(0, model_min_jy)) / model_max_jy"
+            if neg_to_pos_peak is not None
+            else "model_max_jy <= 0",
+        ),
+        "model_outer_pb_flux_frac": fmt_field(
+            round(outer_flux_frac, 4) if outer_flux_frac is not None else None,
+            flag="COMPLETE" if outer_flux_frac is not None else "UNAVAILABLE",
+            note=outer_note,
+        ),
+    }
+
+
 def _write_png(image_path: str, png_path: str, pb_level: float) -> str:
     """Plane 0 as a PNG, viridis over the 1st to 99.9th percentile, PB contour in white."""
     import numpy as np
@@ -992,8 +1351,18 @@ def run(
         note="peak_jy / residual_rms_jy",
     )
     data["rms_region"] = fmt_field(region)
+    mask_stats = _mask_partitioned_residual_stats(
+        image_path, pb_level, mask_path, casa_calls, warnings
+    )
+    data.update(mask_stats)
+    ref_rms_jy = (
+        mask_stats["residual_out_mask_rms_jy"]["value"]
+        if mask_stats["residual_out_mask_rms_jy"]["value"] is not None
+        else res_rms
+    )
+    data.update(_full_residual_peak_stats(image_path, pb_level, ref_rms_jy, casa_calls, warnings))
     data.update(
-        _mask_partitioned_residual_stats(image_path, pb_level, mask_path, casa_calls, warnings)
+        _model_positivity_stats(image_path, pb_level, has_signed_stokes, casa_calls, warnings)
     )
 
     if png_path:

@@ -1,7 +1,8 @@
 ---
-description: Post-calibration rflag on the target's CORRECTED data (rflag only, no clip), with the flagged fraction before and after.
+description: Post-calibration rflag on the target's CORRECTED data (rflag only, no clip), verifying target spectrum cleanliness before and after via ms_spw_amp_severity and ms_flag_summary.
 allowed-tools: mcp__plugin_radio-analyst_ms-inspect__ms_field_list,
                mcp__plugin_radio-analyst_ms-inspect__ms_flag_summary,
+               mcp__plugin_radio-analyst_ms-inspect__ms_spw_amp_severity,
                mcp__plugin_radio-analyst_ms-modify__ms_apply_rflag,
                Bash,
                Read
@@ -23,13 +24,27 @@ script via `run-step.sh` (`--wait 240`), as the skill's "Running generated
 scripts" section says, re-running on `status=running` until `status=done`.
 Every write step is recorded automatically in `<workdir>/stage_log.jsonl`.
 
-1. `ms_flag_summary(ms_path, field=<field>)`: flagged fraction before.
+1. **Before flagging:**
+   - `ms_flag_summary(ms_path, field=<field>)`: flagged fraction before.
+   - `ms_spw_amp_severity(ms_path, datacolumn='CORRECTED_DATA', field=<field>, workdir=workdir)`:
+     record `chan_diff_std_over_mad`, `max_spw_chan_diff_std_over_mad`,
+     `chan_diff_gt10sigma_frac`, `spw_rms_ratio`, and per-SpW `chan_diff_rms`
+     before flagging.
 2. `ms_apply_rflag(ms_path, workdir, field=<field>, datacolumn='corrected',
-   execute=False)` with the tool's default thresholds -> run. It saves flag
-   version `before_rflag` first (a second run would reuse that name: save a
-   backup by hand before re-running). CASA's default `extendflags=True` applies,
-   so rflag also grows its flags in time and frequency; report that.
-3. `ms_flag_summary(ms_path, field=<field>)`: flagged fraction after.
+   execute=False)` with the tool's default thresholds (or stricter thresholds if
+   a retry specifies them) -> run. It saves flag version `before_rflag` first (a
+   second run auto-versions `before_rflag_2`). CASA's default `extendflags=True`
+   applies, so rflag also grows its flags in time and frequency; report that.
+3. **After flagging (prove the target spectrum is clean):**
+   - `ms_flag_summary(ms_path, field=<field>)`: flagged fraction after.
+   - `ms_spw_amp_severity(ms_path, datacolumn='CORRECTED_DATA', field=<field>, workdir=workdir)`:
+     record after-flagging `chan_diff_std_over_mad`,
+     `max_spw_chan_diff_std_over_mad`, `chan_diff_gt10sigma_frac`,
+     `spw_rms_ratio`, and per-SpW `chan_diff_rms`. Clean target spectra have
+     `chan_diff_std_over_mad < 1.5`, `max_spw_chan_diff_std_over_mad < 1.8`,
+     `chan_diff_gt10sigma_frac < 0.001`, and `spw_rms_ratio < 1.5`.
 
-**Output:** the flagged fraction per field before and after, the thresholds
-used, and the flag version name.
+**Output:** before and after flagged fractions per field, before and after
+`ms_spw_amp_severity` adjacent-channel spectrum metrics (`chan_diff_std_over_mad`,
+`max_spw_chan_diff_std_over_mad`, `chan_diff_gt10sigma_frac`, `spw_rms_ratio`),
+the thresholds used, and the flag version name.

@@ -132,11 +132,10 @@ Record the values as `{TARGET_FIELD}`, `{IS_MOSAIC}`, and `{STOKES}`.
 
 Determine `specmode` before deriving any other parameter.
 
-| Condition | `specmode` |
-|---|---|
-| Single SPW, continuum science | `'mfs'` |
-| Multiple SPWs aggregated, continuum science | `'mfs'` |
-| Spectral line science or per-channel imaging requested | `'cube'` |
+| Condition | `specmode` | Notes |
+|---|---|---|
+| Single SPW or multiple SPWs aggregated, continuum science (including wideband `mtmfs` mosaics) | `'mfs'` | Standard continuum MFS (fast; do NOT use cube-mode `'mvc'` for routine continuum imaging) |
+| Spectral line science or per-channel / IQUV polarization cube requested | `'cube'` | Per-plane cube |
 
 Default to `'mfs'` unless the user explicitly asks for a cube.
 
@@ -176,74 +175,155 @@ separate masking from deep cleaning into three physics-driven phases instead of
 stopping after an arbitrary fixed pass count:
 
 1. **Phase A -- Initial shallow pass (`usemask='pb'`):** Run the first `hogbom`
-   (or `mtmfs`, `nterms=2` when `fractional_span > 0.2`) pass (`<name>_hogbom` or
-   `<name>_mtmfs_init`) with `pblimit=-0.01` on mosaics (`-0.1` single-pointing),
-   explicit `pbmask=0.1` (so cleaning stays inside `PB >= 0.1` while the outer
-   mosaic PB / first sidelobe remains unblanked), and `nsigma=3.5` (`3.0` on
-   compact single pointings) to remove bright sidelobes without cleaning
-   outer-PB noise into a bowl. Call `ms_image_stats(..., pb_level=0.1)` on it
-   (for `mtmfs`, use `.image.pbcor.tt0` and `.psf.tt0`).
+   (or `mtmfs`, `nterms=2`, `specmode='mfs'` when `fractional_span > 0.2`) pass
+   (`<name>_hogbom` or `<name>_mtmfs_init`) with `pblimit=-0.01` on mosaics
+   (`-0.1` single-pointing), explicit `pbmask=0.1` (so unmasked PB cleaning
+   stays inside `PB >= 0.1` while the outer mosaic PB / first sidelobe remains
+   unblanked), and **`nsigma=5.0` on unmasked `mtmfs` mosaics** (`3.5` on
+   narrowband `hogbom` mosaics, `3.0` on compact single pointings). Why `5.0`
+   on unmasked `mtmfs` mosaics: cleaning 20% of the map unmasked down to `3.5`
+   sigma drives `nterms=2` into noise and outer-PB sidelobes (`model.tt1`
+   diverges with `stopcode=6`); `nsigma=5.0` stops cleanly on bright structure
+   to seed the PyBDSF mask. Verify `converged=True` (`stopcode in (2, 8)`), then
+   call `ms_image_stats(..., pb_level=0.1)` on it (for `mtmfs`, use the `.pbcor`
+   image on disk: `.image.tt0.pbcor` or `.image.pbcor.tt0`, plus `.psf.tt0`).
 2. **Phase B -- Adaptive mask-growing passes (`usemask='user'`, safety cap 4
    rounds, early stop on convergence):**
    - Build or update the mask on the flat-noise `.image` (or `.image.tt0` for
      `mtmfs`; never `.pbcor`) via `ms_make_mask(image_path=<prev>.image[.tt0],
      mask_path=<name>_rN.mask, prior_mask=<prev_mask if N>1 else None>,
-     workdir={WORKDIR}, pb_level=0.1, png_path=<name>_rN_mask.png,
-     execute=True)`. Note: keep `pb_level=0.1` (or `0.05` if bright first-sidelobe
-     sources are visible), decoupled from `pblimit=-0.01`. If `mask_pixels == 0`,
-     fall back to `usemask='pb'` with `pbmask=0.1` and `nsigma=3.0` (never pass
-     an empty mask to `tclean`, which triggers `stopcode=7`).
+     workdir={WORKDIR}, pb_level=0.1,
+     png_path=<name>_rN_mask.png, execute=True)`.
+     **Keep the `pbmask` (`pb_level=0.1`):** clean only sources found inside
+     the cleanable primary beam (`PB >= 0.1`). NEVER stretch `mtmfs`
+     (`nterms=2`) clean masks down to `PB = 0.01`: near the first PB null
+     (`PB ~ 0.01--0.04`), the frequency-dependent PB varies steeply across the
+     band and makes the 2-term Taylor fit singular (`stopcode=6` divergence).
+     Uncleaned outer-PB sources outside `PB >= 0.1` happen routinely and are
+     NOT an automatic failure; if one throws sidelobes into the science region,
+     handle it via the Outer-PB Offending Source Workflow below.
+     If `mask_pixels == 0`, fall back to `usemask='pb'` with `pbmask=0.1` and
+     `nsigma=3.0` (never pass an empty mask to `tclean`, which triggers `stopcode=7`).
    - Run `ms_tclean` (`<name>_<deconvolver>_rN`) with `deconvolver='multiscale'`
-     (or `'mtmfs'`, `nterms=2` with `scales` when `fractional_span > 0.2`),
-     `usemask='user'`, `mask=<name>_rN.mask`,
+     (or `'mtmfs'`, `nterms=2`, `specmode='mfs'` with `scales` when
+     `fractional_span > 0.2`), `usemask='user'`, `mask=<name>_rN.mask`,
      `pblimit=(-0.01 if mosaic else -0.1)`, and `nsigma=2.5` (or `2.0` once
      bright sidelobes drop). Why lower than `3.0`: CASA's `nsigma` multiplies
      the global residual MAD across the whole PB, so unmasked faint emission
      inflates the MAD and stalls `nsigma=3.0` prematurely; `usemask='user'`
      already blocks cleaning outside-mask noise.
-   - Call `ms_image_stats(..., pb_level=0.1)` after each pass and inspect
-     `mask_growth_fraction` (from `ms_make_mask`), `residual_out_mask_rms_jy`,
-     and `residual_out_mask_peak_snr`:
+   - Verify `converged=True` (`stopcode in (2, 8)`), call
+     `ms_image_stats(..., pb_level=0.1)` after each pass, and inspect BOTH the
+     residual metrics AND the programmatic **`.model` positivity** metrics
+     (`model_neg_to_pos_flux_ratio`, `model_neg_pixel_fraction`,
+     `model_neg_to_pos_peak_ratio`, `model_outer_pb_flux_frac`):
+     - **Check `.model` positivity (Stokes I):** A physical Stokes I clean
+       model must be mostly positive. If `model_neg_to_pos_flux_ratio` jumps
+       above `~0.25--0.30`, `model_neg_to_pos_peak_ratio` rises sharply, or
+       `model_neg_pixel_fraction` surges (> 0.50 with growing negative flux)
+       between rounds, cleaning is putting negative bowls/noise into `.model` --
+       stop deepening, tighten the mask or drop overly large `scales`, or keep
+       the cleaner earlier round.
      - **Grow the mask again** (up to round 4) when
-       `residual_out_mask_peak_snr >= 5.0` (real unmasked emission still sits
-       outside the mask) **OR** (`mask_growth_fraction >= 0.10` and
-       `residual_out_mask_rms_jy` dropped by `>= 15%` from the prior pass).
+       `residual_out_mask_peak_snr >= 5.0` inside `PB >= 0.1`
+       **OR** (`mask_growth_fraction >= 0.10` and `residual_out_mask_rms_jy`
+       dropped by `>= 15%` from the prior pass).
        If diffuse extended emission still sits outside the mask after 2 standard
        rounds (`residual_out_mask_peak_snr >= 5.0`), enable `atrous_do=True`
        and/or relax to `thresh_pix=4.0, thresh_isl=2.5` on the next
        `ms_make_mask` call to capture low-surface-brightness wings.
      - **Stop growing the mask** as soon as (`mask_growth_fraction < 0.05` and
        `residual_out_mask_peak_snr < 5.0`) -- compact point sources finish in
-       1 masked pass -- **OR** `mask_fraction_in_pb > 0.50` (guard against
+       1--2 masked passes -- **OR** `mask_fraction_in_pb > 0.50` (guard against
        masking noise), **OR** round 4 is reached.
 3. **Phase C -- Deep clean inside the fixed mask (only when needed):**
    - Once mask growth stops, check the **inside-mask** residuals in
      `ms_image_stats`. If `residual_in_mask_peak_snr >= 3.5` **OR**
      `residual_in_to_out_rms_ratio >= 1.5` (the mask covers the source, `tclean`
      stopped too early inside it), run **one final pass** (`<name>_<deconvolver>`)
-     with the same fixed mask, `pblimit=(-0.01 if mosaic else -0.1)`,
-     `nsigma=1.5`,
+     with the same fixed mask, `specmode='mfs'`,
+     `pblimit=(-0.01 if mosaic else -0.1)`, `nsigma=1.5`,
      `threshold = max(2 * thermal_rms_jy, 1.5 * residual_out_mask_rms_jy)`, and
-     `savemodel='modelcolumn'`.
+     `savemodel='modelcolumn'`. Verify `converged=True` AND that `.model`
+     positivity did not degrade compared to Phase B; if Phase C only added
+     negative model components without improving residuals, keep the cleaner
+     Phase B round (with `savemodel='modelcolumn'`).
    - If Phase B already converged inside the mask
      (`residual_in_mask_peak_snr < 3.5` and `residual_in_to_out_rms_ratio < 1.5`),
      ensure the final converged pass wrote `savemodel='modelcolumn'` (or run it
-     as `<name>_<deconvolver>` with `savemodel='modelcolumn'`). Once both
-     inside-mask and outside-mask residuals are noise-like and flat-noise
-     `negative_to_peak_ratio <= 0.05`, deconvolution is converged; any remaining
-     gap to `thermal_rms_jy` is calibration, residual RFI, dynamic-range/selfcal,
-     or confusion -- not masking.
+     as `<name>_<deconvolver>` with `savemodel='modelcolumn'`). Once `tclean`
+     converged (`stopcode in (2, 8)`), inside-mask and outside-mask (`PB >= 0.1`)
+     residuals are noise-like, `.model` is predominantly positive, and flat-noise
+     `negative_to_peak_ratio <= 0.05`, deconvolution inside the PB is converged;
+     any remaining gap to `thermal_rms_jy` is an offending outer-PB source,
+     calibration, residual RFI, dynamic-range/selfcal, or confusion -- not masking.
 
-**Primary-beam blanking on mosaics (`pblimit` vs `pbmask` / `pb_level`).**
+**Primary-beam blanking on mosaics (`pblimit`, `pbmask`, `ms_make_mask`, `ms_image_stats`).**
 Positive `pblimit` (`0.1` or `0.2`) blanks all pixels below that gain level,
-cutting off the outer mosaic PB and first sidelobe even when `imsize` covers
-`3 * FWHM` (Step 4). Use a small negative **`pblimit=-0.01`** on mosaics (and
-`-0.1` on single pointings) so the full mosaic footprint and first sidelobe stay
-unblanked during gridding and deconvolution. Control noise cleaning strictly
-through the clean mask (`pbmask=0.1` in Phase A `usemask='pb'`; PyBDSF
-`usemask='user'` mask in Phases B/C) and keep **`pb_level=0.1`** (never
-`abs(pblimit)=0.01`) in `ms_make_mask` and `ms_image_stats` so reporting noise
-and clean-bowl metrics stay inside the inner science PB.
+hiding sources in the outer PB and first sidelobe even when `imsize` covers
+`3 * FWHM` (Step 4). Use **`pblimit=-0.01`** on mosaics (`-0.1` on single
+pointings) so the outer PB stays visible for diagnostics, while keeping the
+clean boundary inside the primary beam:
+- In Phase A (`usemask='pb'`): pass explicit `pbmask=0.1` and `nsigma=5.0` on
+  `mtmfs` mosaics (`3.5` narrowband) so unmasked cleaning stays inside `PB >= 0.1`
+  and does not diverge into `model.tt1`.
+- In Phases B/C (`ms_make_mask` on flat-noise `.image`/`.image.tt0`): keep
+  **`pb_level=0.1`** so PyBDSF masks only cleanable sources inside `PB >= 0.1`
+  (NEVER pass `pb_level=abs(pblimit)=0.01` with `mtmfs`).
+- In `ms_image_stats`: keep **`pb_level=0.1`** for science-PB reporting AND
+  inspect `residual_outer_pb_peak_snr`, `residual_outer_pb_peak_pb`, and
+  `residual_outer_pb_peak_j2000` (measured in `0 < PB < pb_level`) to detect
+  offending outer-PB sources.
+
+**Outer-PB Offending Source Workflow (phasecal inclusion, outlier fields, and baby peeling).**
+Uncleaned sources outside `PB >= 0.1` are common and are NOT a failure by
+themselves (some outer-PB sources cannot be deconvolved directly inside a
+wideband mosaic). Check `residual_outer_pb_peak_*` in `ms_image_stats` and
+follow this decision tree:
+1. **Is it hurting the science region?** If `residual_out_mask_rms_jy` inside
+   `PB >= 0.1` is near thermal and no sidelobes degrade the science target,
+   leave the outer-PB source uncleaned and report its position/SNR in the
+   summary.
+2. **Is it the phase calibrator (or another observed pointing)?** Cross-match
+   `(residual_outer_pb_peak_ra_deg, residual_outer_pb_peak_dec_deg)` against
+   `ms_field_list`. If it matches the phasecal (or another calibrated pointing
+   in the MS), include that pointing in the mosaic `field` selection so its
+   primary beam covers the source cleanly.
+3. **Outlier field (`outlierfile`) or baby peeling (preferred for fast clean removal):**
+   - **Outlier field:** Write a CASA outlier-field text file centered on
+     `residual_outer_pb_peak_j2000` and pass `outlierfile=<path>` to `ms_tclean`.
+   - **Baby peeling (image only the offending source, subtract with `uvsub`, then
+     confirm it is gone):**
+     1. Split calibrated target visibilities to a working MS so the original MS
+        stays untouched: `ms_casa_task(task='split', params={'vis': ms_path,
+        'outputvis': '<workdir>/target_peeled.ms', 'field': <target>,
+        'datacolumn': 'corrected'})`, then `ms_casa_task(task='clearcal',
+        params={'vis': '<workdir>/target_peeled.ms', 'addmodel': False})` so
+        `CORRECTED_DATA = DATA`.
+     2. Image ONLY the offending source per pointing with
+        `ms_tclean(ms_path='<workdir>/target_peeled.ms', field=<pointing>,
+        gridder='standard', phasecenter=<residual_outer_pb_peak_j2000>,
+        specmode='mfs', deconvolver='mtmfs', nterms=2, imsize=[128, 128],
+        cell=<CELL>, pblimit=-0.01, pbmask=0.0, usemask='user',
+        mask=<tight mask around real component(s) only>, niter=1000,
+        threshold=<above dirty-cutout sidelobe floor>, savemodel='modelcolumn')`.
+        Using `gridder='standard'` + `deconvolver='mtmfs'` (`nterms=2`) models
+        the apparent (sky * PB) spectral structure directly without PB-division
+        singularity and runs in tens of seconds per pointing.
+     3. Verify `.model` positivity on each peel cutout (`model_neg_to_pos_flux_ratio`
+        low, e.g. `< 0.30`; never subtract an overcleaned negative-dominated model).
+     4. **Critical CASA `MODEL_DATA` safety rule:** When `tclean(field=f,
+        savemodel='modelcolumn')` creates `MODEL_DATA`, CASA initializes all
+        unselected fields to `1+0j`. Either peel every field in
+        `target_peeled.ms` into `MODEL_DATA` before calling a single `uvsub`, or
+        explicitly zero `MODEL_DATA` on unpeeled fields before calling `uvsub`.
+        Never run `uvsub` if any unpeeled field still holds default `1+0j`.
+     5. Subtract and clean up: `ms_casa_task(task='uvsub', params={'vis':
+        '<workdir>/target_peeled.ms'})`, then `ms_casa_task(task='delmod',
+        params={'vis': '<workdir>/target_peeled.ms', 'otf': True, 'scr': True})`.
+     6. Confirm with a dirty image (`niter=0`) on `target_peeled.ms` that the
+        offending source is removed, then run subsequent imaging passes on
+        `target_peeled.ms`.
 
 ---
 
@@ -263,7 +343,9 @@ value and record it as `{CELL}`.
 
 ## Step 4 -- Derive image size
 
-Primary beam FWHM:
+Primary beam FWHM (on wideband observations with `{FRACTIONAL_SPAN} > 0.2`, use
+`min_freq_hz` for `lambda_max = c / min_freq_hz` so the PB tapers cleanly below
+`0.01` inside the image edge with no PB-edge aliasing):
 ```
 pb_fwhm_arcsec = (1.02 * lambda_m / {DISH_DIAMETER_M}) * (180 * 3600 / pi)
 ```
@@ -486,8 +568,24 @@ rule:** NEVER write a final reduction report, summarize completion, assume
 `status=running` (exiting tears down the container/session and kills `tclean`
 mid-run, leaving zero `.image` products). Keep re-invoking
 `run-step.sh <python> <script> --wait 240` until `status=done` (`rc=0`) and
-verify `<imagename>.image.pbcor` (or `.image.pbcor.tt0`) exists on disk before
-calling `ms_image_stats` or reporting.
+verify `<imagename>.image.pbcor` (or `.image.tt0.pbcor` / `.image.pbcor.tt0`
+for `mtmfs`) exists on disk before calling `ms_image_stats` or reporting.
+
+**Hard convergence discipline (NEVER accept `converged=False` or hack around divergence):**
+- Inspect `stopcode` and `converged` in the `tclean` output / `stage_log.jsonl`.
+  **NEVER accept or deliver an image from a run with `converged=False`
+  (`stopcode=1` iteration limit, `stopcode=5` or `6` divergence).**
+- **On `stopcode=5` or `6` (divergence):** NEVER "fix" divergence by raising
+  `threshold` above `~3--5 * off_source_rms` (that only stops cleaning early
+  while leaving 5x+ uncleaned in-model residuals). Instead fix the physical
+  cause: (1) on unmasked `usemask='pb'` wideband `mtmfs` mosaics, keep Phase A
+  shallow (`nsigma=5.0`) and switch immediately to a tight PyBDSF
+  `usemask='user'` mask, (2) confirm target `CORRECTED_DATA` passed the Step 0.5
+  target spectrum gate (`chan_diff_std_over_mad < 1.5`, `spw_rms_ratio < 1.5`),
+  and (3) confirm `imsize` covers `3 * FWHM` at `min_freq_hz` with no PB-edge
+  aliasing.
+- **On `stopcode=1` (iteration limit):** raise `niter` (or tighten the mask if
+  cleaning noise) and re-run until `stopcode in (2, 8)`.
 
 ---
 
@@ -497,7 +595,7 @@ Call `ms_image_stats` on the pbcor image:
 
 ```
 ms_image_stats(
-    image_path  = {WORKDIR}/{imagename}.image.pbcor,    # or .image.pbcor.tt0 for mtmfs
+    image_path  = {WORKDIR}/{imagename}.image.pbcor,    # for mtmfs: .image.tt0.pbcor or .image.pbcor.tt0 on disk
     psf_path    = {WORKDIR}/{imagename}.psf,            # or .psf.tt0 for mtmfs
     pb_level    = 0.1,                                  # science PB reporting boundary (decoupled from pblimit=-0.01)
     png_path    = {WORKDIR}/{imagename}.png,
@@ -514,39 +612,52 @@ by a small gain, so it reads high. Similarly, `negative_to_peak_ratio` is
 measured on the sibling **flat-noise `.image`** (`flat_noise_min_jy` /
 `flat_noise_peak_jy` inside `.pb >= pb_level`) so `1/PB` edge noise
 amplification on `.pbcor` is never mistaken for a negative clean bowl. Always
-write in the report: "The .pbcor image noise rises toward the PB edge; the RMS
-quoted is from the .residual inside PB >= {pb_level}."
+also inspect `residual_full_peak_snr`, `residual_full_peak_pb`, and
+`residual_outer_pb_peak_snr` (measured across ALL `PB > 0`) so bright uncleaned
+outer-PB sources are never hidden below `pb_level=0.1`. Always write in the
+report: "The .pbcor image noise rises toward the PB edge; the RMS quoted is from
+the .residual inside PB >= {pb_level}."
 
-**Look at the image (mandatory).** Always open `png_path` with Read on every
-target image before quoting a flux, reporting results, or declaring imaging
-done. The white line is PB = `pb_level`; judge only what is inside it. Look
-explicitly for negative clean bowls around extended emission, stripes, rings,
-and edge artefacts.
+**Look at the image (programmatic metrics first; PNG optional).** Do NOT assume
+vision is available -- evaluate `.model` positivity (`model_neg_to_pos_flux_ratio`,
+`model_neg_pixel_fraction`, `model_neg_to_pos_peak_ratio`,
+`model_outer_pb_flux_frac`), flat-noise `negative_to_peak_ratio`, and residual
+peaks (inside `PB >= pb_level` and `residual_outer_pb_peak_*`) programmatically
+from `ms_image_stats` on every round. If vision is available, also open `png_path`
+with Read to inspect inside the PB contour and outer PB for bowls, stripes,
+rings, and edge artefacts.
 
-Quality gates:
+Quality gates (every delivered target image MUST report and verify all convergence gates):
 
 | Metric | Expected | Action if not met |
 |---|---|---|
-| `residual_out_mask_peak_snr` | < 5.0 (masked pass) | >= 5.0: unmasked emission remains outside the mask; grow the mask via `ms_make_mask(..., prior_mask=...)` (enable `atrous_do=True` / lower `thresh_pix=4.0, thresh_isl=2.5` if diffuse) and re-image |
-| `residual_in_mask_peak_snr`, `residual_in_to_out_rms_ratio` | `< 3.5` and `< 1.5` (masked pass) | Above either: mask covers the source but `tclean` stopped early inside it; run Phase C deep clean inside the fixed mask with `nsigma=1.5` and `threshold = max(2 * thermal_rms_jy, 1.5 * residual_out_mask_rms_jy)` |
-| `residual_out_mask_rms_jy` (else `residual_rms_jy`) | Within 2x of `thermal_rms_jy` | > 2x after deconvolution converges: separate calibration, residual RFI, and self-cal/confusion causes below; do not ship unresolved or dismiss `thermal_rms_jy` as "optimistic" without testing a point-source calibrator |
+| `tclean` convergence (`stage_log.jsonl`) | `converged == True` (`stopcode` is `2` or `8`) | **HARD FAIL** on `stopcode=1`, `5`, or `6`: NEVER deliver. Fix root cause (shallow Phase A `nsigma=5.0` + tight PyBDSF `usemask='user'` mask inside `PB >= 0.1`, clean target spectrum, full `imsize`, or higher `niter`) -- NEVER raise `threshold` above `~3--5x` rms to mask divergence |
+| `.model` positivity (Stokes I: `model_neg_to_pos_flux_ratio`, `model_neg_pixel_fraction`, `model_neg_to_pos_peak_ratio`, `model_outer_pb_flux_frac`) | Predominantly positive (`model_neg_to_pos_flux_ratio < 0.25`, `model_neg_to_pos_peak_ratio < 0.25`, `model_outer_pb_flux_frac` small) | Surging negative model flux/components: stop deepening, tighten mask or drop overly large `scales`, or keep the cleaner earlier round (never subtract or deliver a negative-dominated Stokes I model) |
+| `residual_out_mask_peak_snr` | `< 5.0` (masked pass, inside `PB >= 0.1`) | `>= 5.0`: unmasked emission remains inside `PB >= 0.1`; grow mask via `ms_make_mask(..., pb_level=0.1, prior_mask=...)` (enable `atrous_do=True` / `thresh_pix=4.0, thresh_isl=2.5` if diffuse) and re-image |
+| `residual_outer_pb_peak_snr`, `residual_outer_pb_peak_pb`, `residual_outer_pb_peak_j2000` (`0 < PB < 0.1`) | Diagnostic (uncleaned outer-PB sources are normal and NOT an automatic failure) | If bright enough to throw sidelobes into `PB >= 0.1`: (1) cross-match `(ra_deg, dec_deg)` against `ms_field_list` (if phasecal, include pointing), else (2) `outlierfile` or fast baby peeling (`gridder='standard'`, `phasecenter=<j2000>`, `mtmfs nterms=2`, `savemodel='modelcolumn'`, `uvsub`, confirm via dirty image) |
+| `residual_in_mask_peak_snr`, `residual_in_to_out_rms_ratio` | `< 3.5` and `< 1.5` (near `1.0`, masked pass) | Above either: mask covers the source but `tclean` stopped early inside it (or threshold was set too high); run Phase C deep clean inside the fixed mask with `nsigma=1.5` and `threshold = max(2 * thermal_rms_jy, 1.5 * residual_out_mask_rms_jy)` |
+| `residual_out_mask_rms_jy` (else `residual_rms_jy`) | Within 2x of `thermal_rms_jy` | > 2x after deconvolution converges: separate outer-PB sidelobes, calibration, residual RFI, and self-cal/confusion causes below; do not ship unresolved or dismiss `thermal_rms_jy` as "optimistic" without testing a point-source calibrator |
 | `residual_dynamic_range` | > 100 for calibrators; > 20 for typical targets | < 20: imaging artefacts dominant; check PSF sidelobes |
 | `flat_noise_min_jy`, `negative_to_peak_ratio` | `negative_to_peak_ratio` <= 0.05 (Stokes I, flat-noise `.image` inside PB >= `pb_level`) | > 0.05 (severe if > 0.10): negative clean bowl from over-cleaning unmasked noise, too-low threshold, or missing short spacings; verify mask and `nsigma`, re-image with tighter masking/threshold before self-cal or shipping |
 | `beam_major_arcsec` | Close to `lambda/max_baseline_m * (180*3600/pi)` | Large deviation: uv coverage gaps or flagging holes |
-| `peak_jy` | Positive, above threshold | Negative peak > rms: clean diverged; reduce gain or niter |
+| `peak_jy` | Positive, above threshold | Negative peak > rms: clean diverged; fix divergence cause (never raise threshold arbitrarily) |
 
 When `residual_out_mask_rms_jy` (or `residual_rms_jy` if unmasked) exceeds 2x
 the radiometer estimate (including > 3x), do not assume a single cause, do not
 dismiss `thermal_rms_jy` as "optimistic", and do not ship the image unresolved.
-First verify deconvolution converged (`residual_out_mask_peak_snr < 5.0`,
-`residual_in_mask_peak_snr < 3.5`, `residual_in_to_out_rms_ratio < 1.5`,
-flat-noise `negative_to_peak_ratio <= 0.05`). Once deconvolution is converged,
-separate the remaining causes in strict order: (A) image the phase calibrator
+First verify deconvolution converged (`converged == True`, `stopcode in (2, 8)`,
+`residual_out_mask_peak_snr < 5.0`, `residual_in_mask_peak_snr < 3.5`,
+`residual_in_to_out_rms_ratio < 1.5`, `.model` predominantly positive,
+flat-noise `negative_to_peak_ratio <= 0.05`). Once deconvolution inside the PB
+is converged, separate the remaining causes in strict order: (0) check
+`residual_outer_pb_peak_*` for an offending outer-PB source (phasecal inclusion,
+outlier field, or baby peeling), (A) image the phase calibrator
 as a point-source noise check to empirically test calibration and `thermal_rms_jy`,
-(B) inspect target `CORRECTED_DATA` amplitudes vs frequency and time for
-residual RFI and flag if present, and (C) if calibration and data are clean,
-evaluate phase self-calibration when `dynamic_range >= 30` and the model is
-bowl-free (or document sky confusion / dynamic-range limits).
+(B) inspect target `CORRECTED_DATA` amplitudes vs frequency (adjacent-channel
+`chan_diff_std_over_mad`, `spw_rms_ratio`) and time for residual RFI and flag if
+present, and (C) if calibration and data are clean, evaluate phase
+self-calibration when `dynamic_range >= 30` and the model is bowl-free (or
+document sky confusion / dynamic-range limits).
 
 ### Reading `detection`
 

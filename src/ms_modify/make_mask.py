@@ -43,6 +43,12 @@ def infer_pb_path(image_path: Path) -> Path | None:
     if name.endswith(".image.tt0"):
         stem = name[: -len(".image.tt0")]
         candidates.extend([parent / f"{stem}.pb.tt0", parent / f"{stem}.pb"])
+    elif name.endswith(".image.tt0.pbcor"):
+        stem = name[: -len(".image.tt0.pbcor")]
+        candidates.extend([parent / f"{stem}.pb.tt0", parent / f"{stem}.pb"])
+    elif name.endswith(".image.pbcor.tt0"):
+        stem = name[: -len(".image.pbcor.tt0")]
+        candidates.extend([parent / f"{stem}.pb.tt0", parent / f"{stem}.pb"])
     elif name.endswith(".image.pbcor"):
         stem = name[: -len(".image.pbcor")]
         candidates.append(parent / f"{stem}.pb")

@@ -117,6 +117,78 @@ class _ChanReservoir:
         }
 
 
+class _ChanDiffTracker:
+    """Exact running RMS/std + bounded uniform reservoir for |V(ch) - V(ch-1)| / sqrt(2).
+
+    Adjacent-channel complex differencing cancels smooth continuum sky emission on
+    all baselines (including bright extended sources like 3C391), leaving thermal
+    noise (std / (1.4826 * MAD) ~ 1.0) plus narrow-band/time-variable RFI spikes.
+    Exact Chan parallel-variance updates ensure rare high-amplitude bursts are never
+    missed by reservoir sampling.
+    """
+
+    __slots__ = ("vals", "keys", "n_pairs", "mean", "m2", "sum_sq", "vmax", "_k")
+
+    def __init__(self, k: int):
+        self._k = k
+        self.vals = np.empty(0, dtype=np.float64)
+        self.keys = np.empty(0, dtype=np.float64)
+        self.n_pairs = 0
+        self.mean = 0.0
+        self.m2 = 0.0
+        self.sum_sq = 0.0
+        self.vmax = -np.inf
+
+    def add(self, dv_abs: np.ndarray, rng: np.random.Generator) -> None:
+        m = dv_abs.size
+        if m == 0:
+            return
+        b_mean = float(np.mean(dv_abs))
+        b_m2 = float(np.sum((dv_abs - b_mean) ** 2))
+        b_ssq = float(np.sum(dv_abs * dv_abs))
+        if self.n_pairs == 0:
+            self.mean = b_mean
+            self.m2 = b_m2
+        else:
+            delta = b_mean - self.mean
+            n_tot = self.n_pairs + m
+            self.mean += delta * (m / n_tot)
+            self.m2 += b_m2 + delta * delta * (self.n_pairs * m / n_tot)
+        self.n_pairs += m
+        self.sum_sq += b_ssq
+        self.vmax = max(self.vmax, float(dv_abs.max()))
+
+        batch_keys = rng.random(m)
+        vals = np.concatenate([self.vals, dv_abs])
+        keys = np.concatenate([self.keys, batch_keys])
+        if vals.size > self._k:
+            keep = np.argpartition(keys, self._k)[: self._k]
+            vals = vals[keep]
+            keys = keys[keep]
+        self.vals = vals
+        self.keys = keys
+
+    def stats(self) -> dict | None:
+        if self.n_pairs == 0 or self.vals.size == 0:
+            return None
+        rms = float(np.sqrt(self.sum_sq / self.n_pairs))
+        std = float(np.sqrt(max(0.0, self.m2 / self.n_pairs)))
+        med = float(np.median(self.vals))
+        mad_sig = 1.4826 * float(np.median(np.abs(self.vals - med)))
+        std_over_mad = (std / mad_sig) if mad_sig > 0 else None
+        gt10_frac = float(np.mean(self.vals > (med + 10.0 * mad_sig))) if mad_sig > 0 else 0.0
+        return {
+            "n_pairs": self.n_pairs,
+            "rms": rms,
+            "std": std,
+            "median": med,
+            "mad_sigma": mad_sig,
+            "std_over_mad": std_over_mad,
+            "gt10sigma_frac": gt10_frac,
+            "max": float(self.vmax),
+        }
+
+
 def _corr_first_axis(arr: np.ndarray) -> np.ndarray:
     """Return amplitude array as [n_chan, n_elements] folding corr + rows together.
 
@@ -356,14 +428,19 @@ def run(
         )
 
     # ------------------------------------------------------------------
-    # Per-(spw, chan) reservoirs. Multiple DDIDs may map to one SpW; we feed
-    # each DDID's data into its SpW's reservoirs directly.
+    # Per-(spw, chan) reservoirs + per-SpW/global adjacent-channel diff trackers.
+    # Multiple DDIDs may map to one SpW; we feed each DDID's data into its SpW's
+    # trackers directly.
     # ------------------------------------------------------------------
+    diff_k = max(50_000, max_samples_per_chan * 10)
     spw_reservoirs: dict[int, list[_ChanReservoir]] = {}
+    spw_diff_trackers: dict[int, _ChanDiffTracker] = {}
+    global_diff_tracker = _ChanDiffTracker(diff_k)
     for spw_id, freqs in spw_chan_freqs.items():
         n_chan = len(freqs)
         if n_chan > 0:
             spw_reservoirs[spw_id] = [_ChanReservoir(max_samples_per_chan) for _ in range(n_chan)]
+            spw_diff_trackers[spw_id] = _ChanDiffTracker(diff_k)
 
     spw_corrs: dict[int, set[str]] = {}
     field_clause = ""
@@ -388,6 +465,7 @@ def run(
                 if n_rows == 0:
                     continue
                 reservoirs = spw_reservoirs[spw_id]
+                diff_tracker = spw_diff_trackers[spw_id]
                 spw_corrs.setdefault(spw_id, set()).update(name for _, name in par)
                 for start in range(0, n_rows, row_chunk):
                     nrow = min(row_chunk, n_rows - start)
@@ -399,9 +477,24 @@ def run(
                     flag = sub.getcol("FLAG", startrow=start, nrow=nrow)
                     data = data[par_idx]
                     flag = flag[par_idx]
+                    flag_b = flag.astype(bool)
                     amp = np.abs(data)  # [n_par, n_chan, nrow]
+                    if data.shape[1] >= 2:
+                        nz = amp > 0
+                        pair_good = (
+                            (~flag_b[:, 1:, :])
+                            & (~flag_b[:, :-1, :])
+                            & nz[:, 1:, :]
+                            & nz[:, :-1, :]
+                        )
+                        if np.any(pair_good):
+                            dv_abs = np.abs(data[:, 1:, :] - data[:, :-1, :])[pair_good].astype(
+                                np.float64, copy=False
+                            ) / np.sqrt(2.0)
+                            diff_tracker.add(dv_abs, rng)
+                            global_diff_tracker.add(dv_abs, rng)
                     amp_c = _corr_first_axis(amp)  # [n_chan, n_corr*nrow]
-                    flag_c = _corr_first_axis(flag.astype(bool))
+                    flag_c = _corr_first_axis(flag_b)
                     n_chan = amp_c.shape[0]
                     for ch in range(n_chan):
                         good = ~flag_c[ch]
@@ -533,6 +626,10 @@ def run(
 
         severity = round(band_floor / clean_floor, 3) if clean_floor and clean_floor > 0 else None
         ptf_vals = [r["peak_to_floor"] for r in chan_records if r.get("peak_to_floor") is not None]
+        diff_st = spw_diff_trackers[spw_id].stats()
+        diff_reason = (
+            "SpW has < 2 channels" if n_chan < 2 else "no unflagged adjacent channel pairs"
+        )
 
         per_spw.append(
             {
@@ -546,9 +643,74 @@ def run(
                 "elevation_threshold": round(threshold, 6),
                 "estimated_discardable_frac": fmt_field(round(discardable, 4)),
                 "max_peak_to_floor": max(ptf_vals) if ptf_vals else None,
+                "chan_diff_rms": fmt_field(
+                    round(diff_st["rms"], 6) if diff_st else None,
+                    flag="COMPLETE" if diff_st else "UNAVAILABLE",
+                    note=None if diff_st else diff_reason,
+                ),
+                "chan_diff_std": fmt_field(
+                    round(diff_st["std"], 6) if diff_st else None,
+                    flag="COMPLETE" if diff_st else "UNAVAILABLE",
+                    note=None if diff_st else diff_reason,
+                ),
+                "chan_diff_mad_sigma": fmt_field(
+                    round(diff_st["mad_sigma"], 6) if diff_st else None,
+                    flag="COMPLETE" if diff_st else "UNAVAILABLE",
+                    note=None if diff_st else diff_reason,
+                ),
+                "chan_diff_std_over_mad": fmt_field(
+                    round(diff_st["std_over_mad"], 3)
+                    if (diff_st and diff_st["std_over_mad"] is not None)
+                    else None,
+                    flag="COMPLETE"
+                    if (diff_st and diff_st["std_over_mad"] is not None)
+                    else "UNAVAILABLE",
+                    note=None
+                    if (diff_st and diff_st["std_over_mad"] is not None)
+                    else (diff_reason if diff_st is None else "chan_diff_mad_sigma is zero"),
+                ),
+                "chan_diff_gt10sigma_frac": fmt_field(
+                    round(diff_st["gt10sigma_frac"], 6) if diff_st else None,
+                    flag="COMPLETE" if diff_st else "UNAVAILABLE",
+                    note=None if diff_st else diff_reason,
+                ),
+                "chan_diff_max": fmt_field(
+                    round(diff_st["max"], 6) if diff_st else None,
+                    flag="COMPLETE" if diff_st else "UNAVAILABLE",
+                    note=None if diff_st else diff_reason,
+                ),
                 "per_chan": chan_records,
             }
         )
+
+    global_diff = global_diff_tracker.stats()
+    spw_rms_pairs = [
+        (e["spw_id"], e["chan_diff_rms"]["value"])
+        for e in per_spw
+        if isinstance(e.get("chan_diff_rms"), dict)
+        and isinstance(e["chan_diff_rms"].get("value"), (int, float))
+        and e["chan_diff_rms"]["value"] > 0
+    ]
+    if spw_rms_pairs:
+        rms_vals = [v for _, v in spw_rms_pairs]
+        med_rms = float(np.median(rms_vals))
+        max_rms_spw, max_rms_val = max(spw_rms_pairs, key=lambda kv: kv[1])
+        spw_rms_ratio_val = round(max_rms_val / med_rms, 3) if med_rms > 0 else None
+    else:
+        max_rms_spw = None
+        spw_rms_ratio_val = None
+
+    spw_som_pairs = [
+        (e["spw_id"], e["chan_diff_std_over_mad"]["value"])
+        for e in per_spw
+        if isinstance(e.get("chan_diff_std_over_mad"), dict)
+        and isinstance(e["chan_diff_std_over_mad"].get("value"), (int, float))
+    ]
+    if spw_som_pairs:
+        max_som_spw, max_som_val = max(spw_som_pairs, key=lambda kv: kv[1])
+    else:
+        max_som_spw = None
+        max_som_val = None
 
     data = {
         "datacolumn": datacolumn,
@@ -557,17 +719,67 @@ def run(
         "sigma": sigma,
         "max_samples_per_chan": max_samples_per_chan,
         "row_chunk": row_chunk,
+        "chan_diff_rms": fmt_field(
+            round(global_diff["rms"], 6) if global_diff else None,
+            flag="COMPLETE" if global_diff else "UNAVAILABLE",
+            note="exact RMS of |V(ch) - V(ch-1)| / sqrt(2) across all unflagged parallel-hand pairs"
+            if global_diff
+            else "no unflagged adjacent channel pairs",
+        ),
+        "chan_diff_std": fmt_field(
+            round(global_diff["std"], 6) if global_diff else None,
+            flag="COMPLETE" if global_diff else "UNAVAILABLE",
+            note=None if global_diff else "no unflagged adjacent channel pairs",
+        ),
+        "chan_diff_mad_sigma": fmt_field(
+            round(global_diff["mad_sigma"], 6) if global_diff else None,
+            flag="COMPLETE" if global_diff else "UNAVAILABLE",
+            note=None if global_diff else "no unflagged adjacent channel pairs",
+        ),
+        "chan_diff_std_over_mad": fmt_field(
+            round(global_diff["std_over_mad"], 3)
+            if (global_diff and global_diff["std_over_mad"] is not None)
+            else None,
+            flag="COMPLETE"
+            if (global_diff and global_diff["std_over_mad"] is not None)
+            else "UNAVAILABLE",
+            note="std / (1.4826 * MAD) of |V(ch) - V(ch-1)| / sqrt(2); ~1.0 for thermal noise, >>1 for RFI"
+            if (global_diff and global_diff["std_over_mad"] is not None)
+            else "no unflagged adjacent channel pairs or zero MAD",
+        ),
+        "chan_diff_gt10sigma_frac": fmt_field(
+            round(global_diff["gt10sigma_frac"], 6) if global_diff else None,
+            flag="COMPLETE" if global_diff else "UNAVAILABLE",
+            note="fraction of unflagged adjacent-channel diff pairs > median + 10 * mad_sigma"
+            if global_diff
+            else "no unflagged adjacent channel pairs",
+        ),
+        "max_spw_chan_diff_std_over_mad": fmt_field(
+            round(max_som_val, 3) if max_som_val is not None else None,
+            flag="COMPLETE" if max_som_val is not None else "UNAVAILABLE",
+            note=f"worst SpW (spw {max_som_spw})"
+            if max_som_val is not None
+            else "no SpW with adjacent-channel diff stats",
+        ),
+        "spw_rms_ratio": fmt_field(
+            spw_rms_ratio_val,
+            flag="COMPLETE" if spw_rms_ratio_val is not None else "UNAVAILABLE",
+            note=(
+                f"max_spw_rms (spw {max_rms_spw}) / median_spw_rms across {len(spw_rms_pairs)} SpW(s)"
+                if spw_rms_ratio_val is not None
+                else "no SpW with positive chan_diff_rms"
+            ),
+        ),
+        "spw_rms_max_spw_id": max_rms_spw,
         "note": (
             "Parallel hands only, pooled (correlations_used per SpW). "
             "band_floor = median of per-channel medians (robust SpW floor). "
             "clean_floor_anchor = median of the lowest-quartile band_floors (thermal "
-            "floor from the quietest SpWs). severity = band_floor / clean_floor_anchor; "
-            ">>1 = uniformly RFI-dominated (drop candidate), robust even when much of "
-            "the band is bad. estimated_discardable_frac = fraction of unflagged "
-            "elements above band_floor + sigma*band_robust_sigma (localized RFI "
-            "magnitude). Per-channel discardable_frac localizes the contamination. "
-            "Intermittent-vs-persistent (time structure) is out of scope for this "
-            "tool — it pools over time; use a time-resolved pass for that."
+            "floor from the quietest SpWs). severity = band_floor / clean_floor_anchor. "
+            "chan_diff_* measures adjacent-channel complex differences |V(ch) - V(ch-1)| / sqrt(2), "
+            "which cancels smooth continuum sky emission on all baselines (including extended "
+            "sources): clean thermal noise has chan_diff_std_over_mad ~ 1.0, chan_diff_gt10sigma_frac ~ 0, "
+            "and spw_rms_ratio ~ 1.0; unflagged RFI elevates these sharply."
         ),
         "n_spw": len(per_spw),
         "per_spw": per_spw,

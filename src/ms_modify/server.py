@@ -1852,6 +1852,14 @@ class TcleanInput(BaseModel):
     )
     width: str | None = Field(default=None, description="Cube channel width (specmode='cube').")
     outframe: str | None = Field(default=None, description="Cube spectral frame, e.g. 'LSRK'.")
+    phasecenter: str = Field(
+        default="",
+        description="Optional phase center (e.g. 'J2000 HHhMMmSS.SSs +DDdMMmSS.Ss') for small-box outlier imaging / baby peeling.",
+    )
+    outlierfile: str = Field(
+        default="",
+        description="Optional path to a CASA outlier-field definition file.",
+    )
     execute: bool = Field(default=False, description="False writes script; True runs in-process.")
     debug: bool = _debug_field()
     debug_params: dict[str, dict[str, Any]] = _debug_params_field()
@@ -1882,9 +1890,14 @@ async def ms_tclean(params: TcleanInput) -> ToolResult:
     """
     Generate (and optionally execute) a first-pass tclean imaging script.
 
-    Validates that CORRECTED_DATA exists in the MS. All imaging parameters
-    are passed explicitly — use skill 11-imaging.md to derive them from
-    Phase 1–2 tool outputs before calling this tool.
+    Validates that CORRECTED_DATA exists in the MS. Before imaging targets,
+    verify target spectrum cleanliness with ms_spw_amp_severity
+    (chan_diff_std_over_mad, spw_rms_ratio) and flag target RFI first if
+    elevated. Use skill 11-imaging.md to derive parameters (use nsigma=5.0 on
+    initial unmasked usemask='pb' mtmfs mosaics, then switch to usemask='user'
+    with ms_make_mask inside pb_level=0.1; verify .model positivity and handle
+    offending outer-PB sources via phasecal inclusion, outlierfile, or standard-
+    gridder baby peeling). Never accept a non-converged run (stopcode=1, 5, or 6).
 
     pbcor=True is always set internally. The generated script cleans up
     any existing image products for this imagename before running, making
@@ -1948,6 +1961,8 @@ async def ms_tclean(params: TcleanInput) -> ToolResult:
         width=params.width,
         outframe=params.outframe,
         scales=params.scales,
+        phasecenter=params.phasecenter,
+        outlierfile=params.outlierfile,
         execute=params.execute,
         debug=params.debug,
         debug_params=params.debug_params,

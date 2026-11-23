@@ -168,6 +168,22 @@ class TestPbMask:
         with pytest.raises(ComputationError, match="requires a non-empty mask"):
             _run(tmp_path, real_ms_calibrated, usemask="user")
 
+    def test_user_mask_colliding_with_imagename_mask_warns(self, tmp_path, real_ms_calibrated):
+        from ms_modify.tclean import run
+
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        res = run(
+            real_ms_calibrated,
+            str(workdir / "img_r1"),
+            field="0",
+            usemask="user",
+            mask=str(workdir / "img_r1.mask"),
+            workdir=str(workdir),
+            execute=False,
+        )
+        assert any("equals tclean's own output mask" in w for w in res["warnings"])
+
     def test_auto_multithresh_rejected(self, tmp_path, real_ms_calibrated):
         from ms_inspect.exceptions import ComputationError
 
@@ -245,6 +261,40 @@ class TestPbMask:
         warns4 = res4["warnings"]
         assert not any("positive pblimit" in w for w in warns4)
         assert not any("pbmask=" in w for w in warns4)
+
+        res5 = run(
+            real_ms_calibrated,
+            str(workdir / "mosaic_mtmfs_low_nsigma"),
+            field="0,1",
+            gridder="mosaic",
+            deconvolver="mtmfs",
+            nterms=2,
+            specmode="mfs",
+            pblimit=-0.01,
+            pbmask=0.1,
+            usemask="pb",
+            nsigma=3.5,
+            workdir=str(workdir),
+            execute=False,
+        )
+        assert any("nsigma=5.0" in w for w in res5["warnings"])
+
+        res6 = run(
+            real_ms_calibrated,
+            str(workdir / "mosaic_mtmfs_shallow"),
+            field="0,1",
+            gridder="mosaic",
+            deconvolver="mtmfs",
+            nterms=2,
+            specmode="mfs",
+            pblimit=-0.01,
+            pbmask=0.1,
+            usemask="pb",
+            nsigma=5.0,
+            workdir=str(workdir),
+            execute=False,
+        )
+        assert not any("nsigma=5.0" in w for w in res6["warnings"])
 
     def test_execute_forwards_user_mask_pblimit_and_nsigma(
         self, tmp_path, real_ms_calibrated, monkeypatch
@@ -473,3 +523,41 @@ class TestMtmfsNtermsAndPathguard:
             )
         # Ensure no script was written on refused calls
         assert list(workdir.glob("tclean_*.py")) == []
+
+    def test_phasecenter_and_outlierfile_written_to_script(self, tmp_path, real_ms_calibrated):
+        from ms_inspect.exceptions import ComputationError
+        from ms_modify.tclean import run
+
+        workdir = tmp_path / "work_peel"
+        workdir.mkdir()
+        outlier = workdir / "outliers.txt"
+        outlier.write_text(
+            "imagename=out1\nimsize=[128,128]\nphasecenter=J2000 03h30m26.21s +30d03m44.6s\n"
+        )
+
+        res = run(
+            real_ms_calibrated,
+            str(workdir / "peel_src"),
+            field="0",
+            deconvolver="mtmfs",
+            nterms=2,
+            gridder="standard",
+            phasecenter="J2000 03h30m26.21s +30d03m44.6s",
+            outlierfile=str(outlier),
+            workdir=str(workdir),
+            execute=False,
+        )
+        assert res["status"] == "ok"
+        script = Path(res["data"]["script_path"]["value"]).read_text()
+        assert "phasecenter  = 'J2000 03h30m26.21s +30d03m44.6s'" in script
+        assert f"outlierfile  = {str(outlier.resolve())!r}" in script
+
+        with pytest.raises(ComputationError, match="outlierfile does not exist"):
+            run(
+                real_ms_calibrated,
+                str(workdir / "peel_missing"),
+                field="0",
+                outlierfile=str(workdir / "does_not_exist.txt"),
+                workdir=str(workdir),
+                execute=False,
+            )

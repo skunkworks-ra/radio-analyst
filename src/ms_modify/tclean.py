@@ -107,6 +107,8 @@ def _build_script(
     width: str | None,
     outframe: str | None,
     scales: list[int] | None = None,
+    phasecenter: str = "",
+    outlierfile: str = "",
 ) -> str:
     # Same rule the execute=True path uses at the bottom of run(): mtmfs with
     # nterms > 1 (or default None -> 2) writes Taylor terms, so there is no
@@ -115,6 +117,10 @@ def _build_script(
     optional_lines = ""
     if spw:
         optional_lines += f"    spw          = {spw!r},\n"
+    if phasecenter:
+        optional_lines += f"    phasecenter  = {phasecenter!r},\n"
+    if outlierfile:
+        optional_lines += f"    outlierfile  = {outlierfile!r},\n"
     if deconvolver == "mtmfs" and nterms is not None:
         optional_lines += f"    nterms       = {nterms},\n"
     if deconvolver in SCALE_DECONVOLVERS and scales:
@@ -260,6 +266,8 @@ def run(
     width: str | None = None,
     outframe: str | None = None,
     scales: list[int] | None = None,
+    phasecenter: str = "",
+    outlierfile: str = "",
     execute: bool = False,
     debug: bool = False,
     debug_params: dict | None = None,
@@ -319,6 +327,9 @@ def run(
                      (specmode='cube' only).
         outframe:    Output spectral reference frame, e.g. 'LSRK' (specmode=
                      'cube' only). None lets CASA default.
+        phasecenter: Optional phase center (e.g. 'J2000 03h30m26.21s +30d03m44.6s'
+                     or field ID) for small-box outlier imaging / baby peeling.
+        outlierfile: Optional path to a CASA outlier-field definition file.
         execute:     If False (default), write script and return.
                      If True, run tclean in-process (intended for test data only).
 
@@ -373,7 +384,20 @@ def run(
             f"gridder='mosaic' with positive pblimit={pblimit}: pixels with PB < {pblimit} "
             "are blanked, cutting off outer-PB and first-sidelobe emission even when imsize "
             "covers the first sidelobe. Prefer small negative pblimit=-0.01 with explicit "
-            "pbmask=0.1 (Phase A) or usemask='user' (ms_make_mask)."
+            "pbmask=0.1 (Phase A) or usemask='user' (ms_make_mask with pb_level=0.1)."
+        )
+    if (
+        gridder == "mosaic"
+        and deconvolver == "mtmfs"
+        and usemask == "pb"
+        and (nsigma is None or nsigma < 4.5)
+        and niter > 0
+    ):
+        warnings.append(
+            "gridder='mosaic' with deconvolver='mtmfs' and unmasked usemask='pb' at "
+            f"nsigma={nsigma}: cleaning unmasked noise/sidelobes deeply with nterms>1 often "
+            "diverges (stopcode=6). Use nsigma=5.0 for the initial shallow usemask='pb' pass, "
+            "then switch to a tight PyBDSF mask (ms_make_mask + usemask='user')."
         )
     if usemask == "pb" and pbmask < 0.05 and niter > 0:
         warnings.append(
@@ -465,6 +489,30 @@ def run(
 
     imagename = str(validate_output_caltable(imagename, str(workdir_path), ms_str))
 
+    phasecenter = phasecenter.strip() if phasecenter else ""
+    outlierfile_str = ""
+    if outlierfile and outlierfile.strip():
+        of_path = Path(outlierfile.strip()).expanduser().resolve()
+        if not of_path.is_file():
+            from ms_inspect.exceptions import ComputationError
+
+            raise ComputationError(
+                f"outlierfile does not exist: {outlierfile}",
+                ms_path=ms_path,
+            )
+        outlierfile_str = str(of_path)
+
+    if (
+        usemask == "user"
+        and mask
+        and Path(mask).expanduser().resolve() == Path(imagename + ".mask").resolve()
+    ):
+        warnings.append(
+            f"mask path ({mask!r}) equals tclean's own output mask ({imagename + '.mask'!r}): "
+            "CASA refuses when both paths match. Use a distinct imagename (e.g. "
+            "'<name>_mtmfs_r1' with mask '<name>_r1.mask')."
+        )
+
     # Verify CORRECTED_DATA column exists.
     # Open failure (casatools not installed, table locked) is non-fatal — add a warning.
     # Missing column is always fatal — tclean on uncalibrated data is a silent science error.
@@ -515,6 +563,8 @@ def run(
         width=width,
         outframe=outframe,
         scales=scales,
+        phasecenter=phasecenter,
+        outlierfile=outlierfile_str,
     )
     _debug = debug_mode.validate(debug, debug_params, DEBUG_TASKS)
     if _debug:
@@ -589,6 +639,10 @@ def run(
         tclean_kwargs["wprojplanes"] = wprojplanes
     if cfcache is not None and gridder == "awproject":
         tclean_kwargs["cfcache"] = cfcache
+    if phasecenter:
+        tclean_kwargs["phasecenter"] = phasecenter
+    if outlierfile_str:
+        tclean_kwargs["outlierfile"] = outlierfile_str
     if specmode == "cube":
         if nchan is not None:
             tclean_kwargs["nchan"] = nchan
