@@ -331,6 +331,7 @@ def run(
     with open_table(str(Path(ms_str) / "SPECTRAL_WINDOW")) as tb:
         n_spw = int(tb.nrows())
         spw_meta: dict[int, tuple[float, float, str]] = {}
+        spw_edges: dict[int, tuple[float, float]] = {}
         for sid in range(n_spw):
             cf = np.asarray(tb.getcell("CHAN_FREQ", sid), dtype=float)
             cw = np.abs(np.asarray(tb.getcell("CHAN_WIDTH", sid), dtype=float))
@@ -340,6 +341,12 @@ def run(
                 float(cw.sum()) if cw.size else 0.0,
                 sname,
             )
+            if cf.size:
+                half_w = 0.5 * cw if cw.size == cf.size else 0.0
+                spw_edges[sid] = (
+                    float(np.min(cf - half_w)),
+                    float(np.max(cf + half_w)),
+                )
     casa_calls.append("tb.open(SPECTRAL_WINDOW) -> CHAN_FREQ, CHAN_WIDTH")
 
     try:
@@ -476,6 +483,19 @@ def run(
         if total_bw_hz > 0
         else (float(np.mean([spw_meta[sid][0] for sid in bw_spws])) if bw_spws else 0.0)
     )
+    edge_spws = [sid for sid in bw_spws if sid in spw_edges]
+    min_freq_hz = min((spw_edges[sid][0] for sid in edge_spws), default=None)
+    max_freq_hz = max((spw_edges[sid][1] for sid in edge_spws), default=None)
+    freq_span_hz = (
+        max(0.0, max_freq_hz - min_freq_hz)
+        if (min_freq_hz is not None and max_freq_hz is not None)
+        else None
+    )
+    fractional_span = (
+        round(freq_span_hz / center_freq_hz, 4)
+        if (freq_span_hz is not None and center_freq_hz > 0)
+        else None
+    )
 
     per_field_durations = [sum(tmap.values()) for fid, tmap in field_time_steps.items() if tmap]
     on_source_total_s = float(sum(per_field_durations))
@@ -515,6 +535,24 @@ def run(
             note=None if band_code is not None else "band could not be resolved",
         ),
         "center_freq_hz": fmt_field(round(center_freq_hz, 3)),
+        "min_freq_hz": fmt_field(
+            round(min_freq_hz, 3) if min_freq_hz is not None else None,
+            flag="COMPLETE" if min_freq_hz is not None else "UNAVAILABLE",
+        ),
+        "max_freq_hz": fmt_field(
+            round(max_freq_hz, 3) if max_freq_hz is not None else None,
+            flag="COMPLETE" if max_freq_hz is not None else "UNAVAILABLE",
+        ),
+        "freq_span_hz": fmt_field(
+            round(freq_span_hz, 3) if freq_span_hz is not None else None,
+            flag="COMPLETE" if freq_span_hz is not None else "UNAVAILABLE",
+            note="max_freq_hz - min_freq_hz across selected SPWs (use for wideband mtmfs check, not thermal RMS)",
+        ),
+        "fractional_span": fmt_field(
+            fractional_span,
+            flag="COMPLETE" if fractional_span is not None else "UNAVAILABLE",
+            note="freq_span_hz / center_freq_hz",
+        ),
         "selected_fields": [field_names[fid] for fid in field_ids],
         "n_fields_selected": len(field_ids),
         "selected_spws": used_spws,

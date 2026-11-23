@@ -203,7 +203,7 @@ def test_opencode_commands_match_claude_commands():
 # stage's tool grants.
 # ---------------------------------------------------------------------------
 
-STAGES = ("inspect", "precal", "calibrate", "polcal", "image", "selfcal", "postcal")
+STAGES = ("import", "inspect", "precal", "calibrate", "polcal", "image", "selfcal", "postcal")
 _ORCH_TOOL_RE = re.compile(r"^mcp__plugin_radio-analyst_(ms-\w+)__(\w+)$")
 
 
@@ -266,6 +266,7 @@ def test_orchestrator_stage_bundles_synced_and_grant_clean():
     body = (REPO_ROOT / ".claude" / "skills" / "orchestrate" / "SKILL.md").read_text()
     referenced = set(re.findall(r"\{ri\}/bundles/([\w-]+\.md)", body))
     assert referenced == {
+        "import.md",
         "precal.md",
         "calibrate.md",
         "polcal.md",
@@ -293,7 +294,9 @@ def test_opencode_stage_agent_inlines_its_command(stage):
     assert path.read_text().count(f"@.claude/commands/{stage}.md") == 1
 
 
-@pytest.mark.parametrize("stage", ("precal", "calibrate", "polcal", "image", "selfcal", "postcal"))
+@pytest.mark.parametrize(
+    "stage", ("import", "precal", "calibrate", "polcal", "image", "selfcal", "postcal")
+)
 def test_excerpts_travel_as_file_paths(stage):
     # The orchestrator sends `SKILL EXCERPT FILE: <path>` lines; the stage command
     # Reads them and its agent splits its args at the first such line.

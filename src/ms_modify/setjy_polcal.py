@@ -40,7 +40,7 @@ from ms_inspect.exceptions import ComputationError
 from ms_inspect.util.casa_context import open_table, validate_ms_path
 from ms_inspect.util.conversions import mjd_seconds_to_unix
 from ms_inspect.util.formatting import field as fmt_field
-from ms_inspect.util.formatting import response_envelope
+from ms_inspect.util.formatting import normalize_spw_sel, response_envelope
 from ms_inspect.util.logs import write_script
 from ms_inspect.util.polcal_setjy_fit import (
     fit_pol_terms_from_catalogue,
@@ -55,21 +55,73 @@ _PB_STANDARD = "Perley-Butler 2017"
 _DEFAULT_MIN_CHUNK_MHZ = 32.0
 
 
-def _read_band_range_ghz(ms_str: str) -> tuple[float, float]:
-    """Return (lo, hi) GHz spanning all channels of all spectral windows.
+def _full_pol_spw_ids(ms_str: str) -> set[int]:
+    """Return SPW IDs whose DATA_DESCRIPTION points to a full-Stokes POLARIZATION row."""
+    try:
+        from ms_inspect.util.selection import corr_codes_by_ddid
+
+        codes_by_dd = corr_codes_by_ddid(ms_str)
+        with open_table(ms_str + "/DATA_DESCRIPTION") as dd_tb:
+            dd_spws = [int(x) for x in dd_tb.getcol("SPECTRAL_WINDOW_ID")]
+        cross_codes = {6, 7, 10, 11}
+        return {
+            spw_id
+            for spw_id, codes in zip(dd_spws, codes_by_dd, strict=False)
+            if any(int(c) in cross_codes for c in codes)
+        }
+    except Exception:
+        return set()
+
+
+def _parse_spw_filter(spw_sel: str, n_spw: int) -> set[int]:
+    if not spw_sel:
+        return set(range(n_spw))
+    from ms_inspect.tools.radiometer_estimate import parse_spw_selection
+
+    return set(parse_spw_selection(spw_sel, n_spw))
+
+
+def _select_polcal_spw_ids(ms_str: str, spw: str = "") -> list[int] | None:
+    """Return sorted SPW IDs to include in polarization model fits and probes."""
+    try:
+        full_pol = _full_pol_spw_ids(ms_str)
+        with open_table(ms_str + "/SPECTRAL_WINDOW") as tb:
+            n_spw = int(tb.nrows())
+        if spw:
+            allowed = _parse_spw_filter(spw, n_spw)
+            return sorted(i for i in allowed if 0 <= i < n_spw)
+        if full_pol:
+            return sorted(i for i in full_pol if 0 <= i < n_spw)
+        return None
+    except Exception:
+        return None
+
+
+def _read_band_range_ghz(ms_str: str, spw: str = "") -> tuple[float, float]:
+    """Return (lo, hi) GHz across selected/full-Stokes SPWs.
 
     setjy spix/polindex/polangle are per-band local expansions, so the fits must
-    be restricted to the observed band — not the catalogue's full 1–48 GHz span.
+    be restricted to the observed full-Stokes science band -- not a 2-corr setup
+    SPW at another band or the catalogue's full 1-48 GHz span.
     """
     import numpy as np
 
+    full_pol = _full_pol_spw_ids(ms_str)
     los: list[float] = []
     his: list[float] = []
     with open_table(ms_str + "/SPECTRAL_WINDOW") as tb:
-        for i in range(tb.nrows()):
+        n_spw = int(tb.nrows())
+        allowed = _parse_spw_filter(spw, n_spw) if spw else (full_pol or set(range(n_spw)))
+        for i in sorted(allowed):
+            if i < 0 or i >= n_spw:
+                continue
             cf = tb.getcell("CHAN_FREQ", i)
+            if len(cf) == 0:
+                continue
             los.append(float(np.min(cf)))
             his.append(float(np.max(cf)))
+    if not los:
+        raise ValueError(f"No spectral window channels matched spw={spw!r}.")
     return min(los) / 1e9, max(his) / 1e9
 
 
@@ -98,6 +150,8 @@ def _build_script(
     polangle: list[float],
     min_chunk_mhz: float,
     workdir: str = "",
+    spw: str = "",
+    allowed_spws: list[int] | None = None,
 ) -> str:
     """Return a self-contained CASA setjy script for polarization model setting."""
     from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
@@ -108,6 +162,7 @@ def _build_script(
         if workdir
         else ""
     )
+    spw_arg_line = f"    spw={spw!r},\n" if spw else ""
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -131,6 +186,7 @@ ms_path = {ms_str!r}
 field = {field!r}
 reffreq_ghz = {reffreq_ghz!r}
 min_chunk_mhz = {min_chunk_mhz!r}
+allowed_spws = {allowed_spws!r}
 
 # Polarization terms (ascending order), from the catalogue:
 polindex = {polindex!r}
@@ -146,6 +202,8 @@ def _probe_selections():
     msmd.open(ms_path)
     try:
         spws = sorted(int(s) for s in msmd.spwsforfield(field))
+        if allowed_spws:
+            spws = [s for s in spws if s in set(allowed_spws)]
         sels = []
         for spw in spws:
             chan_hz = np.asarray(msmd.chanfreqs(spw), dtype=float)
@@ -209,7 +267,7 @@ print(f"Probed {{freqs.size}} freq points; I@{{reffreq_ghz}}GHz = {{flux_at_ref:
 setjy(
     vis=ms_path,
     field={field!r},
-    standard="manual",
+{spw_arg_line}    standard="manual",
     fluxdensity=[flux_at_ref, 0, 0, 0],
     spix=spix,
     reffreq=f"{{reffreq_ghz}}GHz",
@@ -223,7 +281,10 @@ setjy(
 
 
 def _probe_stokes_i_in_process(
-    ms_str: str, field: str, min_chunk_mhz: float
+    ms_str: str,
+    field: str,
+    min_chunk_mhz: float,
+    allowed_spws: list[int] | None = None,
 ) -> tuple[list[float], list[float], list[str]]:
     """Run the Perley-Butler probe in-process. Returns (freqs_ghz, flux_jy, casa_calls)."""
     import numpy as np
@@ -235,6 +296,8 @@ def _probe_stokes_i_in_process(
     selections: list[tuple[str, float]] = []
     with open_msmd(ms_str) as msmd:
         spws = sorted(int(s) for s in msmd.spwsforfield(field))
+        if allowed_spws:
+            spws = [s for s in spws if s in set(allowed_spws)]
         for spw in spws:
             chan_hz = np.asarray(msmd.chanfreqs(spw), dtype=float)
             nchan = chan_hz.size
@@ -286,6 +349,7 @@ def run(
     polangle_deg: int = 4,
     min_chunk_mhz: float = _DEFAULT_MIN_CHUNK_MHZ,
     execute: bool = False,
+    spw: str = "",
 ) -> dict:
     """
     Set the full polarization model for a polarization angle calibrator.
@@ -331,12 +395,16 @@ def run(
             ms_path=ms_path,
         )
 
+    spw = normalize_spw_sel(spw)
     lookup_name = calibrator_name or field
 
-    # Restrict all fits to the observed band (spix/polindex/polangle are per-band
-    # local expansions about reffreq, not global wideband fits).
+    # Restrict all fits to the observed full-Stokes / selected band (spix/polindex/polangle
+    # are per-band local expansions about reffreq, not global wideband fits).
+    selected_spws = _select_polcal_spw_ids(ms_str, spw=spw)
     try:
-        band_lo, band_hi = _read_band_range_ghz(ms_str)
+        band_lo, band_hi = (
+            _read_band_range_ghz(ms_str, spw=spw) if spw else _read_band_range_ghz(ms_str)
+        )
         casa_calls.append("tb.open(SPECTRAL_WINDOW) → CHAN_FREQ (band range)")
     except Exception as exc:
         band_lo = band_hi = None
@@ -415,6 +483,8 @@ def run(
         polangle,
         min_chunk_mhz,
         workdir=str(workdir_path),
+        spw=spw,
+        allowed_spws=selected_spws,
     )
     write_script(script_path, script_content)
     casa_calls.append(f"write_script → {script_path}")
@@ -477,7 +547,9 @@ def run(
             ms_path=ms_path,
         ) from None
 
-    freqs, fluxes, probe_calls = _probe_stokes_i_in_process(ms_str, field, min_chunk_mhz)
+    freqs, fluxes, probe_calls = _probe_stokes_i_in_process(
+        ms_str, field, min_chunk_mhz, allowed_spws=selected_spws
+    )
     casa_calls.extend(probe_calls)
     if not freqs:
         raise ComputationError(
@@ -498,18 +570,21 @@ def run(
     casa_calls.append(
         f"casatasks.setjy(field='{field}', standard='manual', reffreq={reffreq_ghz}GHz)"
     )
-    setjy(
-        vis=ms_str,
-        field=field,
-        standard="manual",
-        fluxdensity=[flux_at_ref, 0, 0, 0],
-        spix=spix,
-        reffreq=f"{reffreq_ghz}GHz",
-        polindex=polindex,
-        polangle=polangle,
-        scalebychan=True,
-        usescratch=True,
-    )
+    setjy_kwargs: dict = {
+        "vis": ms_str,
+        "field": field,
+        "standard": "manual",
+        "fluxdensity": [flux_at_ref, 0, 0, 0],
+        "spix": spix,
+        "reffreq": f"{reffreq_ghz}GHz",
+        "polindex": polindex,
+        "polangle": polangle,
+        "scalebychan": True,
+        "usescratch": True,
+    }
+    if spw:
+        setjy_kwargs["spw"] = spw
+    setjy(**setjy_kwargs)
     from ms_inspect.util.stage_log import record_stage
 
     record_stage(

@@ -854,9 +854,13 @@ def run(
             ia, casa_calls, warnings, image_path=image_path, pb_level=pb_level
         )
         single_stokes = _single_plane_stokes(ia)
-        peak_val = _select_peak(max_val, min_val, single_stokes)
         pb_max_val, min_jy_val, extrema_note = _pb_masked_extrema(
             ia, image_path, pb_level, max_val, min_val, casa_calls, warnings, tag="min_jy"
+        )
+        peak_val = _select_peak(
+            pb_max_val if pb_max_val is not None else max_val,
+            min_jy_val if min_jy_val is not None else min_val,
+            single_stokes,
         )
         min_jy_note = (
             f"whole-image min ({extrema_note})"

@@ -111,6 +111,19 @@ After running `import_asdm.py`, call `ms_verify_import` to confirm:
 Pass `online_flag_file` from the `ms_import_asdm` response directly to
 `ms_apply_preflag` as its `online_flag_file` parameter.
 
+**Mixed-SPW / setup-SPW continuum split (before precal):** After `ms_verify_import`,
+inspect `ms_spectral_window_list(ms_path)`. If the observation contains VLA setup/pointing
+SPWs (different band or 2-correlation `RR/LL` alongside 4-correlation science SPWs) or
+narrow spectral-line windows mixed with continuum windows and the requested science is
+continuum:
+1. Split only the desired continuum SPWs into `<workdir>/continuum.ms` using
+   `ms_casa_task(task='split', params={'vis': raw_ms, 'outputvis': '<workdir>/continuum.ms', 'spw': '<continuum_spw_list>', 'datacolumn': 'data'}, workdir=workdir, execute=False)` -> run.
+2. **Online flags after SPW renumbering:** CASA `split` renumbers the surviving SPWs
+   starting from `0`. Before passing the original `.flagonline.txt` to `ms_apply_preflag`
+   on `continuum.ms`, check whether `.flagonline.txt` contains any `spw=` tokens: if none
+   (typical VLA online flags select by `antenna` / `timerange`), reuse the file directly;
+   if `spw=` tokens exist, remap or drop out-of-range SPW tokens before applying.
+
 An MS that did not come from an ASDM (a tutorial or archive MS) has no
 `.flagonline.txt`. Continue without online flags only when the user states
 `online_flags=none`: pass `online_flag_file=""` to `ms_apply_preflag`. A

@@ -77,6 +77,44 @@ class TestOverTheBound:
         # All-or-nothing: no SpW keeps a partial spectrum.
         assert all(e["n_per_chan_omitted"] == 1000 for e in data["per_spw"])
 
+    def test_top_elevated_chans_exposes_robust_sigma(self, tmp_path):
+        sidecar = tmp_path / "out_rs.json"
+        payload = {
+            "datacolumn": "CORRECTED_DATA",
+            "n_spw": 1,
+            "per_spw": [
+                {
+                    "spw_id": 0,
+                    "n_channels": 200,
+                    "band_floor": {"value": 0.5, "flag": "COMPLETE"},
+                    "elevation_threshold": 1.0,
+                    "severity": 3.5,
+                    "estimated_discardable_frac": {"value": 0.1, "flag": "COMPLETE"},
+                    "per_chan": [
+                        {
+                            "chan": c,
+                            "freq_mhz": 1500.0 + c,
+                            "median": 4.2 if c == 7 else 0.5,
+                            "robust_sigma": 0.85 if c == 7 else 0.05,
+                            "discardable_frac": 0.25 if c == 7 else 0.0,
+                        }
+                        for c in range(200)
+                    ],
+                }
+            ],
+        }
+        data = _bound_per_chan_payload(
+            payload, max_per_chan_records=50, sidecar_path=str(sidecar), warnings=[]
+        )
+        top = data["per_spw"][0]["top_elevated_chans"]
+        assert top[0] == {
+            "chan": 7,
+            "freq_ghz": 1.507,
+            "median": 4.2,
+            "robust_sigma": 0.85,
+            "discardable_frac": 0.25,
+        }
+
     def test_per_spw_aggregates_are_never_capped(self, tmp_path):
         """These are what 13-postcal-rfi-flagging.md consumes."""
         sidecar = tmp_path / "out.json"

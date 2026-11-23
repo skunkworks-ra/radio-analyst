@@ -458,6 +458,10 @@ class ApplyPreflagInput(BaseModel):
         ),
         ge=0.0,
     )
+    spw: str = Field(
+        default="",
+        description="Optional CASA SPW selection for splitting calibrators.ms (empty = all SPWs).",
+    )
     execute: bool = Field(
         default=False,
         description=(
@@ -589,6 +593,12 @@ class SetjyPolcalInput(BaseModel):
         description=(
             "If False (default), write setjy_polcal.py and return. "
             "If True, probe Perley-Butler Stokes I and set the manual model in-process."
+        ),
+    )
+    spw: str = Field(
+        default="",
+        description=(
+            "Optional CASA SPW selection (empty = auto-select full-Stokes SPWs when present)."
         ),
     )
 
@@ -850,6 +860,7 @@ async def ms_apply_preflag(params: ApplyPreflagInput) -> ToolResult:
         params.do_tfcrop,
         params.execute,
         params.quack_interval_s,
+        spw=params.spw,
         debug=params.debug,
         debug_params=params.debug_params,
     )
@@ -1030,6 +1041,7 @@ async def ms_setjy_polcal(params: SetjyPolcalInput) -> ToolResult:
         params.polangle_deg,
         params.min_chunk_mhz,
         params.execute,
+        spw=params.spw,
     )
 
 

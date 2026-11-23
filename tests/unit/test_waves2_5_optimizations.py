@@ -639,6 +639,105 @@ def test_radiometer_estimate_on_real_ms(real_ms_raw: str):
     assert d["thermal_rms_jy"] == pytest.approx(
         d["weighting_factor"] * d["sigma_natural_jy"], rel=1e-5
     )
+    assert d["min_freq_hz"] < d["center_freq_hz"] < d["max_freq_hz"]
+    assert d["freq_span_hz"] == pytest.approx(d["max_freq_hz"] - d["min_freq_hz"], rel=1e-6)
+    assert d["fractional_span"] == pytest.approx(d["freq_span_hz"] / d["center_freq_hz"], abs=1e-4)
+
+
+def test_radiometer_estimate_noncontiguous_spws_span_vs_total_bw(tmp_path):
+    """Non-contiguous L-band SPWs (4 x 64 MHz spanning 1.38--1.94 GHz) have
+    total_bw_hz/center_freq_hz < 0.2 but fractional_span > 0.2 (mtmfs trigger),
+    while thermal_rms_jy still uses summed eff_bw_hz (never spanned width)."""
+    from unittest.mock import MagicMock, patch
+
+    ms_dir = tmp_path / "lband_noncontig.ms"
+    ms_dir.mkdir()
+    (ms_dir / "table.info").write_text("Type = Measurement Set\n")
+
+    # 4 non-contiguous 64 MHz SPWs: 1.38-1.444, 1.50-1.564, 1.70-1.764, 1.88-1.944 GHz
+    spw_edges = [(1.38e9, 64e6), (1.50e9, 64e6), (1.70e9, 64e6), (1.88e9, 64e6)]
+    spw_chans = [np.linspace(lo + 0.5e6, lo + bw - 0.5e6, 64) for lo, bw in spw_edges]
+    spw_widths = [np.full(64, 1e6) for _ in spw_edges]
+
+    obs_tb = MagicMock()
+    obs_tb.__enter__.return_value = obs_tb
+    obs_tb.nrows.return_value = 1
+    obs_tb.getcol.return_value = ["EVLA"]
+    obs_tb.getcell.return_value = "EVLA"
+
+    ant_tb = MagicMock()
+    ant_tb.__enter__.return_value = ant_tb
+    ant_tb.nrows.return_value = 27
+    ant_tb.getcol.return_value = [False] * 27
+
+    fld_tb = MagicMock()
+    fld_tb.__enter__.return_value = fld_tb
+    fld_tb.nrows.return_value = 1
+    fld_tb.getcol.return_value = ["TARGET"]
+
+    spw_tb = MagicMock()
+    spw_tb.__enter__.return_value = spw_tb
+    spw_tb.nrows.return_value = 4
+    spw_tb.getcol.side_effect = lambda col: (
+        [bw for _, bw in spw_edges] if col == "TOTAL_BANDWIDTH" else None
+    )
+    spw_tb.getcell.side_effect = lambda col, i: (
+        spw_chans[i] if col == "CHAN_FREQ" else spw_widths[i]
+    )
+
+    dd_tb = MagicMock()
+    dd_tb.__enter__.return_value = dd_tb
+    dd_tb.getcol.return_value = [0, 1, 2, 3]
+
+    # Minimal main table: 4 rows (one per DDID) with 100 s exposure, all unflagged
+    main_tb = MagicMock()
+    main_tb.__enter__.return_value = main_tb
+    main_tb.nrows.return_value = 4
+    sub_tb = MagicMock()
+    sub_tb.nrows.return_value = 4
+    sub_tb.getcol.side_effect = lambda col, **kw: {
+        "ANTENNA1": np.array([0, 0, 0, 0]),
+        "ANTENNA2": np.array([1, 1, 1, 1]),
+        "TIME": np.array([1.0, 1.0, 1.0, 1.0]),
+        "EXPOSURE": np.array([100.0, 100.0, 100.0, 100.0]),
+        "INTERVAL": np.array([100.0, 100.0, 100.0, 100.0]),
+        "FIELD_ID": np.array([0, 0, 0, 0]),
+        "DATA_DESC_ID": np.array([0, 1, 2, 3]),
+        "FLAG_ROW": np.array([False, False, False, False]),
+        "FLAG": np.zeros((4, 64, 1), dtype=bool),
+    }[col]
+    sub_tb.query.return_value = sub_tb
+    main_tb.query.return_value = sub_tb
+
+    def fake_open(path, **kw):
+        p = str(path)
+        if p.endswith("OBSERVATION"):
+            return obs_tb
+        if p.endswith("ANTENNA"):
+            return ant_tb
+        if p.endswith("FIELD"):
+            return fld_tb
+        if p.endswith("SPECTRAL_WINDOW"):
+            return spw_tb
+        if p.endswith("DATA_DESCRIPTION"):
+            return dd_tb
+        return main_tb
+
+    with (
+        patch.object(radiometer_estimate, "open_table", side_effect=fake_open),
+        patch("ms_inspect.util.casa_context.open_table", side_effect=fake_open),
+    ):
+        env = radiometer_estimate.run(str(ms_dir), field="TARGET")
+
+    d = wire_envelope(env)["data"]
+    assert d["total_bw_hz"] == pytest.approx(256e6, rel=1e-6)
+    assert d["min_freq_hz"] == pytest.approx(1.38e9, rel=1e-6)
+    assert d["max_freq_hz"] == pytest.approx(1.944e9, rel=1e-6)
+    assert d["freq_span_hz"] == pytest.approx(564e6, rel=1e-6)
+    # Summed width / center_freq is ~0.154 (< 0.2), while fractional_span is ~0.339 (> 0.2)!
+    assert d["total_bw_hz"] / d["center_freq_hz"] < 0.2
+    assert d["fractional_span"] > 0.30
+    assert d["eff_bw_hz"] == pytest.approx(256e6, rel=1e-6)
 
 
 def test_vis_amp_time_stats_pure_summary_and_real_ms(real_ms_calibrated_copy: str):

@@ -203,6 +203,7 @@ def _bound_per_chan_payload(
                         else c.get("freq_ghz")
                     ),
                     "median": c.get("median"),
+                    "robust_sigma": c.get("robust_sigma"),
                     "discardable_frac": c.get("discardable_frac"),
                 }
                 for c in chans

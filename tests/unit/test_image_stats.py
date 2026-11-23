@@ -684,3 +684,58 @@ class TestMinJyAndNegativeBowl:
             d.mkdir()
         assert _sibling_flat_image(str(pbcor)) == flat
         assert _sibling_mask(str(pbcor)) == msk
+
+    def test_pb_masked_peak_ignores_outer_pbcor_edge_spike(self, tmp_path):
+        """With pblimit=-0.01 mosaics, PB-divided edge spikes at PB=0.02 must NOT
+        corrupt peak_jy / dynamic_range when pb_level=0.1 masks to PB >= 0.1."""
+        import numpy as np
+
+        from ms_inspect.tools import image_stats
+
+        rng = np.random.default_rng(11)
+        pb = np.full((32, 32, 1, 1), 0.02, dtype=float)
+        pb[8:24, 8:24, 0, 0] = 0.8
+
+        pbcor_arr = rng.normal(0.0, 0.001, (32, 32, 1, 1))
+        pbcor_arr[16, 16, 0, 0] = 0.50  # true source inside PB >= 0.1
+        pbcor_arr[0, 0, 0, 0] = 50.0  # 100x PB-divided noise spike outside PB!
+
+        pbcor_dir = tmp_path / "mosaic.image.pbcor"
+        pb_dir = tmp_path / "mosaic.pb"
+        pbcor_dir.mkdir()
+        pb_dir.mkdir()
+
+        csys = MagicMock()
+        csys.stokes.return_value = ["I"]
+        csys.findcoordinate.side_effect = lambda kind: (
+            {"return": True, "pixel": [2]} if kind == "stokes" else {"return": False, "pixel": []}
+        )
+
+        ia_pbcor = MagicMock()
+        ia_pbcor.shape.return_value = [32, 32, 1, 1]
+        ia_pbcor.coordsys.return_value = csys
+        ia_pbcor.getchunk.return_value = pbcor_arr
+        ia_pbcor.statistics.side_effect = [
+            {"medabsdevmed": [0.001]},
+            {"max": [50.0], "min": [-5.0], "rms": [0.5]},
+        ]
+        ia_pbcor.restoringbeam.return_value = {
+            "major": {"value": 3.0, "unit": "arcsec"},
+            "minor": {"value": 3.0, "unit": "arcsec"},
+            "positionangle": {"value": 0.0, "unit": "deg"},
+        }
+
+        ia_pb = MagicMock()
+        ia_pb.shape.return_value = [32, 32, 1, 1]
+        ia_pb.getchunk.return_value = pb
+
+        def fake_open(path):
+            cm = MagicMock()
+            cm.__enter__.return_value = ia_pb if Path(path).name.endswith(".pb") else ia_pbcor
+            return cm
+
+        with patch.object(image_stats, "open_image", side_effect=fake_open):
+            res = image_stats.run(str(pbcor_dir), pb_level=0.1)
+
+        assert res["data"]["peak_jy"]["value"] == pytest.approx(0.50)
+        assert res["data"]["dynamic_range"]["value"] < 1000.0

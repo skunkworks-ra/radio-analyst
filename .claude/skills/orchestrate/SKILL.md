@@ -1,11 +1,11 @@
 ---
 name: orchestrate
 description: >
-  Orchestrate a continuum reduction of one CASA Measurement Set, Stokes I by
-  default or IQUV on request: inspect, precal, calibrate, polcal (IQUV only),
-  image, each run by its own stage agent, each checked here before the next
-  starts. Invoke when asked to orchestrate a
-  reduction, or to run the stages with stage agents.
+  Orchestrate a continuum reduction of one CASA Measurement Set (or raw ASDM/SDM),
+  Stokes I by default or IQUV on request: optional import, inspect, precal,
+  calibrate, polcal (IQUV only), pre-imaging target RFI triage / postcal, image,
+  each run by its own stage agent, each checked here before the next starts.
+  Invoke when asked to orchestrate a reduction, or to run the stages with stage agents.
 allowed-tools: Agent,
                Read,
                mcp__plugin_radio-analyst_ms-inspect__ms_workflow_status,
@@ -27,12 +27,17 @@ allowed-tools: Agent,
                mcp__plugin_radio-analyst_ms-create__ms_report
 ---
 
-# Orchestrate: one MS, four stages, each checked
+# Orchestrate: one MS (or raw SDM), staged and verified
 
-Arguments: the MS path, `workdir=<dir>`, `online_flags=<path>|none`, and
-optionally `stokes=I|IQUV`. If one of the first three is missing, stop and ask
-for it. `stokes` defaults to `I`. `IQUV` adds the polcal stage and an IQUV cube;
-every Stokes I stage and check runs as for `I`.
+Arguments: either an existing MS path + `online_flags=<path>|none` OR
+`sdm_path=<asdm_dir>` (which runs Stage 0 `import-stage` first to produce `{ms}`
+and `online_flags`), plus `workdir=<dir>`, and optionally `stokes=I|IQUV` and
+any explicit user science/imaging constraints (`field`, `spw`, `spw_mode`, `cell`, `imsize`,
+`deconvolver`, `pblimit`, `pbmask`, `nsigma`, `cube_width`).
+If the input path (`<ms_path>` or `sdm_path`) or `workdir` (or `online_flags`
+when starting from an existing MS) is missing, stop and ask for it. `stokes`
+defaults to `I`. `IQUV` adds the polcal stage and an IQUV cube; every Stokes I
+stage and check runs as for `I`.
 
 You do not run CASA, you do not run Bash, and you do not write files directly.
 Only two bookkeeping write tools are granted: `ms_record_stage_decision` (after
@@ -84,7 +89,7 @@ ms_record_stage_decision(
 
 Required arguments in every `ms_record_stage_decision` call:
 - `seq`: integer `1, 2, ...` across all stage attempts in this run
-- `stage`: `"inspect" | "precal" | "calibrate" | "polcal" | "image" | "postcal" | "selfcal" | "image_iquv"`
+- `stage`: `"import" | "inspect" | "precal" | "calibrate" | "polcal" | "postcal" | "image" | "selfcal" | "image_iquv"`
 - `try`: integer attempt counter (`1..5`) for this `stage`
 - `workdir`: exact `workdir` path string
 - `decision`: `"next" | "retry" | "stop_ask_user"`
@@ -109,14 +114,23 @@ Find them once from context; the stages do not search for them.
 
 | # | Stage | Agent | Arguments |
 |---|---|---|---|
+| 0 | import (when starting from `sdm_path`) | `radio-analyst:import-stage` | `sdm_path=<asdm_dir> workdir=<workdir>` (plus `ms_name:`, `spw:`, or `spw_mode: continuum\|all` if requested) |
 | 1 | inspect | `radio-analyst:inspect-stage` | `<ms_path>` |
 | 2 | precal | `radio-analyst:precal-stage` | `<ms_path> workdir=<workdir> online_flags=<...>`, the INSPECT HANDOFF lines, `pol_scope: off` when `stokes=I`; no `pol_scope` line when `stokes=IQUV`, so precal decides |
 | 3 | calibrate | `radio-analyst:calibrate-stage` | `<ms_path> workdir=<workdir>` |
-| 3b | polcal (`stokes=IQUV` only) | `radio-analyst:polcal-stage` | `<ms_path> workdir=<workdir>`, `angle_cal: <the precal handoff's angle_cal>` |
-| 4 | image | `radio-analyst:image-stage` | `<ms_path> workdir=<workdir>`, `stokes: I` |
-| 4b | postcal (when section 4 B or C finds outliers) | `radio-analyst:postcal-stage` | `<ms_path> workdir=<workdir>`, `field: <target fields>` |
+| 3b | polcal (`stokes=IQUV` only) | `radio-analyst:polcal-stage` | `<ms_path> workdir=<workdir>`, `angle_cal: <the precal handoff's angle_cal>` (plus any user `spw:` / `constraints:`) |
+| 3c | postcal (pre-imaging, when section 3c RFI triage detects target outliers) | `radio-analyst:postcal-stage` | `<ms_path> workdir=<workdir>`, `field: <target fields>` |
+| 4 | image | `radio-analyst:image-stage` | `<ms_path> workdir=<workdir>`, `stokes: I`, plus EVERY explicit user imaging constraint (`field:`, `spw:`, `cell:`, `imsize:`, `deconvolver:`, `pblimit:`, `pbmask:`, `nsigma:`, `constraints:`) |
+| 4b | postcal (post-imaging fallback, if 3c did not run and section 4 B or C finds outliers) | `radio-analyst:postcal-stage` | `<ms_path> workdir=<workdir>`, `field: <target fields>` |
 | 5 | selfcal (when section 4 says so) | `radio-analyst:selfcal-stage` | `<ms_path> workdir=<workdir> imagename=<prefix of the image to improve>`; with `stokes=IQUV`, `pol_tables: <kcross.K, dterms.D, and polangle.X if solved, full paths>` |
-| 6 | image, IQUV cube (`stokes=IQUV` only, last) | `radio-analyst:image-stage` | `<ms_path> workdir=<workdir>`, `stokes: IQUV`, `imagename: <prefix of the last target image>` |
+| 6 | image, IQUV cube (`stokes=IQUV` only, last) | `radio-analyst:image-stage` | `<ms_path> workdir=<workdir>`, `stokes: IQUV`, `imagename: <prefix of the last target image>`, plus any explicit user constraints (`spw:`, `cell:`, `imsize:`, `pblimit:`, `pbmask:`, `nsigma:`, `cube_width:`, `constraints:`) |
+
+**User constraint forwarding (mandatory):** Whenever the user prompt states
+explicit constraints (`field`, `spw`, `cell`, `imsize`, `deconvolver`,
+`pblimit`, `pbmask`, `nsigma`, `cube_width`, or continuum-SPW selection), pass
+each constraint verbatim as a `name: value` line (and any free-form requirements
+as `constraints: <text>`) to the relevant stage agent. Never silently drop or
+override user parameters across stage handoffs.
 
 ## Skill excerpts: static stage bundles
 
@@ -128,6 +142,7 @@ at the end of each stage prompt (`inspect` takes none):
 
 | Stage | Bundle path |
 |---|---|
+| import | `{ri}/bundles/import.md` |
 | precal | `{ri}/bundles/precal.md` |
 | calibrate | `{ri}/bundles/calibrate.md` |
 | polcal | `{ri}/bundles/polcal.md` |
@@ -152,6 +167,17 @@ Each row cites the radio-interferometry skill text it comes from (file:line).
 Run the tool yourself with the arguments named; do not take the value from the
 handoff. `{cal}` is `{workdir}/calibrators.ms`; `{ms}` is the MS you were given.
 Where the skill says "Hard stop" or "stop", the row stops and asks the user.
+
+### 0. import (commands/import.md, 10-precal-workflow.md Step 0)
+
+Run only when starting from `sdm_path=<asdm_dir>`. Use the handoff's `ms_path`
+as `{ms}` and `online_flags` as `online_flags` for Stages 1--6.
+
+| Check | Tool, field | Pass | On fail |
+|---|---|---|---|
+| Handoff complete | handoff `status:`, `ms_path:`, `online_flags:`, `continuum_spws:`, `full_stokes:` | `status: completed`, `ms_path` and `online_flags` non-empty | retry |
+| MS valid on disk | `ms_workflow_status(<handoff ms_path>, workdir)` `ms_valid` | true | retry |
+| Spectral windows populated (and continuum-only if split requested) | `ms_spectral_window_list(<handoff ms_path>)` `n_spws`, per-SPW widths | `n_spws > 0` matching requested SPW scope | retry |
 
 ### 1. inspect (commands/inspect.md, handoff block)
 
@@ -222,14 +248,43 @@ MSs: no read-only tool measures it) and 07:657 (fluxscale flux vs
 Note as `not_checked` for `caveats`, with the reason that no tool measures them:
 the Xf PA residual and the `Df+QU` recovered Q/U (09 "Decision summary").
 
+### 3c. Pre-imaging target CORRECTED_DATA RFI triage (before Stage 4)
+
+Run right after Stage 3 `calibrate` passes (for `stokes=I`), or right after
+Stage 3b `polcal` passes (for `stokes=IQUV`), **before** launching Stage 4
+`image`. Imaging unflagged target RFI wastes a full `tclean` pass and inflates
+residual RMS even when calibration is spotless; on clean data this check is a
+fast read-only no-op.
+
+Run both read-only tools on the target fields:
+1. `ms_spw_amp_severity({ms}, datacolumn='CORRECTED_DATA', field=<targets>)`
+2. `ms_vis_amp_time_stats({ms}, field=<targets>, datacolumn='CORRECTED_DATA', top_k=5)`
+(also use Stage 3's `ms_corrected_stats({ms}, field=<targets>, ...)` `amp_p95`,
+`amp_median`, `amp_robust_std` when checked).
+
+Trigger `radio-analyst:postcal-stage` (conservative `rflag` only on target
+`CORRECTED_DATA`, NEVER amplitude clip) BEFORE Stage 4 `image` if ANY of these
+residual target RFI indicators is measured:
+- Any science SPW has `severity >= 1.5` or `discardable_fraction >= 0.05` in `ms_spw_amp_severity`, OR
+- Any well-populated integration (`npts >= 0.25 * median_npts`) in `ms_vis_amp_time_stats.top_outliers` has `ratio_to_median >= 2.0`, OR
+- `ms_corrected_stats` shows `amp_p95 / amp_median >= 3.0` or `amp_robust_std / amp_median >= 1.5`.
+
+If NONE of these hold (clean data), skip `postcal-stage` and proceed directly to
+Stage 4 `image`. If `postcal-stage` runs here:
+- Verify it against the Section 4b checks (`rc 0`, before/after `ms_flag_summary` per target field).
+- Re-run `ms_spw_amp_severity` and `ms_vis_amp_time_stats` to record post-rflag levels, call `ms_record_stage_decision(stage="postcal", ...)`, and proceed to Stage 4 `image`.
+- Postcal runs at most once per reduction; if it ran in 3c, do not re-run it in Section 4 Step D.
+
 ### 4. image (11-imaging.md:327-365, quality gates)
 
-The image stage makes two images: a `hogbom` first pass and a `multiscale`
-second pass (commands/image.md steps 4-5, 11-imaging.md Step 2). Run the checks
-on the second-pass image; report the first-pass numbers beside them. Compute
-the radiometer prediction directly with
-`ms_radiometer_estimate({ms}, field=<targets>, stokes='I', weighting='briggs', robust=0.5)`
-(`thermal_rms_jy`).
+The image stage makes an initial shallow pass (`hogbom` or `mtmfs nterms=2` when
+`fractional_span > 0.2`) followed by adaptive masked `multiscale` / `mtmfs`
+passes (commands/image.md steps 4-5, 11-imaging.md Step 2). Run the checks on
+the final image (`.image.pbcor`, or `.image.pbcor.tt0` + `.psf.tt0` for `mtmfs`)
+using `pb_level=0.1` (or user `pbmask`; NEVER `abs(pblimit)=0.01`); report the
+first-pass numbers beside them. Compute the radiometer prediction directly with
+`ms_radiometer_estimate({ms}, field=<targets>, spw=<user spw or ''>, stokes='I', weighting='briggs', robust=0.5)`
+(`thermal_rms_jy`, `fractional_span`).
 
 | Check | Tool, field | Pass | On fail |
 |---|---|---|---|
@@ -300,15 +355,15 @@ C. **Target amplitude against time.** `ms_vis_amp_time_stats({ms},
    `ratio_to_median`, and `npts` against `median_npts` -- a mostly flagged
    integration's mean rests on few points). If B found residual RFI or
    integrations stand apart here, go to D.
-D. **Flag, then check again.** Run stage 4b (postcal: rflag only on the
-   target's CORRECTED data, no clip) with `field: <target fields>`. Then run B
-   and C again and note both. Then re-run the image stage with
-   `imagename: <target>_rflag`, so the earlier images stay for comparison.
-   Postcal flags once per reduction (one successful run; a retry after a
-   non-zero `.rc` counts against the cap of 5 like any stage); if B or C still
-   finds outliers after it, stop and ask. From here on, "the image" in the
-   steps below is the `_rflag` set. No skill rule gives a cutoff: say so in
-   `reason`.
+D. **Flag, then check again.** If Stage 3c did not already run `postcal-stage`,
+   run stage 4b (postcal: rflag only on the target's CORRECTED data, no clip)
+   with `field: <target fields>`. Then run B and C again and note both. Then
+   re-run the image stage with `imagename: <target>_rflag`, so the earlier images
+   stay for comparison. Postcal flags once per reduction (one successful run
+   across 3c + 4b combined; a retry after a non-zero `.rc` counts against the
+   cap of 5 like any stage); if 3c already ran or if B or C still finds outliers
+   after postcal, stop and ask. From here on, "the image" in the steps below is
+   the `_rflag` set. No skill rule gives a cutoff: say so in `reason`.
 
 With A to C clear, the calibration and the data are ruled out, and the
 remaining gap is the imaging. Work down this order, one step per attempt:

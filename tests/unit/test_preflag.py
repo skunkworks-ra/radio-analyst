@@ -153,6 +153,26 @@ class TestPreflagRun:
         script = (workdir / "preflag.py").read_text()
         assert "3C147,3C286" in script
 
+    def test_spw_forwarded_to_calibrator_split(self, tmp_path):
+        ms_fake = tmp_path / "fake.ms"
+        ms_fake.mkdir()
+        (ms_fake / "table.info").write_text("Type = Measurement Set\n")
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+
+        from ms_modify.preflag import run
+
+        run(
+            ms_path=str(ms_fake),
+            workdir=str(workdir),
+            cal_fields="3C147",
+            spw="1~4",
+            execute=False,
+        )
+
+        script = (workdir / "preflag.py").read_text()
+        assert "spw='1~4'" in script
+
     def test_n_flag_commands_in_response(self, tmp_path):
         ms_fake = tmp_path / "fake.ms"
         ms_fake.mkdir()

@@ -221,3 +221,39 @@ class TestCircularPaSpanAndWrapping:
         # Feed PA is wrapped into (-180, +180] (+95.08 deg) rather than dropping to -264.92 deg!
         assert -180.0 < f0["pa_feed_start_deg"]["value"] <= 180.0
         assert -180.0 < f0["pa_feed_end_deg"]["value"] <= 180.0
+
+
+def test_band_centre_prefers_full_stokes_science_spws_over_setup_spw0(tmp_path):
+    """VLA setup SPW 0 at X-band (8.5 GHz, 2-corr RR/LL) must not override L-band
+    (1.5 GHz, 4-corr RR/RL/LR/LL) science SPWs when reading band_centre_ghz."""
+    from unittest.mock import MagicMock, patch
+
+    import numpy as np
+
+    from ms_inspect.tools import pol_cal_conditions
+
+    spw_tb = MagicMock()
+    spw_tb.__enter__.return_value = spw_tb
+    spw_tb.nrows.return_value = 3
+    spw_tb.getcell.side_effect = lambda col, i: (
+        np.array([8.4e9, 8.6e9]) if i == 0 else np.array([1.4e9 + 0.1e9 * i, 1.5e9 + 0.1e9 * i])
+    )
+
+    dd_tb = MagicMock()
+    dd_tb.__enter__.return_value = dd_tb
+    dd_tb.getcol.return_value = [0, 1, 2]
+
+    def fake_open(path, **kw):
+        return dd_tb if str(path).endswith("DATA_DESCRIPTION") else spw_tb
+
+    with (
+        patch.object(pol_cal_conditions, "open_table", side_effect=fake_open),
+        patch(
+            "ms_inspect.util.selection.corr_codes_by_ddid",
+            return_value=[[5, 8], [5, 6, 7, 8], [5, 6, 7, 8]],
+        ),
+    ):
+        ghz, calls = pol_cal_conditions._read_band_centre_ghz(str(tmp_path / "obs.ms"))
+
+    assert len(calls) >= 1
+    assert 1.5 <= ghz <= 1.7  # L-band science median (~1.6 GHz), NOT X-band 8.5 GHz!

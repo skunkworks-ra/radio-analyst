@@ -123,6 +123,23 @@ class TestRecordStageDecisionTool:
         with pytest.raises(ComputationError, match="try/attempt"):
             stage_decision.run(1, "precal", 6, str(wd), "next", "m=1", "ok")
 
+    def test_accepts_stage0_import_stage(self, tmp_path):
+        wd = tmp_path / "work_import"
+        wd.mkdir()
+        res = stage_decision.run(
+            seq=1,
+            stage="import",
+            attempt=1,
+            workdir=str(wd),
+            decision="next",
+            deciding_metric="ms_workflow_status.ms_valid = True",
+            reason="ASDM imported and continuum SPWs split.",
+        )
+        assert res["status"] == "ok"
+        out_path = Path(res["data"]["record_path"]["value"])
+        assert out_path == wd / "orchestrator" / "01_import_try1.json"
+        assert audit_hook._stage_from_subagent_type("radio-analyst:import-stage") == "import"
+
 
 class TestAuditHookToolCallEnrichment:
     def test_audit_hook_sh_enriches_tool_recorded_stage_decisions(self, tmp_path):

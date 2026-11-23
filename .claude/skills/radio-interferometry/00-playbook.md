@@ -7,13 +7,13 @@ Find your current state in the left column. Run the right-column tool
 
 | Current state | Next action |
 |---------------|-------------|
-| Starting from ASDM | `ms_import_asdm(..., execute=False)` → run script → `ms_verify_import` |
+| Starting from ASDM | Run `/import` (or `ms_sdm_summary` -> `ms_import_asdm(..., execute=False)` -> run -> `ms_verify_import`; split continuum SPWs if mixed line+continuum or setup SPWs exist) |
 | MS imported, no intents | `ms_set_intents(ms_path)` → proceed |
 | MS imported, intents present | Run `/inspect` or read `01-workflow.md` |
 | Phase 1 + 2 inspection done, go decision | Run `/precal` or read `10-precal-workflow.md` |
 | Pre-cal complete (`ms_workflow_status.next_recommended_step == 'delay_bandpass_gain'`, `missing_precal_steps == []`) | Run `/calibrate` or read `07-calibration-execution.md` |
-| Calibration solve done (G/B/K/fluxscale + target applycal) | For pol: `/polcal` or read `09-polcal-execution.md`; else `/image` or **MUST read `11-imaging.md` before calling `ms_tclean`** |
-| Polcal done | `/image` with stokes='IQUV' or read `11-imaging.md` |
+| Calibration solve done (G/B/K/fluxscale + target applycal) | For pol: `/polcal` or read `09-polcal-execution.md`; then run target `CORRECTED_DATA` RFI triage (`11-imaging.md` Step 0.5 -> `/postcal` only if outliers detected) before `/image` (**MUST read `11-imaging.md` before calling `ms_tclean`**) |
+| Polcal done | Target `CORRECTED_DATA` RFI triage (`11-imaging.md` Step 0.5 -> `/postcal` if outliers), then `/image` with `stokes='I'` followed by `stokes='IQUV'` |
 | First-pass image done | Read `12-selfcal.md` — one-pass phase selfcal with before/after assessment |
 | Final applycal done, RFI on target/phase cal | Read `13-postcal-rfi-flagging.md` — residual clip on the primaries, per-channel triage on the target |
 

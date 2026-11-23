@@ -23,8 +23,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from ms_inspect.util.casa_context import validate_ms_path
-from ms_inspect.util.formatting import field as fmt_field
-from ms_inspect.util.formatting import normalize_field_sel, response_envelope
+from ms_inspect.util.formatting import (
+    field as fmt_field,
+)
+from ms_inspect.util.formatting import (
+    normalize_field_sel,
+    normalize_spw_sel,
+    response_envelope,
+)
 from ms_inspect.util.logs import write_script
 from ms_inspect.util.stage_log import record_stage
 from ms_modify import debug_mode
@@ -129,10 +135,12 @@ def _build_script(
     cal_ms: str,
     cal_fields: str,
     workdir: str = "",
+    spw: str = "",
 ) -> str:
     """Return a self-contained preflag + split Python script."""
     from ms_inspect.util.stage_log import RECORD_STAGE_SNIPPET as record
 
+    spw_line = f"    spw={spw!r},\n" if spw else ""
     return f"""\
 #!/usr/bin/env python
 \"\"\"
@@ -170,7 +178,7 @@ split(
     vis=ms_path,
     outputvis=cal_ms,
     field=cal_fields,
-    datacolumn="data",
+{spw_line}    datacolumn="data",
     keepflags=False,
 )
 # Record both products only after split succeeds so a failed split leaves no
@@ -194,6 +202,7 @@ def run(
     do_tfcrop: bool = True,
     execute: bool = False,
     quack_interval_s: float = 5.0,
+    spw: str = "",
     debug: bool = False,
     debug_params: dict | None = None,
 ) -> dict:
@@ -222,6 +231,7 @@ def run(
     warnings: list[str] = []
 
     cal_fields = normalize_field_sel(cal_fields)
+    spw = normalize_spw_sel(spw)
     workdir_path = Path(workdir)
     if not workdir_path.exists():
         from ms_inspect.exceptions import ComputationError
@@ -247,7 +257,9 @@ def run(
     )
 
     # Always write the script
-    script_content = _build_script(ms_str, cmds_path, cal_ms, cal_fields, workdir=str(workdir_path))
+    script_content = _build_script(
+        ms_str, cmds_path, cal_ms, cal_fields, workdir=str(workdir_path), spw=spw
+    )
     _debug = debug_mode.validate(debug, debug_params, DEBUG_TASKS)
     if _debug:
         warnings.append(debug_mode.note(_debug))
@@ -260,6 +272,7 @@ def run(
         "script_path": fmt_field(script_path),
         "n_flag_commands": fmt_field(n_cmd_lines),
         "cal_fields": cal_fields,
+        "spw": spw or None,
         "do_tfcrop": do_tfcrop,
         "quack_interval_s": quack_interval_s,
         "shadow_tolerance_m": shadow_tolerance_m,
@@ -335,13 +348,16 @@ def run(
     )
     try:
         _archive_cal_ms(cal_ms, ms_str, str(workdir_path))
-        split(
-            vis=ms_str,
-            outputvis=cal_ms,
-            field=cal_fields,
-            datacolumn="data",
-            keepflags=False,
-        )
+        split_kwargs: dict = {
+            "vis": ms_str,
+            "outputvis": cal_ms,
+            "field": cal_fields,
+            "datacolumn": "data",
+            "keepflags": False,
+        }
+        if spw:
+            split_kwargs["spw"] = spw
+        split(**split_kwargs)
     except Exception as exc:
         from ms_inspect.exceptions import ComputationError
 

@@ -285,12 +285,16 @@ def run(
                 if cv is not None:
                     c_parts.append(cv)
                 dd_m = _metrics_from(pv, cv)
-                if dd_m["n_par"] > 0 and dd_m["par_amp"] and dd_m["par_amp"] > 0:
+                if (
+                    dd_m["n_par"] > 0
+                    and dd_m["par_amp"]
+                    and dd_m["par_amp"] > 0
+                    and dd_m["cross_amp"] is not None
+                ):
                     n_spws_checked += 1
-                    if dd_m["cross_amp"] is not None:
-                        dd_ratio = dd_m["cross_amp"] / dd_m["par_amp"]
-                        if dd_ratio < crosshand_ratio_thresh:
-                            unpolarized_spws.append(ddid_to_spw.get(dd, dd))
+                    dd_ratio = dd_m["cross_amp"] / dd_m["par_amp"]
+                    if dd_ratio < crosshand_ratio_thresh:
+                        unpolarized_spws.append(ddid_to_spw.get(dd, dd))
             casa_calls.append(
                 f"tb.query(FIELD_ID=={fid} && DATA_DESC_ID in {dd_ids}) -> "
                 f"MODEL_DATA, FLAG (rowincr={step})"

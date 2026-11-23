@@ -368,10 +368,18 @@ def run(
             "'standard' gridder does not apply mosaic primary-beam weighting across "
             "pointings. Use gridder='mosaic' for multi-pointing mosaics (11-imaging.md Step 6)."
         )
-    if gridder == "mosaic" and pblimit < 0:
+    if gridder == "mosaic" and pblimit > 0:
         warnings.append(
-            f"gridder='mosaic' with negative pblimit={pblimit}: low-gain mosaic edges "
-            "remain unblanked and can amplify edge noise. Prefer positive pblimit=0.1 on mosaics."
+            f"gridder='mosaic' with positive pblimit={pblimit}: pixels with PB < {pblimit} "
+            "are blanked, cutting off outer-PB and first-sidelobe emission even when imsize "
+            "covers the first sidelobe. Prefer small negative pblimit=-0.01 with explicit "
+            "pbmask=0.1 (Phase A) or usemask='user' (ms_make_mask)."
+        )
+    if usemask == "pb" and pbmask < 0.05 and niter > 0:
+        warnings.append(
+            f"usemask='pb' with pbmask={pbmask} (< 0.05): cleaning extends into low-gain PB "
+            "edges where noise is strongly amplified. Pass pbmask=0.1 (or 0.2) explicitly when "
+            "using pblimit=-0.01 with usemask='pb'."
         )
     if usemask == "pb" and nsigma is None and niter > 0:
         warnings.append(

@@ -848,4 +848,5 @@ solves replace them.
 Once Step 7c target `applycal` completes and `ms_workflow_status` advances past
 `applycal_target`:
 - If polarization calibration is in scope: **Read `09-polcal-execution.md`** before calling `ms_polcal`.
-- Before calling `ms_tclean` for any target or calibrator imaging: **you MUST Read `11-imaging.md`** (never guess `cell`, `imsize`, `gridder`, `threshold`, `nsigma`, `pblimit`, or masking parameters from memory).
+- Before calling `ms_tclean` for any target or calibrator imaging: **you MUST Read `11-imaging.md`** (never guess `cell`, `imsize`, `gridder`, `threshold`, `nsigma`, `pblimit`, `pbmask`, or masking parameters from memory).
+- In `11-imaging.md`, run **Step 0.5 (pre-imaging target CORRECTED_DATA RFI triage)** using `ms_spw_amp_severity` + `ms_vis_amp_time_stats` before the first target `ms_tclean` call (no-op on clean data; conservative `rflag`-only on `CORRECTED` when residual target RFI spikes are measured, never clipping target data).

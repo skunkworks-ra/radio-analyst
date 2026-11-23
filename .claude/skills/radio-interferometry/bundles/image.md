@@ -97,7 +97,8 @@ All placeholders are populated from Phase 1-2 tool outputs before calling `ms_tc
 | `{POINTING_CENTERS}` | `ms_field_list` | RA/Dec of each target pointing (mosaic only) |
 | `{MAX_BASELINE_M}` | `ms_baseline_lengths` | `max_baseline_m` |
 | `{CENTER_FREQ_HZ}` | `ms_radiometer_estimate` | `center_freq_hz` |
-| `{BANDWIDTH_HZ}` | `ms_radiometer_estimate` | `total_bw_hz` (`eff_bw_hz` is unflagged effective bandwidth) |
+| `{BANDWIDTH_HZ}` | `ms_radiometer_estimate` | `total_bw_hz` (`eff_bw_hz` is unflagged effective bandwidth; for thermal RMS only) |
+| `{FRACTIONAL_SPAN}` | `ms_radiometer_estimate` | `fractional_span` (`freq_span_hz / center_freq_hz` across `min_freq_hz..max_freq_hz`; use for wideband `mtmfs` trigger) |
 | `{DISH_DIAMETER_M}` | `ms_antenna_list` | `dish_diameter_m` (all antennas same for connected arrays) |
 | `{TELESCOPE}` | `ms_radiometer_estimate` | `telescope_name` (also in `ms_observation_info`) |
 | `{N_ANT}` | `ms_radiometer_estimate` | `n_ant_unflagged` |
@@ -146,7 +147,7 @@ Default to `'mfs'` unless the user explicitly asks for a cube.
 | Condition | `deconvolver` | Notes |
 |---|---|---|
 | `specmode='cube'` | `'hogbom'` | Always |
-| `{BANDWIDTH_HZ} / {CENTER_FREQ_HZ} > 0.2` | `'mtmfs'`, `nterms=2` | Wideband; also produces a spectral index map |
+| `{FRACTIONAL_SPAN} > 0.2` (`freq_span_hz / center_freq_hz > 0.2`) | `'mtmfs'`, `nterms=2` | Wideband (uses spanned frequency range across surviving SPWs, not summed `total_bw_hz`); add `scales` for extended emission |
 | Otherwise | `'hogbom'` | Default for first-pass |
 
 **Extended emission needs a scale-sensitive deconvolver.** Hogbom models the sky
@@ -175,28 +176,34 @@ separate masking from deep cleaning into three physics-driven phases instead of
 stopping after an arbitrary fixed pass count:
 
 1. **Phase A -- Initial shallow pass (`usemask='pb'`):** Run the first `hogbom`
-   (or `mtmfs` when `BW/freq > 0.2`) pass (`<name>_hogbom`) with `pblimit=0.1`
-   on mosaics (or `-0.1` single-pointing) and `nsigma=3.5` (`3.0` on compact
-   single pointings) to remove bright sidelobes without cleaning outer-PB noise
-   into a bowl. Call `ms_image_stats` on it.
+   (or `mtmfs`, `nterms=2` when `fractional_span > 0.2`) pass (`<name>_hogbom` or
+   `<name>_mtmfs_init`) with `pblimit=-0.01` on mosaics (`-0.1` single-pointing),
+   explicit `pbmask=0.1` (so cleaning stays inside `PB >= 0.1` while the outer
+   mosaic PB / first sidelobe remains unblanked), and `nsigma=3.5` (`3.0` on
+   compact single pointings) to remove bright sidelobes without cleaning
+   outer-PB noise into a bowl. Call `ms_image_stats(..., pb_level=0.1)` on it
+   (for `mtmfs`, use `.image.pbcor.tt0` and `.psf.tt0`).
 2. **Phase B -- Adaptive mask-growing passes (`usemask='user'`, safety cap 4
    rounds, early stop on convergence):**
-   - Build or update the mask on the flat-noise `.image` (never `.pbcor`) via
-     `ms_make_mask(image_path=<prev>.image, mask_path=<name>_rN.mask,
-     prior_mask=<prev_mask if N>1 else None>, workdir={WORKDIR}, pb_level=0.1,
-     png_path=<name>_rN_mask.png, execute=True)`. If `mask_pixels == 0`, fall
-     back to `usemask='pb'` with `nsigma=3.0` (never pass an empty mask to
-     `tclean`, which triggers `stopcode=7`).
+   - Build or update the mask on the flat-noise `.image` (or `.image.tt0` for
+     `mtmfs`; never `.pbcor`) via `ms_make_mask(image_path=<prev>.image[.tt0],
+     mask_path=<name>_rN.mask, prior_mask=<prev_mask if N>1 else None>,
+     workdir={WORKDIR}, pb_level=0.1, png_path=<name>_rN_mask.png,
+     execute=True)`. Note: keep `pb_level=0.1` (or `0.05` if bright first-sidelobe
+     sources are visible), decoupled from `pblimit=-0.01`. If `mask_pixels == 0`,
+     fall back to `usemask='pb'` with `pbmask=0.1` and `nsigma=3.0` (never pass
+     an empty mask to `tclean`, which triggers `stopcode=7`).
    - Run `ms_tclean` (`<name>_<deconvolver>_rN`) with `deconvolver='multiscale'`
-     (or `'mtmfs'` with `scales`), `usemask='user'`, `mask=<name>_rN.mask`,
-     `pblimit=(0.1 if mosaic else -0.1)`, and `nsigma=2.5` (or `2.0` once bright
-     sidelobes drop). Why lower than `3.0`: CASA's `nsigma` multiplies the
-     global residual MAD across the whole PB, so unmasked faint emission inflates
-     the MAD and stalls `nsigma=3.0` prematurely; `usemask='user'` already blocks
-     cleaning outside-mask noise.
-   - Call `ms_image_stats` after each pass and inspect `mask_growth_fraction`
-     (from `ms_make_mask`), `residual_out_mask_rms_jy`, and
-     `residual_out_mask_peak_snr`:
+     (or `'mtmfs'`, `nterms=2` with `scales` when `fractional_span > 0.2`),
+     `usemask='user'`, `mask=<name>_rN.mask`,
+     `pblimit=(-0.01 if mosaic else -0.1)`, and `nsigma=2.5` (or `2.0` once
+     bright sidelobes drop). Why lower than `3.0`: CASA's `nsigma` multiplies
+     the global residual MAD across the whole PB, so unmasked faint emission
+     inflates the MAD and stalls `nsigma=3.0` prematurely; `usemask='user'`
+     already blocks cleaning outside-mask noise.
+   - Call `ms_image_stats(..., pb_level=0.1)` after each pass and inspect
+     `mask_growth_fraction` (from `ms_make_mask`), `residual_out_mask_rms_jy`,
+     and `residual_out_mask_peak_snr`:
      - **Grow the mask again** (up to round 4) when
        `residual_out_mask_peak_snr >= 5.0` (real unmasked emission still sits
        outside the mask) **OR** (`mask_growth_fraction >= 0.10` and
@@ -214,7 +221,8 @@ stopping after an arbitrary fixed pass count:
      `ms_image_stats`. If `residual_in_mask_peak_snr >= 3.5` **OR**
      `residual_in_to_out_rms_ratio >= 1.5` (the mask covers the source, `tclean`
      stopped too early inside it), run **one final pass** (`<name>_<deconvolver>`)
-     with the same fixed mask, `nsigma=1.5`,
+     with the same fixed mask, `pblimit=(-0.01 if mosaic else -0.1)`,
+     `nsigma=1.5`,
      `threshold = max(2 * thermal_rms_jy, 1.5 * residual_out_mask_rms_jy)`, and
      `savemodel='modelcolumn'`.
    - If Phase B already converged inside the mask
@@ -226,10 +234,16 @@ stopping after an arbitrary fixed pass count:
      gap to `thermal_rms_jy` is calibration, residual RFI, dynamic-range/selfcal,
      or confusion -- not masking.
 
-**Primary-beam blanking on mosaics.** On single pointings, `pblimit=-0.1` keeps
-sources in the PB sidelobes unblanked while cleaning inside `pbmask=0.1`. On
-mosaics, prefer positive `pblimit=0.1` (or `0.2`) so low-gain mosaic edges are
-blanked rather than amplifying edge noise into clean components.
+**Primary-beam blanking on mosaics (`pblimit` vs `pbmask` / `pb_level`).**
+Positive `pblimit` (`0.1` or `0.2`) blanks all pixels below that gain level,
+cutting off the outer mosaic PB and first sidelobe even when `imsize` covers
+`3 * FWHM` (Step 4). Use a small negative **`pblimit=-0.01`** on mosaics (and
+`-0.1` on single pointings) so the full mosaic footprint and first sidelobe stay
+unblanked during gridding and deconvolution. Control noise cleaning strictly
+through the clean mask (`pbmask=0.1` in Phase A `usemask='pb'`; PyBDSF
+`usemask='user'` mask in Phases B/C) and keep **`pb_level=0.1`** (never
+`abs(pblimit)=0.01`) in `ms_make_mask` and `ms_image_stats` so reporting noise
+and clean-bowl metrics stay inside the inner science PB.
 
 ---
 
@@ -321,14 +335,15 @@ fresnel = {DISH_DIAMETER_M}**2 / ({MAX_BASELINE_M} * lambda_m)
 (`awproject`, `awp2`) cost far more memory and time, and are a later choice
 when the science needs wide-field polarisation or beam-squint correction.
 
-**A-configuration: check that the image fits before calling tclean.** The
-resolution sets a small cell, so a mosaic footprint becomes a very large image.
-CASA needs roughly
+**Large mosaics (A-configuration, `imsize >= 2048`, or `>= 10` pointings): check
+that the image fits before calling tclean.** Large footprints with `mtmfs` +
+`multiscale` or `IQUV` cubes require significant memory. CASA needs roughly
 
 ```
 memory_bytes ≈ 5.5 × nterms × nscales × (imsize_x × imsize_y × 4 bytes)
 ```
 
+(plus `nchan * 4` for `IQUV` cubes and mosaic gridding convolution functions),
 where 4 bytes is one float pixel, `nterms` is 1 unless `mtmfs`, and `nscales`
 is 1 for hogbom. Compare this with the machine's available memory (`free -b` via
 Bash). If it does not fit, do not start tclean: report the estimate and the
@@ -381,7 +396,7 @@ Instead, choose the stopping criterion from **measured** off-source RMS:
    clean floor on extended mosaics.
 2. **Measured threshold for unmasked (`usemask='pb'`) cleaning:** Measure the
    actual off-source RMS from a fast dirty or shallow pass (`ms_image_stats`
-   `residual_rms_jy` inside `PB >= abs(pblimit)`), and set:
+   `residual_rms_jy` inside `PB >= pb_level` with `pb_level=0.1`), and set:
    ```
    threshold = max(3 * thermal_rms_jy, 3..5 * measured_off_source_rms)
    ```
@@ -453,7 +468,8 @@ ms_tclean(
     threshold    = {threshold},
     nsigma       = 3.0,            # stops at nsigma*MAD residual; prevents unmasked noise bowls
     savemodel    = 'modelcolumn',
-    pblimit      = 0.1,            # positive on mosaics (blanks noisy edges); -0.1 for unblanked single-pointing sidelobes
+    pblimit      = -0.01,          # negative on mosaics keeps outer PB / first sidelobe unblanked (-0.1 single-pointing)
+    pbmask       = 0.1,            # explicit clean boundary when usemask='pb' (never omit with pblimit=-0.01)
     usemask      = 'pb',           # or 'user' with mask=<path> (e.g. PyBDSF mask); never 'auto-multithresh'
     workdir      = {WORKDIR},
     execute      = False,
@@ -481,9 +497,9 @@ Call `ms_image_stats` on the pbcor image:
 
 ```
 ms_image_stats(
-    image_path  = {WORKDIR}/{imagename}.image.pbcor,
-    psf_path    = {WORKDIR}/{imagename}.psf,
-    pb_level    = 0.1,                                  # abs(pblimit) of the tclean call
+    image_path  = {WORKDIR}/{imagename}.image.pbcor,    # or .image.pbcor.tt0 for mtmfs
+    psf_path    = {WORKDIR}/{imagename}.psf,            # or .psf.tt0 for mtmfs
+    pb_level    = 0.1,                                  # science PB reporting boundary (decoupled from pblimit=-0.01)
     png_path    = {WORKDIR}/{imagename}.png,
 )
 ```

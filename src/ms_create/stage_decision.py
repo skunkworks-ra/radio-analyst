@@ -32,6 +32,7 @@ from ms_inspect.util.formatting import response_envelope
 TOOL_NAME = "ms_record_stage_decision"
 
 VALID_STAGES: tuple[str, ...] = (
+    "import",
     "inspect",
     "precal",
     "calibrate",

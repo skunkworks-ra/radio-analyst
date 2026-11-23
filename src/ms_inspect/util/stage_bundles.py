@@ -21,6 +21,7 @@ from pathlib import Path
 import yaml
 
 BUNDLE_NAMES: tuple[str, ...] = (
+    "import",
     "precal",
     "calibrate",
     "polcal",
@@ -31,6 +32,7 @@ BUNDLE_NAMES: tuple[str, ...] = (
 )
 
 BUNDLE_COMMAND_MAP: dict[str, str] = {
+    "import": "import",
     "precal": "precal",
     "calibrate": "calibrate",
     "polcal": "polcal",
@@ -151,6 +153,30 @@ Precal sets the polarisation angle calibrator model (`ms_setjy_polcal`,
 before solving cross-hand delay; run `ms_setjy_polcal` in polcal only when
 precal ran without polarisation in scope (and then redo calibration)."""
 
+_IMPORT_BODY = """\
+## Stage 0 -- Raw ASDM/SDM ingestion & continuum SPW selection
+
+1. Run `ms_sdm_summary(sdm_path)` first (pure XML, no CASA): verify telescope,
+   configuration, band, full-Stokes correlation products, continuum vs
+   spectral-line SPW classification, calibrator sources/intents, and scan
+   balance before starting a multi-GB conversion.
+2. Generate `import_asdm.py` with `ms_import_asdm(asdm_path=sdm_path,
+   workdir=workdir, execute=False)` (fixed `ocorr_mode='co'`, `savecmds=True`,
+   `applyflags=False`, `asis='ExecBlock'`), then run it via `run-step.sh`
+   (`--wait 240`), re-running on `status=running` until `status=done` (`rc=0`).
+3. Verify the converted MS and `.flagonline.txt` with
+   `ms_verify_import(ms_path, online_flag_file)`: `ms_valid`,
+   `flag_file_exists`, and `ready_for_preflag` must all be True (STOP if not).
+4. Inspect `ms_spectral_window_list(ms_path)`. When mixed spectral-line +
+   continuum SPWs or dummy/setup SPWs (e.g. 2-corr `[RR,LL]` pointing scans
+   alongside 4-corr science SPWs) exist and the reduction goal is continuum
+   science, split out the continuum science SPWs into `<workdir>/continuum.ms`
+   with `ms_casa_task(task='split', params={'vis': ms_path, 'outputvis':
+   '<workdir>/continuum.ms', 'spw': '<continuum_spw_ids>', 'datacolumn': 'data',
+   'keepflags': True}, workdir=workdir, execute=False)` -> run via `run-step.sh`.
+   Check `.flagonline.txt` with Read to confirm online flags have no `spw=`
+   tokens before reusing it on the SPW-renumbered `continuum.ms`."""
+
 _POSTCAL_BODY = """\
 ## Post-calibration target rflag (`CORRECTED_DATA` only, no amplitude clip)
 
@@ -258,7 +284,9 @@ def build_stage_bundles(repo_root: Path | None = None) -> dict[str, str]:
             "-- do not edit by hand -->\n\n"
             f"# Stage Skill Bundle: {name}"
         )
-        if name == "postcal":
+        if name == "import":
+            body = _IMPORT_BODY
+        elif name == "postcal":
             body = _POSTCAL_BODY
         else:
             src_file, prefixes = _SECTION_SPECS[name]

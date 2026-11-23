@@ -71,16 +71,48 @@ POL_DATA_SOURCE = (
 
 def _read_band_centre_ghz(ms_str: str) -> tuple[float, list[str]]:
     """
-    Return the band centre frequency in GHz from the first spectral window.
-    Uses the median of all channel frequencies in SPW 0.
-    """
-    casa_calls = [f"tb.open('{ms_str}/SPECTRAL_WINDOW')", "tb.getcell(CHAN_FREQ, 0)"]
-    with open_table(ms_str + "/SPECTRAL_WINDOW") as tb:
-        chan_freqs = tb.getcell("CHAN_FREQ", 0)  # Hz, shape (n_chan,)
+    Return the band centre frequency in GHz across full-Stokes science SPWs
+    (falling back to all SPWs if no full-Stokes SPWs exist).
 
+    Avoids reading SPW 0 alone: on VLA SDMs SPW 0 is often a setup/pointing scan
+    at a different band (e.g. X-band setup on an L-band observation).
+    """
     import numpy as _np
 
-    centre_hz = float(_np.median(chan_freqs))
+    casa_calls = [
+        f"tb.open('{ms_str}/SPECTRAL_WINDOW')",
+        f"tb.open('{ms_str}/DATA_DESCRIPTION, POLARIZATION')",
+    ]
+    full_pol_spws: set[int] = set()
+    try:
+        from ms_inspect.util.selection import corr_codes_by_ddid
+
+        codes_by_dd = corr_codes_by_ddid(ms_str)
+        with open_table(ms_str + "/DATA_DESCRIPTION") as dd_tb:
+            dd_spws = [int(x) for x in dd_tb.getcol("SPECTRAL_WINDOW_ID")]
+        cross_codes = {6, 7, 10, 11}
+        for spw_id, codes in zip(dd_spws, codes_by_dd, strict=False):
+            if any(int(c) in cross_codes for c in codes):
+                full_pol_spws.add(spw_id)
+    except Exception:
+        full_pol_spws = set()
+
+    spw_medians: list[float] = []
+    full_pol_medians: list[float] = []
+    with open_table(ms_str + "/SPECTRAL_WINDOW") as tb:
+        for sid in range(tb.nrows()):
+            cf = _np.asarray(tb.getcell("CHAN_FREQ", sid), dtype=float)
+            if cf.size == 0:
+                continue
+            med = float(_np.median(cf))
+            spw_medians.append(med)
+            if sid in full_pol_spws:
+                full_pol_medians.append(med)
+
+    chosen = full_pol_medians if full_pol_medians else spw_medians
+    if not chosen:
+        raise ValueError("SPECTRAL_WINDOW has no frequency channels.")
+    centre_hz = float(_np.median(chosen))
     return centre_hz / 1e9, casa_calls
 
 

@@ -29,7 +29,7 @@ _USAGE_TAG_RE = re.compile(r"<usage>\s*(.*?)\s*</usage>", re.DOTALL)
 _WORKDIR_ARG_RE = re.compile(r"workdir['\"]?\s*[=:]\s*['\"]?([^\s,'\"\}]+)")
 
 _KNOWN_STAGE_SLUGS = frozenset(
-    {"inspect", "precal", "calibrate", "polcal", "image", "postcal", "selfcal"}
+    {"import", "inspect", "precal", "calibrate", "polcal", "image", "postcal", "selfcal"}
 )
 _OPENCODE_MCP_PREFIXES = (
     "radio-analyst_ms-inspect_",

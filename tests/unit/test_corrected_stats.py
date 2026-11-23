@@ -74,3 +74,69 @@ class TestFieldStats:
         flag = np.zeros_like(data, dtype=bool)
         s = _field_stats(data, flag, [0, 3], None, None)
         assert abs(s["phase_rms_deg"] - 30.0) < 0.5
+
+
+def test_mixed_polarization_rows_and_mixed_channel_counts_per_ddid(tmp_path):
+    """Multi-row POLARIZATION ([RR,LL] row 0 + [RR,RL,LR,LL] row 1) with mixed
+    channel counts (16 vs 64) must neither crash on getcol nor mis-index RL as LL."""
+    from unittest.mock import MagicMock, patch
+
+    from ms_inspect.tools import corrected_stats
+
+    ms_dir = tmp_path / "mixed_pol.ms"
+    ms_dir.mkdir()
+    (ms_dir / "table.info").write_text("Type = Measurement Set\n")
+
+    # DDID 0: 2 corrs [RR, LL], 16 chans, amp = 2.0 Jy
+    d0 = np.full((2, 16, 4), 2.0 + 0j, dtype=complex)
+    f0 = np.zeros_like(d0, dtype=bool)
+    # DDID 1: 4 corrs [RR, RL, LR, LL], 64 chans; RR=LL=2.0 Jy, RL=LR=999.0 Jy!
+    # If POLARIZATION row 0 ([0, 1]) were wrongly applied to DDID 1, index 1 would
+    # read RL=999.0 Jy instead of LL=2.0 Jy.
+    d1 = np.full((4, 64, 4), 2.0 + 0j, dtype=complex)
+    d1[1, :, :] = 999.0 + 0j
+    d1[2, :, :] = 999.0 + 0j
+    f1 = np.zeros_like(d1, dtype=bool)
+
+    def make_dd_sub(dd):
+        sub = MagicMock()
+        sub.nrows.return_value = 4
+        data, flag = (d0, f0) if dd == 0 else (d1, f1)
+        sub.getcol.side_effect = lambda col, **kw: data if col == "CORRECTED_DATA" else flag
+        return sub
+
+    field_sub = MagicMock()
+    field_sub.nrows.return_value = 8
+    field_sub.getcol.return_value = np.array([0, 0, 0, 0, 1, 1, 1, 1])
+
+    main_tb = MagicMock()
+    main_tb.__enter__.return_value = main_tb
+    main_tb.colnames.return_value = ["DATA", "CORRECTED_DATA", "FLAG"]
+    main_tb.query.side_effect = lambda expr: (
+        make_dd_sub(int(expr.split("DATA_DESC_ID ==")[1].strip()))
+        if "DATA_DESC_ID ==" in expr
+        else field_sub
+    )
+
+    field_tb = MagicMock()
+    field_tb.__enter__.return_value = field_tb
+    field_tb.getcol.return_value = ["TARGET"]
+
+    def fake_open(path, **kw):
+        return field_tb if str(path).endswith("FIELD") else main_tb
+
+    with (
+        patch.object(corrected_stats, "open_table", side_effect=fake_open),
+        patch.object(
+            corrected_stats,
+            "parallel_corr_by_ddid",
+            return_value=[[(0, "RR"), (1, "LL")], [(0, "RR"), (3, "LL")]],
+        ),
+    ):
+        res = corrected_stats.run(str(ms_dir), field="TARGET")
+
+    assert res["status"] == "ok"
+    pf = res["data"]["per_field"][0]
+    assert pf["amp_median"]["value"] == 2.0
+    assert pf["amp_p95"]["value"] == 2.0
+    assert pf["n_samples"]["value"] == 16  # 2 parallel corrs * 4 rows * 2 DDIDs

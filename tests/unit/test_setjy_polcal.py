@@ -123,3 +123,48 @@ class TestBandRangeWiring:
         lo, hi = result["data"]["band_range_ghz"]
         assert result["data"]["reffreq_ghz"] == pytest.approx((lo + hi) / 2.0)
         assert result["data"]["reffreq_source"].startswith("band centre")
+
+    def test_spw_parameter_restricts_band_and_script_probe(self, real_ms_raw, tmp_path):
+        (tmp_path / "all").mkdir()
+        (tmp_path / "spw0").mkdir()
+        result_all, _ = _run(real_ms_raw, tmp_path / "all", reffreq_ghz=None)
+        result_spw0, script_spw0 = _run(real_ms_raw, tmp_path / "spw0", spw="0", reffreq_ghz=None)
+        lo_all, hi_all = result_all["data"]["band_range_ghz"]
+        lo_0, hi_0 = result_spw0["data"]["band_range_ghz"]
+        assert hi_0 < hi_all
+        assert lo_0 >= lo_all
+        assert "allowed_spws = [0]" in script_spw0
+
+    def test_full_stokes_filter_excludes_2corr_xband_setup_spw(self, tmp_path):
+        from unittest.mock import MagicMock, patch
+
+        import numpy as np
+
+        from ms_modify import setjy_polcal
+
+        spw_tb = MagicMock()
+        spw_tb.__enter__.return_value = spw_tb
+        spw_tb.nrows.return_value = 3
+        spw_tb.getcell.side_effect = lambda col, i: (
+            np.array([8.4e9, 8.6e9]) if i == 0 else np.array([1.3e9 + 0.2e9 * i, 1.4e9 + 0.2e9 * i])
+        )
+        dd_tb = MagicMock()
+        dd_tb.__enter__.return_value = dd_tb
+        dd_tb.getcol.return_value = [0, 1, 2]
+
+        def fake_open(path, **kw):
+            return dd_tb if str(path).endswith("DATA_DESCRIPTION") else spw_tb
+
+        with (
+            patch.object(setjy_polcal, "open_table", side_effect=fake_open),
+            patch(
+                "ms_inspect.util.selection.corr_codes_by_ddid",
+                return_value=[[5, 8], [5, 6, 7, 8], [5, 6, 7, 8]],
+            ),
+        ):
+            lo, hi = setjy_polcal._read_band_range_ghz(str(tmp_path / "obs.ms"))
+            spws = setjy_polcal._select_polcal_spw_ids(str(tmp_path / "obs.ms"))
+
+        assert spws == [1, 2]
+        assert lo == pytest.approx(1.5, abs=1e-3)
+        assert hi == pytest.approx(1.8, abs=1e-3)

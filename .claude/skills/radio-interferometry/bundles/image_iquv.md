@@ -97,7 +97,8 @@ All placeholders are populated from Phase 1-2 tool outputs before calling `ms_tc
 | `{POINTING_CENTERS}` | `ms_field_list` | RA/Dec of each target pointing (mosaic only) |
 | `{MAX_BASELINE_M}` | `ms_baseline_lengths` | `max_baseline_m` |
 | `{CENTER_FREQ_HZ}` | `ms_radiometer_estimate` | `center_freq_hz` |
-| `{BANDWIDTH_HZ}` | `ms_radiometer_estimate` | `total_bw_hz` (`eff_bw_hz` is unflagged effective bandwidth) |
+| `{BANDWIDTH_HZ}` | `ms_radiometer_estimate` | `total_bw_hz` (`eff_bw_hz` is unflagged effective bandwidth; for thermal RMS only) |
+| `{FRACTIONAL_SPAN}` | `ms_radiometer_estimate` | `fractional_span` (`freq_span_hz / center_freq_hz` across `min_freq_hz..max_freq_hz`; use for wideband `mtmfs` trigger) |
 | `{DISH_DIAMETER_M}` | `ms_antenna_list` | `dish_diameter_m` (all antennas same for connected arrays) |
 | `{TELESCOPE}` | `ms_radiometer_estimate` | `telescope_name` (also in `ms_observation_info`) |
 | `{N_ANT}` | `ms_radiometer_estimate` | `n_ant_unflagged` |
@@ -215,14 +216,15 @@ fresnel = {DISH_DIAMETER_M}**2 / ({MAX_BASELINE_M} * lambda_m)
 (`awproject`, `awp2`) cost far more memory and time, and are a later choice
 when the science needs wide-field polarisation or beam-squint correction.
 
-**A-configuration: check that the image fits before calling tclean.** The
-resolution sets a small cell, so a mosaic footprint becomes a very large image.
-CASA needs roughly
+**Large mosaics (A-configuration, `imsize >= 2048`, or `>= 10` pointings): check
+that the image fits before calling tclean.** Large footprints with `mtmfs` +
+`multiscale` or `IQUV` cubes require significant memory. CASA needs roughly
 
 ```
 memory_bytes ≈ 5.5 × nterms × nscales × (imsize_x × imsize_y × 4 bytes)
 ```
 
+(plus `nchan * 4` for `IQUV` cubes and mosaic gridding convolution functions),
 where 4 bytes is one float pixel, `nterms` is 1 unless `mtmfs`, and `nscales`
 is 1 for hogbom. Compare this with the machine's available memory (`free -b` via
 Bash). If it does not fit, do not start tclean: report the estimate and the
@@ -275,7 +277,7 @@ Instead, choose the stopping criterion from **measured** off-source RMS:
    clean floor on extended mosaics.
 2. **Measured threshold for unmasked (`usemask='pb'`) cleaning:** Measure the
    actual off-source RMS from a fast dirty or shallow pass (`ms_image_stats`
-   `residual_rms_jy` inside `PB >= abs(pblimit)`), and set:
+   `residual_rms_jy` inside `PB >= pb_level` with `pb_level=0.1`), and set:
    ```
    threshold = max(3 * thermal_rms_jy, 3..5 * measured_off_source_rms)
    ```
@@ -388,6 +390,10 @@ ms_tclean(
     robust      = 0.5,
     niter       = 50000,
     threshold   = {threshold},
+    nsigma      = 3.0,               # prevent unmasked cube cleaning into noise
+    pblimit     = -0.01,             # keeps outer mosaic PB unblanked (-0.1 single-pointing)
+    pbmask      = 0.1,               # explicit clean boundary if usemask='pb' (or usemask='user' with Stokes I mask)
+    usemask     = 'pb',              # or 'user' reusing converged Stokes I PyBDSF mask
     savemodel   = 'none',            # preserve Stokes I model in MODEL_DATA
     workdir     = {WORKDIR},
     execute     = False,

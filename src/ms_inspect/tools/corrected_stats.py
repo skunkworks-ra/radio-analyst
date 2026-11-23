@@ -26,6 +26,7 @@ import numpy as np
 from ms_inspect.util.casa_context import open_table, validate_ms_path
 from ms_inspect.util.formatting import field as fmt_field
 from ms_inspect.util.formatting import normalize_field_sel, response_envelope
+from ms_inspect.util.selection import parallel_corr_by_ddid
 
 TOOL_NAME = "ms_corrected_stats"
 
@@ -39,6 +40,51 @@ def _parallel_indices(corr_codes: list[int]) -> list[int]:
     idx = [i for i, c in enumerate(corr_codes) if int(c) in _PARALLEL_CODES]
     # Fall back to all correlations if none matched (unknown basis).
     return idx if idx else list(range(len(corr_codes)))
+
+
+def _collect_channel_averaged_vis(
+    data: np.ndarray,
+    flag: np.ndarray,
+    par_idx: list[int],
+    chan_start: int | None,
+    chan_end: int | None,
+) -> np.ndarray:
+    """Vector-average parallel-hand unflagged visibilities across [chan_start:chan_end]."""
+    cs = 0 if chan_start is None else max(0, chan_start)
+    ce = data.shape[1] if chan_end is None else min(data.shape[1], chan_end)
+    if cs >= ce or not par_idx:
+        return np.empty(0, dtype=complex)
+    d = data[par_idx, cs:ce, :]
+    good = ~flag[par_idx, cs:ce, :]
+    cnt = good.sum(axis=1)  # [n_par, n_rows]
+    dsum = np.where(good, d, 0).sum(axis=1)
+    vavg = np.divide(dsum, cnt, out=np.full(dsum.shape, np.nan, dtype=complex), where=cnt > 0)
+    vis = vavg.ravel()
+    valid = np.isfinite(vis.real) & np.isfinite(vis.imag) & (np.abs(vis) > 0)
+    return vis[valid]
+
+
+def _stats_from_vis(vis: np.ndarray) -> dict:
+    n_samples = int(vis.size)
+    if n_samples == 0:
+        return {
+            "n_samples": 0,
+            "amp_median": None,
+            "amp_robust_std": None,
+            "amp_p95": None,
+            "phase_rms_deg": None,
+        }
+    amp = np.abs(vis)
+    phase = np.angle(vis) * (180.0 / math.pi)
+    median = float(np.median(amp))
+    mad = float(np.median(np.abs(amp - median)))
+    return {
+        "n_samples": n_samples,
+        "amp_median": round(median, 6),
+        "amp_robust_std": round(1.4826 * mad, 6),
+        "amp_p95": round(float(np.percentile(amp, 95)), 6),
+        "phase_rms_deg": round(float(np.sqrt(np.mean(phase**2))), 3),
+    }
 
 
 def _field_stats(
@@ -67,41 +113,11 @@ def _field_stats(
 
     Returns a dict of plain Python floats/ints (no field() wrappers).
     """
-    cs = 0 if chan_start is None else chan_start
-    ce = data.shape[1] if chan_end is None else chan_end
-    d = data[par_idx, cs:ce, :]
-    good = ~flag[par_idx, cs:ce, :]
-    # Vector-average over the channel axis, ignoring flagged channels.
-    cnt = good.sum(axis=1)  # [n_par, n_rows]
-    dsum = np.where(good, d, 0).sum(axis=1)  # complex sum over channels
-    vavg = np.divide(dsum, cnt, out=np.full(dsum.shape, np.nan, dtype=complex), where=cnt > 0)
-    vis = vavg.ravel()
-    valid = np.isfinite(vis.real) & np.isfinite(vis.imag) & (np.abs(vis) > 0)
-    vis = vis[valid]
-    n_samples = int(valid.sum())
-    if vis.size == 0:
-        return {
-            "n_samples": n_samples,
-            "amp_median": None,
-            "amp_robust_std": None,
-            "amp_p95": None,
-            "phase_rms_deg": None,
-        }
-    amp = np.abs(vis)
-    phase = np.angle(vis) * (180.0 / math.pi)
-    median = float(np.median(amp))
-    mad = float(np.median(np.abs(amp - median)))
-    return {
-        "n_samples": n_samples,
-        "amp_median": round(median, 6),
-        "amp_robust_std": round(1.4826 * mad, 6),
-        "amp_p95": round(float(np.percentile(amp, 95)), 6),
-        "phase_rms_deg": round(float(np.sqrt(np.mean(phase**2))), 3),
-    }
+    return _stats_from_vis(_collect_channel_averaged_vis(data, flag, par_idx, chan_start, chan_end))
 
 
 def _corr_codes(ms_str: str) -> list[int]:
-    """Read CORR_TYPE for the first polarization setup."""
+    """Read CORR_TYPE for the first polarization setup (legacy helper)."""
     from pathlib import Path
 
     with open_table(str(Path(ms_str) / "POLARIZATION")) as tb:
@@ -159,9 +175,11 @@ def run(
             casa_calls=casa_calls,
         )
 
-    corr_codes = _corr_codes(ms_str)
-    par_idx = _parallel_indices(corr_codes)
-    casa_calls.append(f"tb.open(POLARIZATION) → CORR_TYPE, parallel idx={par_idx}")
+    corr_by_dd = parallel_corr_by_ddid(ms_str)
+    par_idx_by_dd = [[idx for idx, _ in pairs] for pairs in corr_by_dd]
+    casa_calls.append(
+        f"tb.open(POLARIZATION, DATA_DESCRIPTION) -> parallel idx per DDID={par_idx_by_dd}"
+    )
 
     per_field: list[dict] = []
     with open_table(ms_str) as tb:
@@ -177,19 +195,39 @@ def run(
             sub = tb.query(f"FIELD_ID == {fid}")
             try:
                 n_rows = int(sub.nrows())
-                if n_rows == 0:
-                    continue
-                step = max(1, n_rows // max_rows)
-                data = sub.getcol(datacolumn)
-                flag = sub.getcol("FLAG")
+                dd_ids = sorted({int(x) for x in sub.getcol("DATA_DESC_ID")}) if n_rows else []
             finally:
                 sub.close()
+            if n_rows == 0:
+                continue
+            step = max(1, -(-n_rows // max_rows))
             if step > 1:
-                data = data[:, :, ::step]
-                flag = flag[:, :, ::step]
                 warnings.append(f"Field {name_map[fid]}: {n_rows} rows sampled every {step}th.")
-            stats = _field_stats(data, flag, par_idx, chan_start, chan_end)
-            casa_calls.append(f"tb.query(FIELD_ID=={fid}) → {datacolumn}, FLAG")
+            # Query per DATA_DESC_ID so mixed-correlation (e.g. [RR,LL] setup +
+            # [RR,RL,LR,LL] science) and mixed-channel SPWs never crash getcol or
+            # mis-index cross-hands as parallel hands.
+            vis_parts: list[np.ndarray] = []
+            for dd in dd_ids:
+                par_idx = (
+                    par_idx_by_dd[dd] if dd < len(par_idx_by_dd) and par_idx_by_dd[dd] else [0]
+                )
+                dsub = tb.query(f"FIELD_ID == {fid} && DATA_DESC_ID == {dd}")
+                try:
+                    if int(dsub.nrows()) == 0:
+                        continue
+                    data = dsub.getcol(datacolumn, rowincr=step)
+                    flag = dsub.getcol("FLAG", rowincr=step)
+                finally:
+                    dsub.close()
+                vis_parts.append(
+                    _collect_channel_averaged_vis(data, flag, par_idx, chan_start, chan_end)
+                )
+            pooled = np.concatenate(vis_parts) if vis_parts else np.empty(0, dtype=complex)
+            stats = _stats_from_vis(pooled)
+            casa_calls.append(
+                f"tb.query(FIELD_ID=={fid} && DATA_DESC_ID in {dd_ids}) -> "
+                f"{datacolumn}, FLAG (rowincr={step})"
+            )
             flagged = stats["amp_median"] is None
             per_field.append(
                 {

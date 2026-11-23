@@ -203,17 +203,48 @@ class TestPbMask:
 
         res2 = run(
             real_ms_calibrated,
-            str(workdir / "mosaic_negpb"),
+            str(workdir / "mosaic_pospb"),
             field="0,1",
             gridder="mosaic",
-            pblimit=-0.1,
+            pblimit=0.1,
             nsigma=3.0,
             workdir=str(workdir),
             execute=False,
         )
         warns2 = res2["warnings"]
-        assert any("negative pblimit" in w for w in warns2)
+        assert any("positive pblimit" in w for w in warns2)
         assert not any("usemask='pb' without nsigma" in w for w in warns2)
+
+        res3 = run(
+            real_ms_calibrated,
+            str(workdir / "mosaic_lowpbmask"),
+            field="0,1",
+            gridder="mosaic",
+            pblimit=-0.01,
+            pbmask=None,
+            usemask="pb",
+            nsigma=3.5,
+            workdir=str(workdir),
+            execute=False,
+        )
+        warns3 = res3["warnings"]
+        assert any("pbmask=0.01" in w for w in warns3)
+
+        res4 = run(
+            real_ms_calibrated,
+            str(workdir / "mosaic_good"),
+            field="0,1",
+            gridder="mosaic",
+            pblimit=-0.01,
+            pbmask=0.1,
+            usemask="pb",
+            nsigma=3.5,
+            workdir=str(workdir),
+            execute=False,
+        )
+        warns4 = res4["warnings"]
+        assert not any("positive pblimit" in w for w in warns4)
+        assert not any("pbmask=" in w for w in warns4)
 
     def test_execute_forwards_user_mask_pblimit_and_nsigma(
         self, tmp_path, real_ms_calibrated, monkeypatch

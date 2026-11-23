@@ -272,3 +272,76 @@ class TestPartialBandPolClobber:
             5.0, 17.0, 0.5, True, unpolarized_spws=[], n_spws_checked=16, **_KW
         )
         assert status_ok == "COMPLETE" and reasons_ok == []
+
+    def test_mixed_2corr_setup_and_4corr_polcal_ddids_counts_only_crosshand_ddids(self, tmp_path):
+        """DDID 0 is 2-corr [RR,LL] setup SPW; DDID 1 is 4-corr [RR,RL,LR,LL] polarized SPW.
+        n_spws_checked must count only DDID 1 (not falsely flag DDID 0 as unpolarized)."""
+        from unittest.mock import MagicMock, patch
+
+        from ms_inspect.tools import verify_model
+
+        ms_dir = tmp_path / "mixed_pol_model.ms"
+        ms_dir.mkdir()
+        (ms_dir / "table.info").write_text("Type = Measurement Set\n")
+        (ms_dir / "DATA_DESCRIPTION").mkdir()
+
+        def make_dd_sub(dd):
+            sub = MagicMock()
+            sub.nrows.return_value = 4
+            if dd == 0:
+                data = np.full((2, 2, 4), 5.0 * np.exp(1j * 0.3), dtype=complex)
+                flag = np.zeros((2, 2, 4), dtype=bool)
+            else:
+                data = np.zeros((4, 2, 4), dtype=complex)
+                data[0] = 5.0 * np.exp(1j * 0.3)
+                data[3] = 5.0 * np.exp(-1j * 0.3)
+                data[1] = 0.5
+                data[2] = 0.5
+                flag = np.zeros((4, 2, 4), dtype=bool)
+            sub.getcol.side_effect = lambda col, **kw: data if col == "MODEL_DATA" else flag
+            return sub
+
+        field_sub = MagicMock()
+        field_sub.nrows.return_value = 8
+        field_sub.getcol.return_value = np.array([0, 0, 0, 0, 1, 1, 1, 1])
+
+        main_tb = MagicMock()
+        main_tb.__enter__.return_value = main_tb
+        main_tb.colnames.return_value = ["DATA", "MODEL_DATA", "FLAG"]
+        main_tb.query.side_effect = lambda expr: (
+            make_dd_sub(int(expr.split("DATA_DESC_ID ==")[1].strip()))
+            if "DATA_DESC_ID ==" in expr
+            else field_sub
+        )
+
+        field_tb = MagicMock()
+        field_tb.__enter__.return_value = field_tb
+        field_tb.getcol.return_value = ["3C286"]
+
+        dd_tb = MagicMock()
+        dd_tb.__enter__.return_value = dd_tb
+        dd_tb.getcol.return_value = [0, 1]
+
+        def fake_open(path, **kw):
+            p = str(path)
+            if p.endswith("FIELD"):
+                return field_tb
+            if p.endswith("DATA_DESCRIPTION"):
+                return dd_tb
+            return main_tb
+
+        with (
+            patch.object(verify_model, "open_table", side_effect=fake_open),
+            patch.object(
+                verify_model,
+                "corr_codes_by_ddid",
+                return_value=[[5, 8], [5, 6, 7, 8]],
+            ),
+        ):
+            res = verify_model.run(str(ms_dir), field="3C286", polcal_fields="3C286")
+
+        pf = res["data"]["per_field"][0]
+        assert pf["status"]["flag"] == "COMPLETE"
+        assert pf["cross_amp"]["value"] == 0.5
+        assert pf["unpolarized_spws"]["value"] == []
+        assert pf["n_spws_checked"]["value"] == 1

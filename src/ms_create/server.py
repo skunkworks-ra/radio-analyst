@@ -161,7 +161,7 @@ class RecordStageDecisionInput(BaseModel):
     seq: int = Field(..., ge=1, description="Sequential stage-attempt number starting at 1.")
     stage: str = Field(
         ...,
-        description="Stage name: inspect|precal|calibrate|polcal|image|postcal|selfcal|image_iquv.",
+        description="Stage name: import|inspect|precal|calibrate|polcal|image|postcal|selfcal|image_iquv.",
     )
     attempt: int = Field(
         ...,
