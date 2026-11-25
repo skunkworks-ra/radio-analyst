@@ -23,6 +23,7 @@ import asyncio
 import hashlib
 import json
 import math
+import os
 import shutil
 import signal
 import subprocess
@@ -426,6 +427,130 @@ def test_run_step_crashed_dead_pid_without_rc(tmp_path: Path):
     assert "status=crashed" in res.stdout
     assert "pid_alive=false" in res.stdout
     assert not (tmp_path / "crash_step.py.pid").exists()
+
+
+def test_run_step_busy_guard_reattach_and_finished_pid_with_rc(tmp_path: Path):
+    """Busy guard blocks concurrent launches in the same workdir, keeps re-poll
+    idempotent, blocks live-script overwrite relaunch, and allows launching B
+    after A finishes even if an unharvested .pid + .rc pair sits in workdir."""
+    counter_file = tmp_path / "a_launches.txt"
+    script_a = tmp_path / "step_a.py"
+    script_a.write_text(
+        f"import time\n"
+        f"from pathlib import Path\n"
+        f"p = Path({str(counter_file)!r})\n"
+        f"p.write_text(p.read_text() + 'x' if p.exists() else 'x')\n"
+        f"print('step_a started', flush=True)\n"
+        f"time.sleep(2.6)\n"
+        f"print('step_a done', flush=True)\n"
+    )
+    script_b = tmp_path / "step_b.py"
+    script_b.write_text("print('step_b ran')\n")
+
+    # (a) Start A; while A is running, launching B in the same workdir fails with status=busy.
+    first_a = subprocess.run(
+        [
+            "bash",
+            str(RUN_STEP_SH),
+            sys.executable,
+            str(script_a),
+            "--wait",
+            "1",
+            "--interval",
+            "1",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert first_a.returncode == 0
+    assert "status=running" in first_a.stdout
+    pid_a_file = tmp_path / "step_a.py.pid"
+    assert pid_a_file.is_file()
+    pid_a = pid_a_file.read_text().strip()
+
+    busy_b = subprocess.run(
+        ["bash", str(RUN_STEP_SH), sys.executable, str(script_b), "--wait", "2"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert busy_b.returncode == 1
+    assert "status=busy" in busy_b.stdout
+    assert f"active={script_a}" in busy_b.stdout
+    assert f"pid={pid_a}" in busy_b.stdout
+    # Must not touch B's files or clobber A's .pid.
+    assert not (tmp_path / "step_b.py.log").exists()
+    assert not (tmp_path / "step_b.py.pid").exists()
+    assert not (tmp_path / "step_b.py.rc").exists()
+    assert pid_a_file.is_file()
+
+    # (b) Re-polling A still attaches cleanly and finishes without re-launching.
+    poll_a = subprocess.run(
+        [
+            "bash",
+            str(RUN_STEP_SH),
+            sys.executable,
+            str(script_a),
+            "--wait",
+            "6",
+            "--interval",
+            "1",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert poll_a.returncode == 0
+    assert "status=done rc=0" in poll_a.stdout
+    assert "step_a done" in poll_a.stdout
+    assert counter_file.read_text() == "x"
+
+    # (c) Launching B succeeds even when a finished job still has BOTH .pid and .rc present
+    #     (unharvested completed job).
+    finished_c = tmp_path / "step_c.py"
+    finished_c.write_text("print('c')\n")
+    (tmp_path / "step_c.py.pid").write_text(f"{os.getpid()}\n")
+    (tmp_path / "step_c.py.rc").write_text("0\n")
+
+    ok_b = subprocess.run(
+        ["bash", str(RUN_STEP_SH), sys.executable, str(script_b), "--wait", "5"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert ok_b.returncode == 0
+    assert "status=done rc=0" in ok_b.stdout
+    assert "step_b ran" in ok_b.stdout
+
+    # (d) Overwriting a running script (newer mtime than its .pid) returns status=busy instead
+    #     of truncating its log or spawning a duplicate.
+    script_d = tmp_path / "step_d.py"
+    script_d.write_text("import time\nprint('d1', flush=True)\ntime.sleep(2.4)\n")
+    first_d = subprocess.run(
+        ["bash", str(RUN_STEP_SH), sys.executable, str(script_d), "--wait", "1", "--interval", "1"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert first_d.returncode == 0
+    assert "status=running" in first_d.stdout
+    pid_d_mtime = (tmp_path / "step_d.py.pid").stat().st_mtime
+    script_d.write_text("print('d2_overwrite')\n")
+    os.utime(script_d, (pid_d_mtime + 5, pid_d_mtime + 5))
+    busy_d = subprocess.run(
+        ["bash", str(RUN_STEP_SH), sys.executable, str(script_d), "--wait", "2"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert busy_d.returncode == 1
+    assert "status=busy" in busy_d.stdout
+    assert f"active={script_d}" in busy_d.stdout
+    # Wait briefly for detached script_d to finish cleanly so tmp_path has no live child.
+    deadline = time.monotonic() + 5.0
+    while not (tmp_path / "step_d.py.rc").exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
 
 
 def test_auto_ledger_derivation_deduplication_and_report(

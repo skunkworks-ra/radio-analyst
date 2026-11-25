@@ -84,25 +84,52 @@ script path without regenerating it.
 
 ---
 
-## Post-calibration target rflag (`CORRECTED_DATA` only, no amplitude clip)
+## Post-calibration continuum target rflag (`CORRECTED_DATA` only, `<= 2` rounds, no clip)
 
-- Scope strictly to the science target field names (`field=<target fields>`,
-  verified against `ms_field_list`). Never run an amplitude clip on target
-  fields: the target has no a-priori sky model in `MODEL_DATA`, so clipping
-  `|CORRECTED|` clips real sky emission.
-- **Prove the target spectrum is clean (before and after):** run BOTH
-  `ms_flag_summary(ms_path, field=<target fields>)` AND
-  `ms_spw_amp_severity(ms_path, datacolumn='CORRECTED_DATA', field=<target fields>,
-  workdir=workdir)` BEFORE and AFTER flagging.
-- Adjacent-channel complex difference stats (`chan_diff_std_over_mad`,
-  `max_spw_chan_diff_std_over_mad`, `chan_diff_gt10sigma_frac`, `spw_rms_ratio`)
-  cancel smooth continuum sky emission on all baselines: clean thermal spectra
-  sit near `chan_diff_std_over_mad < 1.5`, `max_spw_chan_diff_std_over_mad < 1.8`,
-  `chan_diff_gt10sigma_frac < 0.001`, and `spw_rms_ratio < 1.5`, whereas
-  unflagged RFI elevates them sharply.
-- Generate the rflag script with `ms_apply_rflag(ms_path, workdir,
-  field=<target fields>, datacolumn='corrected', execute=False)` using default
-  thresholds unless a retry explicitly overrides them, then run it via
-  `run-step.sh`. The script saves a flag backup first and uses CASA's default
-  `extendflags=True`. Report both before/after flag fractions and before/after
-  `ms_spw_amp_severity` spectrum metrics in the handoff.
+- **Scope strictly to continuum SPWs (`specmode='mfs'`) on science target fields:**
+  scope to verified target field names (`field=<target fields>`, from
+  `ms_field_list`) and **continuum SPWs only**. Explicitly **exempt
+  spectral-line / maser SPWs and rest-frequency line windows** from automatic
+  `freqdev` `rflag` and `surviving_spws` dropping (genuine astronomical line
+  derivatives trigger `chan_diff_*`). Never run an amplitude clip on target
+  fields (no a-priori sky model in `MODEL_DATA`), and never run destructive
+  whole-SPW flagging in `postcal`.
+- **Measure before flagging:** run BOTH `ms_flag_summary(ms_path,
+  field=<target fields>)` AND `ms_spw_amp_severity(ms_path,
+  datacolumn='CORRECTED_DATA', field=<target fields>, workdir=workdir)` BEFORE
+  flagging.
+- **Hard cap of `<= 2` `rflag` rounds:** run round 1 via
+  `ms_apply_rflag(ms_path, workdir, field=<target fields>,
+  spw=<continuum_spws>, datacolumn='corrected', execute=False)` (pass `spw=""`
+  when all SPWs are continuum, or the explicit continuum SPW list when
+  spectral-line / maser SPWs are present; default `5.0 / 5.0` thresholds, or
+  retry-specified thresholds) -> run via `run-step.sh`, then re-run
+  `ms_spw_amp_severity`. Run at most ONE stricter round 2 (`spw=<continuum_spws>`,
+  `timedevscale=4.0, freqdevscale=4.0`) only if cleanable RFI outliers remain on
+  candidate continuum SPWs. Never spin 3+ rounds on persistently RFI-saturated
+  or atmospheric-absorption-dominated SPWs.
+- **Per-SPW triage & surviving SPW verification (continuum SPWs only):**
+  inspect `per_spw` from `ms_spw_amp_severity` (`centre_freq_ghz`,
+  `unflagged_fraction`, `chan_diff_std_over_mad`, `chan_diff_gt10sigma_frac`,
+  `chan_diff_noise_density`, `chan_diff_rms`). Identify persistently
+  RFI-saturated, atmospheric-absorption-dominated, or >95%-flagged continuum
+  SPWs (never auto-drop spectral-line / maser SPWs), build `<surviving_spws>`
+  in valid CASA SPW syntax (e.g. `2,3,4,5`, `0~15`, or `""` when all SPWs are
+  clean -- NEVER the word `all`, which `parse_spw_selection` and CASA
+  `MSSelection` reject), and verify them with `ms_spw_amp_severity(ms_path,
+  datacolumn='CORRECTED_DATA', field=<target fields>, spw=<surviving_spws>,
+  workdir=workdir)`.
+- **SEFD-invariant continuum spectrum cleanliness gate:** adjacent-channel
+  complex difference stats cancel smooth continuum sky emission on all
+  baselines. Gate continuum cleanliness strictly on the SEFD-invariant
+  within-SPW Gaussianity metrics: `chan_diff_std_over_mad < 1.5`,
+  `max_spw_chan_diff_std_over_mad < 1.8`, and `chan_diff_gt10sigma_frac < 0.001`.
+  Treat bandwidth-normalized `spw_noise_density_ratio` (from
+  `chan_diff_noise_density = chan_diff_rms * sqrt(chan_width_hz)`) /
+  `spw_rms_ratio` strictly as a secondary smoothness diagnostic (discontinuous
+  single-SPW jump vs smooth `T_sys(nu)` / atmospheric / sky-temperature
+  gradient), not a hard gate.
+- Report before/after flag fractions, before/after `ms_spw_amp_severity`
+  spectrum metrics (full-band and on `spw=<surviving_spws>`), thresholds /
+  rounds used (`<= 2`), flag version name, and an explicit `surviving_spws:`
+  line in `STAGE HANDOFF: postcal`.

@@ -39,14 +39,17 @@ order-independent uniform sample over the unflagged population per channel.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import numpy as np
 
+from ms_inspect.tools.radiometer_estimate import parse_spw_selection
 from ms_inspect.util.casa_context import open_table, validate_ms_path
 from ms_inspect.util.formatting import (
     _collect_flags,
     normalize_field_sel,
+    normalize_spw_sel,
     resolve_sidecar_path,
     response_envelope,
     unwrap_fields,
@@ -336,6 +339,7 @@ def run(
     row_chunk: int = _DEFAULT_ROW_CHUNK,
     max_per_chan_records: int = _DEFAULT_MAX_PER_CHAN_RECORDS,
     workdir: str | None = None,
+    spw: str = "",
 ) -> dict:
     """
     Per-channel robust amplitude stats of a data column, aggregated per SpW.
@@ -358,6 +362,11 @@ def run(
                               `per_chan` is dropped from every SpW and written
                               to a JSON sidecar instead; the per-SpW aggregates
                               are never affected. 0 disables the bound.
+        workdir:              Optional workdir for sidecars and stage_log.jsonl.
+        spw:                  CASA SpW selection (empty = all SpWs): ids or ranges
+                              (e.g. '2~5,8,16~17'). Filtered against
+                              DATA_DESCRIPTION -> SPECTRAL_WINDOW_ID before
+                              scanning visibility chunks.
 
     Returns:
         Standard envelope with per_spw → per-channel robust stats + per-SpW
@@ -369,6 +378,7 @@ def run(
         `n_per_chan_omitted`. Truncation is never silent.
     """
     field = normalize_field_sel(field)
+    spw = normalize_spw_sel(spw)
     p = validate_ms_path(ms_path)
     ms_str = str(p)
     casa_calls: list[str] = []
@@ -383,16 +393,39 @@ def run(
         dd_to_spw: list[int] = [int(x) for x in tb.getcol("SPECTRAL_WINDOW_ID")]
 
     # ------------------------------------------------------------------
-    # SpW channel frequencies
+    # SpW channel frequencies and channel widths
     # ------------------------------------------------------------------
     spw_chan_freqs: dict[int, np.ndarray] = {}
+    spw_chan_widths_hz: dict[int, float | None] = {}
     with open_table(ms_str + "/SPECTRAL_WINDOW") as tb:
-        casa_calls.append("tb.open(SPECTRAL_WINDOW) → CHAN_FREQ")
+        casa_calls.append("tb.open(SPECTRAL_WINDOW) → CHAN_FREQ, CHAN_WIDTH")
+        try:
+            spw_cols = set(tb.colnames())
+        except Exception:
+            spw_cols = set()
+        has_chan_width = "CHAN_WIDTH" in spw_cols
         for spw_id in range(tb.nrows()):
             try:
-                spw_chan_freqs[spw_id] = np.asarray(tb.getcell("CHAN_FREQ", spw_id))
+                freqs = np.asarray(tb.getcell("CHAN_FREQ", spw_id))
             except Exception:
-                spw_chan_freqs[spw_id] = np.array([])
+                freqs = np.array([])
+            spw_chan_freqs[spw_id] = freqs
+
+            cw_hz: float | None = None
+            if has_chan_width:
+                try:
+                    cw_arr = np.abs(np.asarray(tb.getcell("CHAN_WIDTH", spw_id), dtype=float))
+                    cw_pos = cw_arr[np.isfinite(cw_arr) & (cw_arr > 0.0)]
+                    if cw_pos.size > 0:
+                        cw_hz = float(np.median(cw_pos))
+                except Exception:
+                    cw_hz = None
+            if cw_hz is None and freqs.size >= 2:
+                diffs = np.abs(np.diff(freqs.astype(float, copy=False)))
+                diffs_pos = diffs[np.isfinite(diffs) & (diffs > 0.0)]
+                if diffs_pos.size > 0:
+                    cw_hz = float(np.median(diffs_pos))
+            spw_chan_widths_hz[spw_id] = cw_hz
 
     # ------------------------------------------------------------------
     # Parallel-hand correlations per DATA_DESC_ID
@@ -401,9 +434,35 @@ def run(
     casa_calls.append("tb.open(POLARIZATION, DATA_DESCRIPTION) → parallel-hand CORR_TYPE per DDID")
 
     # ------------------------------------------------------------------
-    # Optional field selection → set of FIELD_IDs
+    # Optional field and SpW selection
     # ------------------------------------------------------------------
     from ms_inspect.exceptions import ComputationError
+
+    selected_spws: set[int] | None = None
+    if spw:
+        if ":" in spw:
+            raise ComputationError(
+                f"Channel selection syntax (':') is not supported in spw={spw!r}; "
+                "pass SpW IDs or ranges only (e.g. '0~3,5').",
+                ms_path=ms_path,
+            )
+        n_spw_total = len(spw_chan_freqs)
+        if spw.strip() == "*":
+            parsed_spws = list(range(n_spw_total))
+        else:
+            try:
+                parsed_spws = parse_spw_selection(spw, n_spw_total)
+            except ValueError as exc:
+                raise ComputationError(str(exc), ms_path=ms_path) from exc
+        dd_spw_ids = set(dd_to_spw)
+        selected_spws = {
+            sid for sid in parsed_spws if sid in dd_spw_ids and len(spw_chan_freqs.get(sid, ())) > 0
+        }
+        if not selected_spws:
+            raise ComputationError(
+                f"SpW selection {spw!r} matched no observed spectral windows in DATA_DESCRIPTION.",
+                ms_path=ms_path,
+            )
 
     field_ids: set[int] | None = None
     if field:
@@ -437,6 +496,8 @@ def run(
     spw_diff_trackers: dict[int, _ChanDiffTracker] = {}
     global_diff_tracker = _ChanDiffTracker(diff_k)
     for spw_id, freqs in spw_chan_freqs.items():
+        if selected_spws is not None and spw_id not in selected_spws:
+            continue
         n_chan = len(freqs)
         if n_chan > 0:
             spw_reservoirs[spw_id] = [_ChanReservoir(max_samples_per_chan) for _ in range(n_chan)]
@@ -597,17 +658,42 @@ def run(
                 }
             )
 
+        spw_n_unflagged = int(sum(reservoirs[ch].n_unflagged for ch in range(n_chan)))
+        spw_n_flagged = int(sum(reservoirs[ch].n_flagged for ch in range(n_chan)))
+        spw_n_total = spw_n_unflagged + spw_n_flagged
+        spw_unflagged_fraction = round(spw_n_unflagged / spw_n_total, 6) if spw_n_total > 0 else 0.0
+        centre_freq_hz = float(freqs[n_chan // 2]) if n_chan else None
+        centre_freq_mhz = round(centre_freq_hz / 1e6, 3) if centre_freq_hz is not None else None
+        centre_freq_ghz = round(centre_freq_hz / 1e9, 6) if centre_freq_hz is not None else None
+        chan_width_hz = spw_chan_widths_hz.get(spw_id)
+        chan_width_hz_val = round(chan_width_hz, 3) if chan_width_hz is not None else None
+
         if band_floor is None:
+            unavail_note = "no unflagged data"
             per_spw.append(
                 {
                     "spw_id": spw_id,
                     "n_channels": n_chan,
-                    "centre_freq_mhz": (
-                        round(float(freqs[n_chan // 2]) / 1e6, 3) if n_chan else None
-                    ),
+                    "centre_freq_mhz": centre_freq_mhz,
+                    "centre_freq_ghz": centre_freq_ghz,
+                    "chan_width_hz": chan_width_hz_val,
+                    "n_unflagged": spw_n_unflagged,
+                    "n_flagged": spw_n_flagged,
+                    "unflagged_fraction": spw_unflagged_fraction,
                     "correlations_used": sorted(spw_corrs.get(spw_id, set())),
-                    "band_floor": fmt_field(None, "UNAVAILABLE", note="no unflagged data"),
+                    "band_floor": fmt_field(None, "UNAVAILABLE", note=unavail_note),
+                    "band_robust_sigma": fmt_field(None, "UNAVAILABLE", note=unavail_note),
                     "severity": None,
+                    "elevation_threshold": None,
+                    "estimated_discardable_frac": fmt_field(None, "UNAVAILABLE", note=unavail_note),
+                    "max_peak_to_floor": None,
+                    "chan_diff_rms": fmt_field(None, "UNAVAILABLE", note=unavail_note),
+                    "chan_diff_noise_density": fmt_field(None, "UNAVAILABLE", note=unavail_note),
+                    "chan_diff_std": fmt_field(None, "UNAVAILABLE", note=unavail_note),
+                    "chan_diff_mad_sigma": fmt_field(None, "UNAVAILABLE", note=unavail_note),
+                    "chan_diff_std_over_mad": fmt_field(None, "UNAVAILABLE", note=unavail_note),
+                    "chan_diff_gt10sigma_frac": fmt_field(None, "UNAVAILABLE", note=unavail_note),
+                    "chan_diff_max": fmt_field(None, "UNAVAILABLE", note=unavail_note),
                     "per_chan": chan_records,
                 }
             )
@@ -630,12 +716,27 @@ def run(
         diff_reason = (
             "SpW has < 2 channels" if n_chan < 2 else "no unflagged adjacent channel pairs"
         )
+        nd_val = (
+            round(diff_st["rms"] * math.sqrt(chan_width_hz), 6)
+            if (diff_st and chan_width_hz is not None and chan_width_hz > 0.0)
+            else None
+        )
+        nd_note = (
+            diff_reason
+            if diff_st is None
+            else ("channel width unavailable" if nd_val is None else None)
+        )
 
         per_spw.append(
             {
                 "spw_id": spw_id,
                 "n_channels": n_chan,
-                "centre_freq_mhz": round(float(freqs[n_chan // 2]) / 1e6, 3),
+                "centre_freq_mhz": centre_freq_mhz,
+                "centre_freq_ghz": centre_freq_ghz,
+                "chan_width_hz": chan_width_hz_val,
+                "n_unflagged": spw_n_unflagged,
+                "n_flagged": spw_n_flagged,
+                "unflagged_fraction": spw_unflagged_fraction,
                 "correlations_used": sorted(spw_corrs.get(spw_id, set())),
                 "band_floor": fmt_field(round(band_floor, 6)),
                 "band_robust_sigma": fmt_field(round(st["band_sigma"], 6)),
@@ -647,6 +748,11 @@ def run(
                     round(diff_st["rms"], 6) if diff_st else None,
                     flag="COMPLETE" if diff_st else "UNAVAILABLE",
                     note=None if diff_st else diff_reason,
+                ),
+                "chan_diff_noise_density": fmt_field(
+                    nd_val,
+                    flag="COMPLETE" if nd_val is not None else "UNAVAILABLE",
+                    note=nd_note,
                 ),
                 "chan_diff_std": fmt_field(
                     round(diff_st["std"], 6) if diff_st else None,
@@ -700,6 +806,22 @@ def run(
         max_rms_spw = None
         spw_rms_ratio_val = None
 
+    spw_nd_pairs = [
+        (e["spw_id"], e["chan_diff_noise_density"]["value"])
+        for e in per_spw
+        if isinstance(e.get("chan_diff_noise_density"), dict)
+        and isinstance(e["chan_diff_noise_density"].get("value"), (int, float))
+        and e["chan_diff_noise_density"]["value"] > 0
+    ]
+    if spw_nd_pairs:
+        nd_vals = [v for _, v in spw_nd_pairs]
+        med_nd = float(np.median(nd_vals))
+        max_nd_spw, max_nd_val = max(spw_nd_pairs, key=lambda kv: kv[1])
+        spw_nd_ratio_val = round(max_nd_val / med_nd, 3) if med_nd > 0 else None
+    else:
+        max_nd_spw = None
+        spw_nd_ratio_val = None
+
     spw_som_pairs = [
         (e["spw_id"], e["chan_diff_std_over_mad"]["value"])
         for e in per_spw
@@ -716,6 +838,7 @@ def run(
         "datacolumn": datacolumn,
         "clean_floor_anchor": round(clean_floor, 6) if clean_floor is not None else None,
         "field": field,
+        "spw": spw,
         "sigma": sigma,
         "max_samples_per_chan": max_samples_per_chan,
         "row_chunk": row_chunk,
@@ -771,6 +894,17 @@ def run(
             ),
         ),
         "spw_rms_max_spw_id": max_rms_spw,
+        "spw_noise_density_ratio": fmt_field(
+            spw_nd_ratio_val,
+            flag="COMPLETE" if spw_nd_ratio_val is not None else "UNAVAILABLE",
+            note=(
+                f"max_spw_noise_density (spw {max_nd_spw}) / median_spw_noise_density "
+                f"across {len(spw_nd_pairs)} SpW(s) (Jy * Hz^1/2)"
+                if spw_nd_ratio_val is not None
+                else "no SpW with positive chan_diff_noise_density"
+            ),
+        ),
+        "spw_noise_density_max_spw_id": max_nd_spw,
         "note": (
             "Parallel hands only, pooled (correlations_used per SpW). "
             "band_floor = median of per-channel medians (robust SpW floor). "
@@ -779,7 +913,9 @@ def run(
             "chan_diff_* measures adjacent-channel complex differences |V(ch) - V(ch-1)| / sqrt(2), "
             "which cancels smooth continuum sky emission on all baselines (including extended "
             "sources): clean thermal noise has chan_diff_std_over_mad ~ 1.0, chan_diff_gt10sigma_frac ~ 0, "
-            "and spw_rms_ratio ~ 1.0; unflagged RFI elevates these sharply."
+            "and bandwidth-normalized chan_diff_noise_density = chan_diff_rms * sqrt(chan_width_hz) "
+            "(Jy * Hz^{1/2}) comparable across mixed-channel-width SpWs (spw_noise_density_ratio ~ 1.0); "
+            "unflagged RFI elevates these sharply."
         ),
         "n_spw": len(per_spw),
         "per_spw": per_spw,
@@ -808,12 +944,14 @@ def run(
                     {
                         "datacolumn": datacolumn.upper(),
                         "field": field or "",
+                        "spw": spw or "",
                         "chan_diff_std_over_mad": data["chan_diff_std_over_mad"]["value"],
                         "max_spw_chan_diff_std_over_mad": data["max_spw_chan_diff_std_over_mad"][
                             "value"
                         ],
                         "chan_diff_gt10sigma_frac": data["chan_diff_gt10sigma_frac"]["value"],
                         "spw_rms_ratio": data["spw_rms_ratio"]["value"],
+                        "spw_noise_density_ratio": data["spw_noise_density_ratio"]["value"],
                     },
                 )
         except Exception:

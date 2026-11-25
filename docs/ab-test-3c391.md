@@ -21,7 +21,7 @@ the only difference is whether the plugin is installed.
 | Python/CASA | plugin environment | same environment, path given in `AGENTS.md` |
 | Cap | 5 h per run, runs one at a time | same |
 
-Runs: A1 B1 A2 B2 A3 B3, under `/var/mnt/fast/radio_analyst_runs/ab_20261102_glm5/`
+Runs: A1 B1 A2 B2 A3 B3, under `/mnt/fast/radio_analyst_runs/ab_20261102_glm5/`
 (`COMMAND.txt`, `COMMAND_resume.txt`, `ab.log`).
 
 ## What is measured per run

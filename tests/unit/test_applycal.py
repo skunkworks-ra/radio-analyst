@@ -90,3 +90,125 @@ def test_applycal_rejects_unknown_literal_field_like_mosaic_group(tmp_path, monk
 
     ok_glob = applycal.run(ms_path=str(ms), field="3C391*", gaintable=[str(ct)], workdir=str(wd))
     assert ok_glob["status"] == "ok"
+
+
+def test_cross_calibrator_gainfield_guard_scoped_to_g_and_t_jones(
+    real_ms_raw, real_caltable_copy, tmp_path
+):
+    import shutil
+
+    import numpy as np
+
+    from ms_inspect.util.casa_context import open_table
+    from ms_modify import applycal
+
+    wd = tmp_path / "work"
+    wd.mkdir()
+
+    # Build a real multi-field G Jones table containing solutions for BOTH field 0 (3C147)
+    # and field 1 (J1331+3030).
+    multi_g = tmp_path / "multi_gain.G"
+    shutil.copytree(real_caltable_copy, multi_g)
+    with open_table(str(multi_g), read_only=False) as tb:
+        tb.putkeyword("VisCal", "G Jones")
+        fids = np.asarray(tb.getcol("FIELD_ID"), dtype=int)
+        assert len(fids) >= 2
+        fids[: len(fids) // 2] = 0
+        fids[len(fids) // 2 :] = 1
+        tb.putcol("FIELD_ID", fids)
+
+    # 1. Multi-field G Jones with empty gainfield='' -> warns on linear mixing.
+    res_empty = applycal.run(
+        ms_path=real_ms_raw,
+        field="3C147",
+        gaintable=[str(multi_g)],
+        gainfield=[""],
+        workdir=str(wd),
+    )
+    assert any("Cross-calibrator gainfield" in w and "G Jones" in w for w in res_empty["warnings"])
+    assert not any("np.str_" in w for w in res_empty["warnings"])
+
+    # 2. Multi-field G Jones naming a DIFFERENT calibrator -> warns on mismatch.
+    res_other = applycal.run(
+        ms_path=real_ms_raw,
+        field="3C147",
+        gaintable=[str(multi_g)],
+        gainfield=["J1331+3030"],
+        workdir=str(wd),
+    )
+    assert any(
+        "Cross-calibrator gainfield" in w and "J1331+3030" in w for w in res_other["warnings"]
+    )
+
+    # 3. Multi-field G Jones naming the SAME calibrator -> no cross-calibrator warning.
+    res_self = applycal.run(
+        ms_path=real_ms_raw,
+        field="3C147",
+        gaintable=[str(multi_g)],
+        gainfield=["3C147"],
+        workdir=str(wd),
+    )
+    assert not any("Cross-calibrator gainfield" in w for w in res_self["warnings"])
+
+    # 4. T Jones is also guarded.
+    multi_t = tmp_path / "multi_gain.T"
+    shutil.copytree(multi_g, multi_t)
+    with open_table(str(multi_t), read_only=False) as tb:
+        tb.putkeyword("VisCal", "T Jones")
+    res_t = applycal.run(
+        ms_path=real_ms_raw,
+        field="3C147",
+        gaintable=[str(multi_t)],
+        gainfield=["J1331+3030"],
+        workdir=str(wd),
+    )
+    assert any("Cross-calibrator gainfield" in w and "T Jones" in w for w in res_t["warnings"])
+
+    # 5. Single-field G Jones (field 0 only): applying to field 1 (target) with gainfield='3C147'
+    #    and applying to field 0 with gainfield='' (selfcal pattern) must NOT warn.
+    single_g = tmp_path / "single_gain.G"
+    shutil.copytree(real_caltable_copy, single_g)
+    with open_table(str(single_g), read_only=False) as tb:
+        tb.putkeyword("VisCal", "G Jones")
+        tb.putcol("FIELD_ID", np.zeros(tb.nrows(), dtype=int))
+
+    res_target = applycal.run(
+        ms_path=real_ms_raw,
+        field="J1331+3030",
+        gaintable=[str(single_g)],
+        gainfield=["3C147"],
+        workdir=str(wd),
+    )
+    assert not any("Cross-calibrator gainfield" in w for w in res_target["warnings"])
+
+    res_selfcal = applycal.run(
+        ms_path=real_ms_raw,
+        field="3C147",
+        gaintable=[str(single_g)],
+        gainfield=[""],
+        workdir=str(wd),
+    )
+    assert not any("Cross-calibrator gainfield" in w for w in res_selfcal["warnings"])
+
+    # 6. B Jones, K Jones, Df Jones, Xf Jones tables must NEVER warn.
+    for viscal, suffix in (
+        ("B Jones", "B"),
+        ("K Jones", "K"),
+        ("Df Jones", "D"),
+        ("Xf Jones", "X"),
+    ):
+        non_gt = tmp_path / f"cal.{suffix}"
+        shutil.copytree(multi_g, non_gt)
+        with open_table(str(non_gt), read_only=False) as tb:
+            tb.putkeyword("VisCal", viscal)
+        for gf in ("", "J1331+3030"):
+            res_non = applycal.run(
+                ms_path=real_ms_raw,
+                field="3C147",
+                gaintable=[str(non_gt)],
+                gainfield=[gf],
+                workdir=str(wd),
+            )
+            assert not any("Cross-calibrator gainfield" in w for w in res_non["warnings"]), (
+                f"Unexpected cross-cal warning for {viscal} with gainfield={gf!r}: {res_non['warnings']}"
+            )

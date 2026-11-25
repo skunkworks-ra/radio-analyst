@@ -39,6 +39,7 @@ no MS access is performed.
 
 from __future__ import annotations
 
+import contextlib
 import math
 from itertools import product
 from pathlib import Path
@@ -406,6 +407,212 @@ def _extract_beam(beam_info: dict) -> tuple[float | None, float | None, float | 
         )
     except (KeyError, TypeError):
         return None, None, None
+
+
+def _min_beam_minor_arcsec(beam_info: dict) -> float | None:
+    """Return the minimum restoring-beam minor axis (arcsec) across all planes."""
+    if not isinstance(beam_info, dict):
+        return None
+    if "minor" in beam_info:
+        try:
+            val = _quantity_to_arcsec(beam_info["minor"])
+            return val if math.isfinite(val) and val > 0.0 else None
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    beams = beam_info.get("beams")
+    if not isinstance(beams, dict):
+        return None
+
+    minors: list[float] = []
+    for chan_entry in beams.values():
+        if not isinstance(chan_entry, dict):
+            continue
+        if "minor" in chan_entry:
+            try:
+                val = _quantity_to_arcsec(chan_entry["minor"])
+                if math.isfinite(val) and val > 0.0:
+                    minors.append(val)
+            except (KeyError, TypeError, ValueError):
+                pass
+            continue
+        for pol_entry in chan_entry.values():
+            if not isinstance(pol_entry, dict) or "minor" not in pol_entry:
+                continue
+            try:
+                val = _quantity_to_arcsec(pol_entry["minor"])
+                if math.isfinite(val) and val > 0.0:
+                    minors.append(val)
+            except (KeyError, TypeError, ValueError):
+                pass
+    return min(minors) if minors else None
+
+
+def _max_pixel_size_arcsec(ia, casa_calls: list[str]) -> float | None:
+    """Return max(|cdelt_x_arcsec|, |cdelt_y_arcsec|) from ia.coordsys().increment()."""
+    import numpy as np
+
+    csys = None
+    try:
+        try:
+            csys = ia.coordsys()
+            inc = csys.increment()
+        except Exception:
+            return None
+
+        # Quantity-format dict (if increment(format='q') or mock returns quantities)
+        if isinstance(inc, dict) and isinstance(inc.get("quantity"), dict):
+            qdict = inc["quantity"]
+            q0 = qdict.get("*1")
+            q1 = qdict.get("*2")
+            if not (isinstance(q0, dict) and isinstance(q1, dict)):
+                vals = [v for v in qdict.values() if isinstance(v, dict) and "value" in v]
+                if len(vals) < 2:
+                    return None
+                q0, q1 = vals[0], vals[1]
+            try:
+                dx = abs(_quantity_to_arcsec(q0))
+                dy = abs(_quantity_to_arcsec(q1))
+            except (KeyError, TypeError, ValueError):
+                return None
+            if math.isfinite(dx) and math.isfinite(dy) and max(dx, dy) > 0.0:
+                casa_calls.append("ia.coordsys().increment() [pixel_size]")
+                return max(dx, dy)
+            return None
+
+        numeric = inc.get("numeric") if isinstance(inc, dict) else inc
+        if not isinstance(numeric, (list, tuple, np.ndarray)) or len(numeric) < 2:
+            return None
+
+        units: list[str] = []
+        try:
+            raw_units = csys.units()
+            if isinstance(raw_units, (list, tuple, np.ndarray)):
+                units = [str(x).strip() for x in raw_units]
+        except Exception:
+            units = []
+
+        u0 = units[0] if len(units) > 0 and units[0] else "rad"
+        u1 = units[1] if len(units) > 1 and units[1] else "rad"
+        try:
+            dx = abs(_quantity_to_arcsec({"value": float(numeric[0]), "unit": u0}))
+            dy = abs(_quantity_to_arcsec({"value": float(numeric[1]), "unit": u1}))
+        except (TypeError, ValueError):
+            return None
+        if not (math.isfinite(dx) and math.isfinite(dy)):
+            return None
+        cell_max = max(dx, dy)
+        if cell_max <= 0.0:
+            return None
+        casa_calls.append("ia.coordsys().increment() [pixel_size]")
+        return cell_max
+    finally:
+        if csys is not None and hasattr(csys, "done"):
+            with contextlib.suppress(Exception):
+                csys.done()
+
+
+def _edge_pb_max(
+    image_path: str,
+    casa_calls: list[str],
+    warnings: list[str],
+) -> dict:
+    """Max finite pixel value of sibling .pb / .pb.tt0 across the outer 2-pixel rim over all planes."""
+    _, pb_path = _siblings(image_path)
+    if not pb_path.exists():
+        return fmt_field(None, flag="UNAVAILABLE", note=f"sibling {pb_path.name} not found")
+
+    import numpy as np
+
+    rim_slices: list[np.ndarray] | None = None
+    try:
+        with open_image(str(pb_path)) as ia_pb:
+            shape: list[int] | None = None
+            if hasattr(ia_pb, "shape"):
+                try:
+                    raw_shape = ia_pb.shape()
+                    if isinstance(raw_shape, (list, tuple, np.ndarray)) and len(raw_shape) >= 2:
+                        shape = [int(n) for n in raw_shape]
+                except Exception:
+                    shape = None
+
+            # Prefer 4 outer 2-pixel border slab reads (blc/trc) to avoid loading multi-GB
+            # full-pol cubes into RAM when only the 2px rim is needed.
+            if shape is not None and shape[0] > 4 and shape[1] > 4 and all(n > 0 for n in shape):
+                nx, ny = shape[0], shape[1]
+                tail_blc = [0] * (len(shape) - 2)
+                tail_trc = [n - 1 for n in shape[2:]]
+                slab_boxes = (
+                    ([0, 0, *tail_blc], [1, ny - 1, *tail_trc]),
+                    ([nx - 2, 0, *tail_blc], [nx - 1, ny - 1, *tail_trc]),
+                    ([2, 0, *tail_blc], [nx - 3, 1, *tail_trc]),
+                    ([2, ny - 2, *tail_blc], [nx - 3, ny - 1, *tail_trc]),
+                )
+                slabs: list[np.ndarray] = []
+                slab_ok = True
+                fallback_full: np.ndarray | None = None
+                for blc, trc in slab_boxes:
+                    try:
+                        slab = np.asarray(ia_pb.getchunk(blc=blc, trc=trc), dtype=float)
+                    except TypeError:
+                        slab_ok = False
+                        break
+                    expected_shape = tuple(t - b + 1 for b, t in zip(blc, trc, strict=True))
+                    if slab.shape == expected_shape:
+                        slabs.append(slab)
+                    elif slab.shape == tuple(shape):
+                        # Bare MagicMock ignored blc/trc and returned the full array.
+                        fallback_full = slab
+                        slab_ok = False
+                        break
+                    else:
+                        slab_ok = False
+                        break
+                if slab_ok:
+                    rim_slices = slabs
+                elif fallback_full is not None:
+                    rim_slices = [
+                        fallback_full[:2, ...],
+                        fallback_full[-2:, ...],
+                        fallback_full[:, :2, ...],
+                        fallback_full[:, -2:, ...],
+                    ]
+
+            if rim_slices is None:
+                pb_pix = np.asarray(ia_pb.getchunk(), dtype=float)
+                if pb_pix.ndim < 2 or pb_pix.shape[0] == 0 or pb_pix.shape[1] == 0:
+                    return fmt_field(
+                        None,
+                        flag="UNAVAILABLE",
+                        note=f"invalid spatial shape {pb_pix.shape} in {pb_path.name}",
+                    )
+                rim_slices = [
+                    pb_pix[:2, ...],
+                    pb_pix[-2:, ...],
+                    pb_pix[:, :2, ...],
+                    pb_pix[:, -2:, ...],
+                ]
+    except Exception as exc:
+        warnings.append(f"Could not read sibling PB image ({pb_path.name}) for edge_pb_max: {exc}")
+        return fmt_field(None, flag="UNAVAILABLE", note=f"read failed: {exc}")
+
+    casa_calls.append(f"ia.getchunk() on {pb_path.name} [edge_pb_max 2px rim]")
+    edge_max: float | None = None
+    for sl in rim_slices:
+        finite = sl[np.isfinite(sl)]
+        if finite.size > 0:
+            val = float(np.max(finite))
+            edge_max = val if edge_max is None else max(edge_max, val)
+
+    if edge_max is None:
+        return fmt_field(
+            None, flag="UNAVAILABLE", note=f"no finite border pixels in {pb_path.name}"
+        )
+
+    return fmt_field(
+        round(edge_max, 6),
+        note=f"max finite {pb_path.name} across outer 2-pixel border over all planes",
+    )
 
 
 def _siblings(image_path: str) -> tuple[Path, Path]:
@@ -1349,13 +1556,17 @@ def run(
         )
 
         # Beam from image header.
+        min_beam_minor: float | None = None
         try:
             beam_info = ia.restoringbeam()
             casa_calls.append("ia.restoringbeam()")
             beam_major, beam_minor, beam_pa = _extract_beam(beam_info)
+            min_beam_minor = _min_beam_minor_arcsec(beam_info)
         except Exception as exc:
             warnings.append(f"Could not read restoring beam from image: {exc}")
             beam_major = beam_minor = beam_pa = None
+
+        max_cdelt_arcsec = _max_pixel_size_arcsec(ia, casa_calls)
 
     # ------------------------------------------------------------------
     # Optional PSF beam cross-check
@@ -1462,6 +1673,7 @@ def run(
         note="peak_jy / residual_rms_jy",
     )
     data["rms_region"] = fmt_field(region)
+    data["edge_pb_max"] = _edge_pb_max(image_path, casa_calls, warnings)
     mask_stats = _mask_partitioned_residual_stats(
         image_path, pb_level, mask_path, casa_calls, warnings
     )
@@ -1515,6 +1727,22 @@ def run(
         )
         data["beam_minor_arcsec"] = fmt_field(None, flag="UNAVAILABLE")
         data["beam_pa_deg"] = fmt_field(None, flag="UNAVAILABLE")
+
+    if min_beam_minor is not None and max_cdelt_arcsec is not None and max_cdelt_arcsec > 0.0:
+        data["pixels_per_beam_minor"] = fmt_field(
+            round(min_beam_minor / max_cdelt_arcsec, 3),
+            note=(
+                f'min(beam_minor_arcsec) across all planes ({round(min_beam_minor, 4)}") '
+                f'/ max(|cdelt_x|, |cdelt_y|) ({round(max_cdelt_arcsec, 4)}")'
+            ),
+        )
+    else:
+        ppb_reason = (
+            "restoring beam minor axis unavailable"
+            if min_beam_minor is None
+            else "spatial pixel increment unavailable from coordsys().increment()"
+        )
+        data["pixels_per_beam_minor"] = fmt_field(None, flag="UNAVAILABLE", note=ppb_reason)
 
     if psf_path is not None and psf_beam_major is not None:
         data["psf_beam_major_arcsec"] = fmt_field(round(psf_beam_major, 4))

@@ -53,6 +53,7 @@ status: <completed | stopped>
 stopped_at: <command step number and the tool call that stopped it, or none>
 scripts: <each script_path you ran, with its .rc value>
 products: <each caltable, MS or image the stage wrote>
+surviving_spws: <valid CASA SPW syntax for surviving continuum SPWs: comma-separated SPW IDs, e.g. 0~15, or "" when all SPWs are clean; never auto-drop spectral-line/maser SPWs and NEVER write the word all>
 values: <each number the command's report asks for, as `name = value (tool, field)`>
 warnings: <tool warnings, verbatim>
 debug_used: <the debug_params you passed, or none>

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Project-local opencode config for radio-analyst.
+  // Commands run from the repo root, so the MCP servers use relative paths
+  // (bin/serve*.sh resolve the repo root from their own location).
+  // Timeout is 5 min: CASA imports and FLAG-column reads are slow on big MSs.
+  "instructions": ["CLAUDE.md"],
+  "mcp": {
+    "ms-inspect": {
+      "type": "local",
+      "command": ["bash", "scripts/plugin/serve.sh"],
+      "enabled": true,
+      "timeout": 300000
+    },
+    "ms-modify": {
+      "type": "local",
+      "command": ["bash", "scripts/plugin/serve-modify.sh"],
+      "enabled": true,
+      "timeout": 300000
+    },
+    "ms-create": {
+      "type": "local",
+      "command": ["bash", "scripts/plugin/serve-create.sh"],
+      "enabled": true,
+      "timeout": 300000
+    }
+  }
+}

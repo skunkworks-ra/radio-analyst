@@ -666,17 +666,23 @@ def run(
 
     delay_rms_arr: np.ndarray | None = None
     delay_rms_ns: list[list[float | None]] | None = None
+    delay_median_arr: np.ndarray | None = None
+    delay_median_ns: list[list[float | None]] | None = None
     active_delay: np.ndarray | None = None
     if _is_delay_type(table_type) and delay_arr is not None:
         # For KCROSS tables, corr 0 holds the cross-hand delay and corr 1 is
         # CASA's structural 0.0 placeholder -- exclude corr 1 from summaries.
         active_delay = delay_arr[..., :1] if _is_kcross_type(table_type) else delay_arr
-        # RMS across antennas and active correlations per (spw, field) -> [n_spw, n_field]
+        # RMS and signed median across antennas and active correlations per (spw, field) -> [n_spw, n_field]
         with _pywarnings.catch_warnings(), np.errstate(invalid="ignore"):
             _pywarnings.simplefilter("ignore", category=RuntimeWarning)
             delay_rms_arr = np.sqrt(np.nanmean(active_delay**2, axis=(0, 3)))
+            delay_median_arr = np.nanmedian(active_delay, axis=(0, 3))
         delay_rms_ns = [
             [float(x) if np.isfinite(x) else None for x in row] for row in delay_rms_arr
+        ]
+        delay_median_ns = [
+            [float(x) if np.isfinite(x) else None for x in row] for row in delay_median_arr
         ]
 
     # Table-wide scalars, so a check copies one number instead of reducing an
@@ -783,6 +789,14 @@ def run(
                     "(and active correlations; corr 0 only for KCROSS) per SPW/field."
                 ),
             )
+            data["delay_median_ns"] = fmt_field(
+                delay_median_ns,
+                flag=_flag(delay_median_arr),
+                note=(
+                    f"Shape [n_spw={n_spw}, n_field={n_field}]. Signed median across antennas "
+                    "(and active correlations; corr 0 only for KCROSS) per SPW/field."
+                ),
+            )
             data["delay_abs_max_ns"] = (
                 fmt_field(
                     delay_abs_max_ns,
@@ -794,6 +808,7 @@ def run(
         else:
             data["delay_ns"] = fmt_field(None, flag="UNAVAILABLE", note="No delay solutions found.")
             data["delay_rms_ns"] = fmt_field(None, flag="UNAVAILABLE")
+            data["delay_median_ns"] = fmt_field(None, flag="UNAVAILABLE")
             data["delay_abs_max_ns"] = fmt_field(None, flag="UNAVAILABLE")
 
     # --- outliers block (always present) ---
@@ -978,6 +993,11 @@ def run(
                     flag=_flag(delay_rms_arr),
                     note=data["delay_rms_ns"].get("note"),
                 )
+                compact_data["delay_median_ns"] = fmt_field(
+                    delay_median_ns,
+                    flag=_flag(delay_median_arr),
+                    note=data["delay_median_ns"].get("note"),
+                )
                 compact_data["delay_abs_max_ns"] = (
                     fmt_field(
                         round(delay_abs_max_ns, 4),
@@ -989,6 +1009,7 @@ def run(
             else:
                 compact_data["delay_ns"] = data["delay_ns"]
                 compact_data["delay_rms_ns"] = data["delay_rms_ns"]
+                compact_data["delay_median_ns"] = data["delay_median_ns"]
                 compact_data["delay_abs_max_ns"] = data["delay_abs_max_ns"]
         data = compact_data
 

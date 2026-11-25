@@ -32,7 +32,7 @@ from ms_inspect.util.calibrators import (
     roles_disagree,
 )
 from ms_inspect.util.calibrators import lookup as cal_lookup
-from ms_inspect.util.casa_context import open_msmd, validate_ms_path
+from ms_inspect.util.casa_context import open_msmd, open_table, validate_ms_path
 from ms_inspect.util.conversions import (
     baseline_length_klambda,
     mjd_seconds_to_utc,
@@ -556,8 +556,16 @@ def run(ms_path: str, workdir: str | None = None) -> dict:
     # ------------------------------------------------------------------
     # Mosaic detection and deduplication
     # ------------------------------------------------------------------
+    min_dish_diam_m = _min_dish_diameter_m(p)
+    if min_dish_diam_m is not None:
+        casa_calls.append("tb.open(ANTENNA) -> DISH_DIAMETER")
     pre_slim_flags = _collect_flags({"fields": fields_out})
-    mosaic_groups_list = _detect_mosaic_groups(fields_out, source_ids[:n_fields], scans_per_field)
+    mosaic_groups_list = _detect_mosaic_groups(
+        fields_out,
+        source_ids[:n_fields],
+        scans_per_field,
+        min_dish_diam_m=min_dish_diam_m,
+    )
 
     detail_path_field = None
     has_large_mosaic = any(g["n_pointings"] >= 3 for g in mosaic_groups_list)
@@ -632,6 +640,135 @@ def run(ms_path: str, workdir: str | None = None) -> dict:
 # ---------------------------------------------------------------------------
 
 _MOSAIC_MAX_SPAN_DEG = 5.0
+_MOSAIC_MAX_STEP_DEG = 2.0
+_C_LIGHT_M_S = 299_792_458.0
+_PB_FWHM_FACTOR = 1.15
+
+
+def _min_dish_diameter_m(ms_path: Path | str) -> float | None:
+    """Return minimum active positive DISH_DIAMETER (metres) from ANTENNA subtable.
+
+    Ignores flagged ANTENNA rows when at least 2 unflagged positive diameters remain;
+    returns None if the ANTENNA subtable or positive diameters are unavailable.
+    """
+    try:
+        with open_table(f"{ms_path}/ANTENNA") as tb:
+            diams = np.asarray(tb.getcol("DISH_DIAMETER"), dtype=float)
+            if diams.size == 0:
+                return None
+            try:
+                flag_row = np.asarray(tb.getcol("FLAG_ROW"), dtype=bool)
+            except Exception:
+                flag_row = np.zeros(diams.shape, dtype=bool)
+    except Exception:
+        return None
+
+    pos_mask = np.isfinite(diams) & (diams > 0.0)
+    if flag_row.shape == diams.shape:
+        active_pos = diams[(~flag_row) & pos_mask]
+        if active_pos.size >= 2:
+            return float(np.min(active_pos))
+    all_pos = diams[pos_mask]
+    return float(np.min(all_pos)) if all_pos.size > 0 else None
+
+
+def _pb_fwhm_deg(
+    fids: list[int],
+    fields_out: list[dict],
+    min_dish_diam_m: float | None,
+) -> float | None:
+    """Compute primary-beam FWHM in degrees at the lowest observing frequency among fids."""
+    if min_dish_diam_m is None or min_dish_diam_m <= 0.0:
+        return None
+    min_ghzs: list[float] = []
+    for fid in fids:
+        if fid >= len(fields_out):
+            continue
+        fq_field = fields_out[fid].get("observing_frequency")
+        fq_val = fq_field.get("value") if isinstance(fq_field, dict) else fq_field
+        if isinstance(fq_val, dict):
+            min_ghz = fq_val.get("min_ghz")
+            if isinstance(min_ghz, (int, float)) and math.isfinite(min_ghz) and min_ghz > 0.0:
+                min_ghzs.append(float(min_ghz))
+    if not min_ghzs:
+        return None
+    nu_min_hz = min(min_ghzs) * 1e9
+    return math.degrees(_PB_FWHM_FACTOR * (_C_LIGHT_M_S / nu_min_hz) / min_dish_diam_m)
+
+
+def _format_j2000(ra_deg: float, dec_deg: float) -> str:
+    """Format (ra_deg, dec_deg) as a CASA J2000 direction string ('J2000 HHhMMmSS.SSs ±DDdMMmSS.Ss')."""
+    ra_norm = ra_deg % 360.0
+    ra_total_sec = round((ra_norm / 15.0) * 3600.0, 2)
+    if ra_total_sec >= 86400.0:
+        ra_total_sec -= 86400.0
+    ra_h = int(ra_total_sec // 3600)
+    ra_rem = ra_total_sec - ra_h * 3600
+    ra_m = int(ra_rem // 60)
+    ra_s = ra_rem - ra_m * 60
+
+    sign = "+" if dec_deg >= 0.0 else "-"
+    dec_total_arcsec = round(abs(dec_deg) * 3600.0, 1)
+    dec_d = int(dec_total_arcsec // 3600)
+    dec_rem = dec_total_arcsec - dec_d * 3600
+    dec_m = int(dec_rem // 60)
+    dec_s = dec_rem - dec_m * 60
+    return f"J2000 {ra_h:02d}h{ra_m:02d}m{ra_s:05.2f}s {sign}{dec_d:02d}d{dec_m:02d}m{dec_s:04.1f}s"
+
+
+def _split_sky_components(
+    fids: list[int],
+    fields_out: list[dict],
+    max_step_deg: float = _MOSAIC_MAX_STEP_DEG,
+) -> list[list[int]]:
+    """Partition candidate field IDs into single-linkage sky-proximity components.
+
+    Two fields are connected when their spherical angular separation is <= max_step_deg.
+    If no candidate field has valid coordinates, returns [list(fids)] unchanged.
+    Fields without coordinates when other fields have coordinates are not merged into
+    sky components (returned as singletons).
+    """
+    coords: dict[int, tuple[float, float]] = {}
+    coordless: list[int] = []
+    for fid in fids:
+        ra = fields_out[fid]["ra_j2000_deg"]["value"]
+        dec = fields_out[fid]["dec_j2000_deg"]["value"]
+        if ra is not None and dec is not None:
+            coords[fid] = (float(ra), float(dec))
+        else:
+            coordless.append(fid)
+
+    if not coords:
+        return [list(fids)]
+
+    valid_fids = [fid for fid in fids if fid in coords]
+    visited: set[int] = set()
+    components: list[list[int]] = []
+    for start in valid_fids:
+        if start in visited:
+            continue
+        comp: list[int] = []
+        stack = [start]
+        visited.add(start)
+        while stack:
+            cur = stack.pop()
+            comp.append(cur)
+            ra_c, dec_c = coords[cur]
+            for nxt in valid_fids:
+                if nxt in visited:
+                    continue
+                ra_n, dec_n = coords[nxt]
+                if _angular_sep_deg(ra_c, dec_c, ra_n, dec_n) <= max_step_deg:
+                    visited.add(nxt)
+                    stack.append(nxt)
+        # Preserve original ordering of fids within each component.
+        order = {fid: idx for idx, fid in enumerate(fids)}
+        comp.sort(key=lambda fid: order[fid])
+        components.append(comp)
+
+    for fid in coordless:
+        components.append([fid])
+    return components
 
 
 def _is_mosaic_candidate(rec: dict) -> bool:
@@ -658,31 +795,126 @@ def _mosaic_stem(name: str) -> str | None:
     return None
 
 
+def _mosaic_sky_geometry(fids: list[int], fields_out: list[dict]) -> dict | None:
+    """Compute circular-unwrapped sky bounding box and extent for a mosaic component."""
+    coord_entries: list[tuple[int, float, float]] = []
+    for f in fids:
+        ra_v = fields_out[f]["ra_j2000_deg"]["value"]
+        dec_v = fields_out[f]["dec_j2000_deg"]["value"]
+        if ra_v is not None and dec_v is not None:
+            coord_entries.append((f, float(ra_v), float(dec_v)))
+    if not coord_entries:
+        return None
+
+    ras_arr = np.asarray([c[1] for c in coord_entries], dtype=float)
+    decs_arr = np.asarray([c[2] for c in coord_entries], dtype=float)
+    ra_rads = np.radians(ras_arr)
+    ra_mean_deg = (
+        math.degrees(math.atan2(float(np.mean(np.sin(ra_rads))), float(np.mean(np.cos(ra_rads)))))
+        % 360.0
+    )
+    ra_offsets = ((ras_arr - ra_mean_deg + 180.0) % 360.0) - 180.0
+    min_off = float(np.min(ra_offsets))
+    max_off = float(np.max(ra_offsets))
+    mid_off = 0.5 * (min_off + max_off)
+    delta_ra_deg = max_off - min_off
+
+    ra_min_deg = (ra_mean_deg + min_off) % 360.0
+    ra_max_deg = (ra_mean_deg + max_off) % 360.0
+    bbox_ra_deg = (ra_mean_deg + mid_off) % 360.0
+
+    dec_min_deg = float(np.min(decs_arr))
+    dec_max_deg = float(np.max(decs_arr))
+    bbox_dec_deg = 0.5 * (dec_min_deg + dec_max_deg)
+
+    extent_ra = delta_ra_deg * math.cos(math.radians(bbox_dec_deg)) * 60.0
+    extent_dec = (dec_max_deg - dec_min_deg) * 60.0
+
+    best_fid, best_sep_arcmin = min(
+        (
+            (fid, _angular_sep_deg(ra_v, dec_v, bbox_ra_deg, bbox_dec_deg) * 60.0)
+            for fid, ra_v, dec_v in coord_entries
+        ),
+        key=lambda pair: pair[1],
+    )
+
+    ra0 = fields_out[fids[0]]["ra_j2000_deg"]["value"]
+    dec0 = fields_out[fids[0]]["dec_j2000_deg"]["value"]
+    first_field_offset_arcmin: float | None = (
+        round(_angular_sep_deg(float(ra0), float(dec0), bbox_ra_deg, bbox_dec_deg) * 60.0, 3)
+        if ra0 is not None and dec0 is not None
+        else None
+    )
+
+    return {
+        "ra_range_deg": [round(ra_min_deg, 6), round(ra_max_deg, 6)],
+        "dec_range_deg": [round(dec_min_deg, 6), round(dec_max_deg, 6)],
+        "bbox_center_ra_deg": round(bbox_ra_deg, 6),
+        "bbox_center_dec_deg": round(bbox_dec_deg, 6),
+        "bbox_center_j2000": _format_j2000(bbox_ra_deg, bbox_dec_deg),
+        "extent_ra_arcmin": round(extent_ra, 3),
+        "extent_dec_arcmin": round(extent_dec, 3),
+        "max_extent_arcmin": round(max(extent_ra, extent_dec), 3),
+        "max_extent_arcsec": max(extent_ra, extent_dec) * 60.0,
+        "central_field_id": best_fid,
+        "central_field_name": fields_out[best_fid]["name"],
+        "central_field_offset_arcmin": round(best_sep_arcmin, 3),
+        "first_field_offset_arcmin": first_field_offset_arcmin,
+    }
+
+
+def _has_distinct_sky_pointings(
+    geom: dict | None,
+    fids: list[int],
+    fields_out: list[dict],
+    min_dish_diam_m: float | None,
+) -> bool:
+    """True when coordinates are unavailable or span distinct sky pointings (not co-located EBs)."""
+    if geom is None:
+        return True
+    pb_deg = _pb_fwhm_deg(fids, fields_out, min_dish_diam_m)
+    min_extent_arcsec = max(1.0, 0.05 * pb_deg * 3600.0) if pb_deg is not None else 1.0
+    return float(geom["max_extent_arcsec"]) > min_extent_arcsec
+
+
 def _detect_mosaic_groups(
     fields_out: list[dict],
     source_ids: list[int],
     scans_per_field: Counter[int],
+    min_dish_diam_m: float | None = None,
 ) -> list[dict]:
     """Group multi-pointing mosaic target fields by shared source_id or pointing stem."""
     assigned: set[int] = set()
-    raw_groups: list[tuple[str, list[int]]] = []
+    raw_groups: list[tuple[str, list[int], dict | None]] = []
 
-    # 1. Shared source_id among non-calibrator fields (>= 2 pointings)
+    # 1. Shared source_id among non-calibrator fields (>= 2 distinct pointings),
+    # split into sky-connected components using primary-beam overlap step (fallback 2.0 deg)
+    # so unrelated targets sharing SOURCE_ID=0 never merge.
     by_sid: dict[int, list[int]] = {}
     for fid, sid in enumerate(source_ids):
         if fid < len(fields_out) and _is_mosaic_candidate(fields_out[fid]):
             by_sid.setdefault(sid, []).append(fid)
     for _sid, fids in by_sid.items():
-        if len(fids) >= 2:
-            stems = {_mosaic_stem(fields_out[f]["name"]) for f in fids}
+        if len(fids) < 2:
+            continue
+        pb_deg = _pb_fwhm_deg(fids, fields_out, min_dish_diam_m)
+        max_step_deg = 1.5 * pb_deg if pb_deg is not None else _MOSAIC_MAX_STEP_DEG
+        for comp in _split_sky_components(fids, fields_out, max_step_deg):
+            if len(comp) < 2:
+                continue
+            geom = _mosaic_sky_geometry(comp, fields_out)
+            if not _has_distinct_sky_pointings(geom, comp, fields_out, min_dish_diam_m):
+                continue
+            stems = {_mosaic_stem(fields_out[f]["name"]) for f in comp}
             if len(stems) == 1 and next(iter(stems)):
                 gname = str(next(iter(stems)))
             else:
-                gname = fields_out[fids[0]]["name"]
-            raw_groups.append((gname, fids))
-            assigned.update(fids)
+                gname = fields_out[comp[0]]["name"]
+            raw_groups.append((gname, comp, geom))
+            assigned.update(comp)
 
-    # 2. Stem-matched pointing names among remaining non-calibrator fields (>= 3 pointings)
+    # 2. Stem-matched pointing names among remaining non-calibrator fields (>= 3 distinct pointings),
+    # verified via single-linkage nearest-neighbor sky step <= 1.5 * PB_FWHM (fallback 2.0 deg).
     by_stem: dict[str, list[int]] = {}
     for fid, rec in enumerate(fields_out):
         if fid in assigned or not _is_mosaic_candidate(rec):
@@ -694,42 +926,49 @@ def _detect_mosaic_groups(
     for stem, fids in by_stem.items():
         if len(fids) < 3:
             continue
-        # Verify sky proximity so unrelated targets never merge
-        ref_ra = fields_out[fids[0]]["ra_j2000_deg"]["value"]
-        ref_dec = fields_out[fids[0]]["dec_j2000_deg"]["value"]
-        if ref_ra is not None and ref_dec is not None:
-            compact = all(
-                fields_out[f]["ra_j2000_deg"]["value"] is not None
-                and fields_out[f]["dec_j2000_deg"]["value"] is not None
-                and _angular_sep_deg(
-                    ref_ra,
-                    ref_dec,
-                    fields_out[f]["ra_j2000_deg"]["value"],
-                    fields_out[f]["dec_j2000_deg"]["value"],
-                )
-                <= _MOSAIC_MAX_SPAN_DEG
-                for f in fids[1:]
-            )
-            if not compact:
+        pb_deg = _pb_fwhm_deg(fids, fields_out, min_dish_diam_m)
+        max_step_deg = 1.5 * pb_deg if pb_deg is not None else _MOSAIC_MAX_STEP_DEG
+        for comp in _split_sky_components(fids, fields_out, max_step_deg):
+            if len(comp) < 3:
                 continue
-        raw_groups.append((stem, fids))
-        assigned.update(fids)
+            geom = _mosaic_sky_geometry(comp, fields_out)
+            if not _has_distinct_sky_pointings(geom, comp, fields_out, min_dish_diam_m):
+                continue
+            raw_groups.append((stem, comp, geom))
+            assigned.update(comp)
 
     raw_groups.sort(key=lambda item: item[1][0])
     groups_out: list[dict] = []
-    for gname, fids in raw_groups:
+    for gname, fids, geom in raw_groups:
         sids = sorted({int(fields_out[f]["source_id"]) for f in fids})
         fnames = [fields_out[f]["name"] for f in fids]
-        ras = [
-            fields_out[f]["ra_j2000_deg"]["value"]
-            for f in fids
-            if fields_out[f]["ra_j2000_deg"]["value"] is not None
-        ]
-        decs = [
-            fields_out[f]["dec_j2000_deg"]["value"]
-            for f in fids
-            if fields_out[f]["dec_j2000_deg"]["value"] is not None
-        ]
+        if geom is not None:
+            ra_range_deg: list[float] | None = geom["ra_range_deg"]
+            dec_range_deg: list[float] | None = geom["dec_range_deg"]
+            bbox_center_ra_deg: float | None = geom["bbox_center_ra_deg"]
+            bbox_center_dec_deg: float | None = geom["bbox_center_dec_deg"]
+            bbox_center_j2000: str | None = geom["bbox_center_j2000"]
+            extent_ra_arcmin: float | None = geom["extent_ra_arcmin"]
+            extent_dec_arcmin: float | None = geom["extent_dec_arcmin"]
+            max_extent_arcmin: float | None = geom["max_extent_arcmin"]
+            central_field_id: int | None = geom["central_field_id"]
+            central_field_name: str | None = geom["central_field_name"]
+            central_field_offset_arcmin: float | None = geom["central_field_offset_arcmin"]
+            first_field_offset_arcmin: float | None = geom["first_field_offset_arcmin"]
+        else:
+            ra_range_deg = None
+            dec_range_deg = None
+            bbox_center_ra_deg = None
+            bbox_center_dec_deg = None
+            bbox_center_j2000 = None
+            extent_ra_arcmin = None
+            extent_dec_arcmin = None
+            max_extent_arcmin = None
+            central_field_id = None
+            central_field_name = None
+            central_field_offset_arcmin = None
+            first_field_offset_arcmin = None
+
         seps = [
             fields_out[f]["separation_deg"]
             for f in fids
@@ -751,8 +990,18 @@ def _detect_mosaic_groups(
                 "n_pointings": len(fids),
                 "field_ids": fids,
                 "field_names": fnames,
-                "ra_range_deg": [round(min(ras), 6), round(max(ras), 6)] if ras else None,
-                "dec_range_deg": [round(min(decs), 6), round(max(decs), 6)] if decs else None,
+                "ra_range_deg": ra_range_deg,
+                "dec_range_deg": dec_range_deg,
+                "bbox_center_ra_deg": bbox_center_ra_deg,
+                "bbox_center_dec_deg": bbox_center_dec_deg,
+                "bbox_center_j2000": bbox_center_j2000,
+                "central_field_id": central_field_id,
+                "central_field_name": central_field_name,
+                "central_field_offset_arcmin": central_field_offset_arcmin,
+                "extent_ra_arcmin": extent_ra_arcmin,
+                "extent_dec_arcmin": extent_dec_arcmin,
+                "max_extent_arcmin": max_extent_arcmin,
+                "first_field_offset_arcmin": first_field_offset_arcmin,
                 "intents": first["intents"],
                 "field_role": first["field_role"],
                 "observing_frequency": first["observing_frequency"],

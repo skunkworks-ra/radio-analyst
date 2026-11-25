@@ -177,7 +177,7 @@ The following table maps each polcal step to the exact MCP tool and key paramete
 | Step | Tool | Key parameters | Note |
 |------|------|----------------|------|
 | Angle model setup | `ms_setjy_polcal` | `field`, `polindex_deg=3`, `polangle_deg=4` (`reffreq_ghz` defaults to the band centre) | Run once per angle cal; populates MODEL for Df/Xf solves |
-| Cross-hand delay | `ms_gaincal` | `gaintype='KCROSS'`, `smodel=[1,0,1,0]`, `combine='scan'` | Must run before D-terms; per-SPW by default, `'scan,spw'` is a deliberate multiband choice (Step 2) |
+| Cross-hand delay | `ms_gaincal` | `gaintype='KCROSS'`, `combine='scan'` (omit `smodel` when `angle_cal` has physical polarized `MODEL_DATA` from `ms_setjy_polcal`) | Must run before D-terms; per-SPW by default, `'scan,spw'` is a deliberate multiband choice; pass `smodel` only on an unmodeled source away from the feed null (Step 2) |
 | D-term leakage | `ms_polcal` | `poltype='Df'` or `'Df+QU'`, `solint='inf'`, `combine='scan'` | `Df` for known-pol/zero-pol sources (no PA needed); `Df+QU` only for unknown-pol sources (PA coverage as a continuum, above) |
 | Position angle | `ms_polcal` | `poltype='Xf'`, `solint='inf'`, `combine='scan'` | Run whenever a Cat A pol standard is present (`pol_angle_calibrator.category == 'A'`); independent of PA coverage; requires D-terms in gaintable |
 | Apply all tables | `ms_applycal` | One call per field type, as 07 Step 7: priorcals → K → B → `gain.fluxscaled` → Kcross → D → X | Table order is required by RIME; `parang=True` mandatory; see Step 5 |
@@ -210,11 +210,29 @@ gaincal(
     solint='inf',
     combine='scan',           # per-SPW (default); add ',spw' only for multiband
     refant='{REFANT}',
-    smodel=[1, 0, 1, 0],      # [I, Q, U, V] -- non-zero U to force cross-hand signal
+    # Omit smodel when {ANGLE_CAL_FIELD} already has a physical polarized MODEL_DATA from ms_setjy_polcal
+    # (lets CASA use true (I, Q, U) with parang=True, avoiding the linear-feed XY -> 0 null at psi = +-45 deg).
+    # Pass smodel only when solving KCROSS on an unmodeled source away from the feed null.
     gaintable=['{PRIORCALS}', 'delay.K', 'bandpass.B', 'gain.G'],
+    gainfield=[''] * len(PRIORCALS) + ['', '', '{ANGLE_CAL_FIELD}'],  # ALWAYS select solve_field in gain.G (never mix another cal!)
     parang=True,
 )
 ```
+
+**`smodel` rule (avoiding the linear-feed null):** When `{ANGLE_CAL_FIELD}`
+already has a physical polarized `MODEL_DATA` written by `ms_setjy_polcal` (Step
+1), **omit `smodel`** so CASA solves against the true `(I, Q, U)` sky model with
+`parang=True`. Hardcoding `smodel=[1, 0, 1, 0]` (`Q=0, U=1`) creates a
+zero-signal trap on linear-feed arrays (`XX/XY/YX/YY`) near parallactic angle
+`psi = +-45 deg` where `XY ~ -Q sin(2*psi) + U cos(2*psi) -> 0`. Pass `smodel`
+only when solving `KCROSS` on an unmodeled source away from the feed null.
+
+**Explicit `gainfield` on `gain.G` (MANDATORY in Steps 2, 3, and 4):** Always
+pass `gainfield=[..., <solve_field>]` in the `gain.G` slot (e.g.
+`{ANGLE_CAL_FIELD}` for `kcross.K` and `polangle.X`, `{LEAKAGE_CAL_FIELD}` for
+`dterms.D`). Leaving `gainfield=''` on multi-calibrator `gain.G` causes CASA to
+linearly interpolate another calibrator's gain (such as the unscaled phase
+calibrator) across flagged scans/SPWs!
 
 **Per-SPW vs multiband -- a deliberate choice, not a default.** Two valid options:
 
@@ -224,15 +242,35 @@ gaincal(
   treating the cross-hand delay as a single instrumental term. **VLA-specific** (it
   relies on the VLA's discrete-SPW structure; it does not transfer to MeerKAT/uGMRT).
   The combined table holds a single SPW, so **every downstream use must pass
-  `spwmap=[[0,0,…0]]`** (length = n_spw) -- in the `ms_polcal` Df/Xf solves that take
+  `spwmap=[[0,0,...0]]`** (length = n_spw) -- in the `ms_polcal` Df/Xf solves that take
   it as a prior, and in the final `ms_applycal`. Omitting spwmap silently leaves
   SPWs 1..N uncorrected. The `spwmap` argument on `ms_gaincal`/`ms_polcal`/
   `ms_applycal` exists for exactly this; it defaults to identity (per-SPW behaviour).
 
 Do not assume multiband; decide per dataset.
 
-**Expected value:** Kcross amplitude should be < 2 ns for VLA. Larger values
-indicate a real feed misalignment or a calibration error earlier in the chain.
+**Cross-SPW coherence & post-solve phase-turn jump check (`ms_calsol_stats`):**
+- **Cross-SPW coherence gate (array/band-general):** Static receiver and cable
+  cross-hand delay offsets calibrate out cleanly on any array and band regardless
+  of absolute magnitude (whether `~1 ns` or `~20 ns`). Gate `kcross.K` health on
+  **cross-SPW coherence** using signed per-SPW `delay_median_ns` from
+  `ms_calsol_stats(caltable_path='{WORKDIR}/kcross.K')`: clean SPWs should have
+  `MAD_spw_ns * 1e-9 * spw_bw_hz << 0.1` cycles (equivalently
+  `MAD_spw_ns * spw_bw_ghz << 0.1` cycles) across the SPW bandwidth. Large
+  array-wide incoherence across SPWs indicates low cross-hand SNR, feed-null /
+  model mismatch, or an upstream calibration error.
+- **Cross-SPW delay jump check (MANDATORY on both `delay.K` and `kcross.K`):**
+  Compute dimensionless phase turns across each SPW from signed per-SPW
+  `delay_median_ns` (which catches sign flips such as `-8.5 ns -> +8.5 ns` that
+  unsigned `delay_rms_ns` hides). Flag a single-SPW outlier whenever
+  `|delay_ns - median_delay_ns| * 1e-9 * spw_bw_hz > 0.25` cycles (`90 deg`
+  across the SPW; equivalently `|delay_ns - median_delay_ns| * spw_bw_ghz > 0.25`)
+  **AND** `|delay_ns - median_delay_ns| > 5 * MAD_spw_ns` -- this indicates
+  narrowband RFI hijacked the FFT delay peak on that SPW (even at low visibility
+  flag fraction). Flag the bad SPW's solutions immediately via
+  `ms_flag_caltable(caltable_path='{WORKDIR}/kcross.K', mode='manual',
+  spw='<bad_spw>', reason='cross-SPW kcross phase-turn outlier (>0.25 cycles and >5*MAD)')`
+  (or exclude that SPW from downstream solves and imaging) BEFORE running Step 3.
 
 ---
 
@@ -276,6 +314,7 @@ polcal(
     combine='scan',
     refant='{REFANT}',
     gaintable=['{PRIORCALS}', 'delay.K', 'bandpass.B', 'gain.G', 'kcross.K'],
+    gainfield=[''] * len(PRIORCALS) + ['', '', '{LEAKAGE_CAL_FIELD}', ''],  # select solve_field in gain.G
     parang=True,
 )
 ```
@@ -322,6 +361,7 @@ polcal(
     combine='scan',
     refant='{REFANT}',
     gaintable=['{PRIORCALS}', 'delay.K', 'bandpass.B', 'gain.G', 'kcross.K', 'dterms.D'],
+    gainfield=[''] * len(PRIORCALS) + ['', '', '{ANGLE_CAL_FIELD}', '', ''],  # select solve_field in gain.G
     parang=True,
 )
 ```
@@ -349,7 +389,9 @@ POLTABLES = [kcross.K, dterms.D, polangle.X]
 POLFIELD  = ['', '', '']
 POLINTERP = ['nearest', 'nearest', 'nearest']   # one solution each (solint='inf', combine='scan')
 
-# 5a -- each calibrator: once per calibrator field, its own gain rows
+# 5a -- EVERY calibrator (flux, phase, distinct pol-angle, distinct leakage):
+# one call per calibrator field, ALWAYS using its OWN gainfield=<calibrator field>
+# (NEVER transfer a phase cal's gain onto a distinct polarization-angle or leakage calibrator, and never leave gainfield='' on gain.fluxscaled!)
 ms_applycal(
     ms_path    = {VIS},
     field      = <calibrator field>,
@@ -418,7 +460,7 @@ These are written alongside `delay.K`, `bandpass.B`, `gain.G` in `{WORKDIR}`.
 | Check | Good | Action if not good |
 |---|---|---|
 | PA coverage (Df+QU only) | ≥ 60° well conditioned | Thinner: prefer a known/zero-pol source with plain Df; otherwise solve and quote the coverage beside every polarisation number |
-| Kcross amplitude | < 2 ns | Flag in summary; check if earlier calibration is correct |
+| Kcross cross-SPW coherence & jump | Cross-SPW coherence `MAD_spw_ns * 1e-9 * spw_bw_hz << 0.1` cycles (equivalently `MAD_spw_ns * spw_bw_ghz << 0.1`; static cable offsets calibrate out cleanly on any array/band); no SPW with `\|delay_ns - median_delay_ns\| * 1e-9 * spw_bw_hz > 0.25` cycles (`90 deg`; equivalently `* spw_bw_ghz > 0.25`) AND `\|delay_ns - median_delay_ns\| > 5 * MAD_spw_ns` (signed `delay_median_ns`) | Single-SPW outlier: flag bad SPW solutions via `ms_flag_caltable(mode='manual', spw=...)` or exclude SPW; array-wide incoherence: flag in summary and check upstream calibration / polarized model |
 | D-term amplitude (median) | < 5% | Flag in summary; if < 10%, proceed with caution |
 | D-term outlier antennas | 0-1 | Flag affected antennas; exclude from applycal if > 20% |
 | Df+QU recovered Q/U | ≈ noise (unpolarised) or coherent (polarised) | Unexpected pattern → check PA coverage, Kcross solution |

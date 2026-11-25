@@ -94,12 +94,14 @@ All placeholders are populated from Phase 1-2 tool outputs before calling `ms_tc
 | `{TARGET_FIELD}` | Step 0 | field **names**, comma-separated, e.g. `'3C391_C1,3C391_C2'` (never numeric IDs; 07 "Field selection") |
 | `{IS_MOSAIC}` | Step 0 | True if imaging multiple pointings together |
 | `{STOKES}` | Step 0 | `'IQUV'` if polcal ran, else `'I'` |
-| `{POINTING_CENTERS}` | `ms_field_list` | RA/Dec of each target pointing (mosaic only) |
+| `{POINTING_CENTERS}` | `ms_field_list` | RA/Dec of each target pointing and `mosaic_groups[]` (`extent_ra_arcmin`, `extent_dec_arcmin`, `max_extent_arcmin`) |
+| `{PHASECENTER}` | `ms_field_list` | `mosaic_groups[].bbox_center_j2000` (MANDATORY on every multi-pointing mosaic; check `central_field_name` / `central_field_offset_arcmin` for hollow mosaics) |
+| `{SURVIVING_SPWS}` | `postcal` / `ms_spw_amp_severity` | comma-separated clean continuum SPWs (or `''` if all SPWs are clean) |
 | `{MAX_BASELINE_M}` | `ms_baseline_lengths` | `max_baseline_m` |
-| `{CENTER_FREQ_HZ}` | `ms_radiometer_estimate` | `center_freq_hz` |
+| `{CENTER_FREQ_HZ}` | `ms_radiometer_estimate` | `center_freq_hz` (also read `min_freq_hz` for PB `imsize` and `max_freq_hz` for wideband/cube `cell`) |
 | `{BANDWIDTH_HZ}` | `ms_radiometer_estimate` | `total_bw_hz` (`eff_bw_hz` is unflagged effective bandwidth; for thermal RMS only) |
 | `{FRACTIONAL_SPAN}` | `ms_radiometer_estimate` | `fractional_span` (`freq_span_hz / center_freq_hz` across `min_freq_hz..max_freq_hz`; use for wideband `mtmfs` trigger) |
-| `{DISH_DIAMETER_M}` | `ms_antenna_list` | `dish_diameter_m` (all antennas same for connected arrays) |
+| `{DISH_DIAMETER_M}` | `ms_antenna_list` | smallest active dish diameter `D_min` (`min(diameter_m)` across unflagged antennas on heterogeneous arrays; equals `dish_diameter_m` on homogeneous arrays) |
 | `{TELESCOPE}` | `ms_radiometer_estimate` | `telescope_name` (also in `ms_observation_info`) |
 | `{N_ANT}` | `ms_radiometer_estimate` | `n_ant_unflagged` |
 | `{T_ON_SOURCE_S}` | `ms_radiometer_estimate` | `on_source_s` (median per pointing for a mosaic; Step 7) |
@@ -131,54 +133,99 @@ Record the values as `{TARGET_FIELD}`, `{IS_MOSAIC}`, and `{STOKES}`.
 ## Step 3 -- Derive cell size
 
 ```
-lambda_m         = c / {CENTER_FREQ_HZ}          # c = 2.998e8 m/s
-max_bl_lambda    = {MAX_BASELINE_M} / lambda_m    # baseline in wavelengths
-cell_rad         = 1.0 / (max_bl_lambda * 3)      # factor 3: avoid over-sampling
+# For specmode='cube' imaging a narrow sub-band of a wideband SPW, use the
+# cube's imaged frequency bounds [nu_cube_min, nu_cube_max] (nu_cube_max here)
+# rather than the entire wideband SPW's max_freq_hz.
+freq_ref_hz      = nu_cube_max if specmode == 'cube' else (max_freq_hz if {FRACTIONAL_SPAN} > 0.2 else {CENTER_FREQ_HZ})
+lambda_ref_m     = c / freq_ref_hz                # c = 2.998e8 m/s
+max_bl_lambda    = {MAX_BASELINE_M} / lambda_ref_m
+cell_rad         = 1.0 / (max_bl_lambda * 4)      # factor 4: >= 3.0 pixels per beam minor axis (Nyquist safe)
 cell_arcsec      = cell_rad * (180 * 3600 / pi)
 ```
 
-Round `cell_arcsec` to 1 significant figure (e.g. 2.47" → 2.5"). State the
+Round `cell_arcsec` down (or to 1--2 significant figures, e.g. 2.87" -> 2.8") so
+the actual restored beam stays well sampled: target **`pixels_per_beam_minor >= 3.0`**
+(hard floor **`2.5`**, never coarser/sub-Nyquist). At `3` pixels per beam at
+`center_freq_hz`, wideband upper-band channels drop below `2.5 px/beam` and
+discrete CLEAN pixels incur large peak errors; dividing by `4` at `max_freq_hz`
+(or upper-band frequency) keeps every channel safely above Nyquist. State the
 value and record it as `{CELL}`.
 
 ---
 
-## Step 4 -- Derive image size
+## Step 4 -- Derive image size and mosaic phasecenter
 
-Primary beam FWHM (on wideband observations with `{FRACTIONAL_SPAN} > 0.2`, use
-`min_freq_hz` for `lambda_max = c / min_freq_hz` so the PB tapers cleanly below
-`0.01` inside the image edge with no PB-edge aliasing):
+**Mandatory mosaic `phasecenter`:** On every multi-pointing mosaic
+(`{IS_MOSAIC} == True`), ALWAYS pass
+`phasecenter = mosaic_groups[].bbox_center_j2000` (from `ms_field_list`) to
+every `ms_tclean` call. Omitting `phasecenter` (`""`) defaults in CASA to the
+first selected pointing -- often an outer-edge pointing -- which shifts the grid
+off-center, slices through the opposite edge's primary beam, and triggers
+toroidal FFT wrap-around (`stopcode=5`). Also check
+`mosaic_groups[].central_field_name` and `central_field_offset_arcmin`: if
+`central_field_offset_arcmin > 0.5 * pb_fwhm` (a hollow or ring mosaic whose
+bounding-box midpoint sits in an unobserved gap where `PB ~ 0`), set CASA's
+`psfphasecenter = central_field_name` so `makePSF()` evaluates on an observed
+pointing. Record `bbox_center_j2000` as `{PHASECENTER}`.
+
+Primary beam FWHM: use the tapered-aperture approximation
+`PB_FWHM ~ 1.15 * lambda / D_min` (where `D_min` is the smallest active dish
+diameter on heterogeneous arrays, e.g. `min(diameter_m)` from `ms_antenna_list`,
+matching real tapered/Cassegrain CASA primary-beam models rather than an
+untapered uniform-disk `1.02` factor). Evaluate `lambda_max = c / nu_low`: on
+wideband continuum observations (`{FRACTIONAL_SPAN} > 0.2`), set `nu_low =
+min_freq_hz` of the imaged SPWs; for `specmode='cube'` imaging a narrow sub-band
+of a wideband SPW, set `nu_low = nu_cube_min` of the cube's imaged frequency
+range `[nu_cube_min, nu_cube_max]`:
 ```
-pb_fwhm_arcsec = (1.02 * lambda_m / {DISH_DIAMETER_M}) * (180 * 3600 / pi)
+pb_fwhm_arcsec = (1.15 * lambda_max / D_min) * (180 * 3600 / pi)
 ```
 
-**Always image out to the first primary-beam sidelobe.** Stopping at the FWHM
-leaves bright sources in the first sidelobe (radius ≈ 1.6 × FWHM, where the PB
-gain is still a few percent) undeconvolved -- their sidelobes alias back across
-the field and limit the dynamic range. The first null sits at ≈ 1.2 × FWHM
-radius and the first sidelobe peak at ≈ 1.6 × FWHM radius, so the image
-**diameter** must be ≈ 3 × FWHM.
+**Always pad out PAST the first positive primary-beam sidelobe on EACH side.**
+For tapered/Cassegrain CASA primary-beam models, the first null sits near
+`~1.2 * FWHM` radius and the **first positive sidelobe peak** sits near
+`~1.6 * FWHM` radius (`PB ~ 0.02-0.04`). Padding only `1.5 * FWHM` per side
+(`3 * FWHM` total) slices right through the first positive sidelobe peak, and
+stopping at the first null reads `PB = 0` on the border while STILL wrapping the
+first positive sidelobe toroidally across the periodic FFT boundary (aliasing).
+Therefore pad **`2.0 * pb_fwhm_arcsec` on EACH side** (`4.0 * pb_fwhm_arcsec`
+total):
 
 **Single pointing:**
 ```
-imsize_pixels = ceil(pb_fwhm_arcsec * 3 / cell_arcsec)   # diameter = 3 × FWHM → covers first sidelobe (~1.6 FWHM radius)
+imsize_pixels = ceil((4.0 * pb_fwhm_arcsec) / cell_arcsec)   # 2.0 * FWHM per side -> clears 1st positive sidelobe
 ```
 
-**Mosaic:** compute the bounding box of all pointing centres in `{POINTING_CENTERS}`,
-convert angular extent to pixels, then pad by `1.5 * pb_fwhm_arcsec` on each side
-so every pointing's first sidelobe is imaged:
+**Mosaic:** read `extent_ra_arcmin` and `extent_dec_arcmin` (and
+`max_extent_arcmin`) from `ms_field_list` `mosaic_groups[]` (convert to arcsec
+by multiplying by 60), then pad by `2.0 * pb_fwhm_arcsec` on EACH side
+(`+ 4.0 * pb_fwhm_arcsec` total):
 ```
-imsize_pixels = ceil((mosaic_extent_arcsec + 3 * pb_fwhm_arcsec) / cell_arcsec)
+imsize_x = ceil((extent_ra_arcsec  + 4.0 * pb_fwhm_arcsec) / cell_arcsec)
+imsize_y = ceil((extent_dec_arcsec + 4.0 * pb_fwhm_arcsec) / cell_arcsec)
 ```
 
-(If compute or memory is the binding constraint, dropping to a `2 × FWHM`
-diameter -- first null only -- is the fallback, but record it explicitly as a
-deviation: bright first-sidelobe sources will not be cleaned.)
+**Rectangular `[nx, ny]` is valid and preferred** when `extent_ra_arcmin` and
+`extent_dec_arcmin` differ by `> 20%` (saves memory and gridding time without
+clipping either axis). When the aspect ratio is within 20%, square
+`[IMSIZE, IMSIZE]` using `max_extent_arcmin * 60` is fine. Do NOT drop to a
+first-null fallback (`2 * FWHM` or `3 * FWHM`) -- never shrink `imsize` below
+`extent + 4.0 * pb_fwhm_arcsec`.
 
-Round `imsize_pixels` **up** to the nearest composite number of the form
-2ᵃ × 3ᵇ × 5ᶜ. Common values: 240, 256, 320, 360, 384, 480, 512, 600, 640,
-720, 800, 900, 1024. Do not use a prime number -- tclean will run extremely slowly.
+Round `imsize_x` and `imsize_y` **up** to the smallest **even composite number
+of the form `2^a * 3^b * 5^c`** (with `a >= 1`, generated programmatically, e.g.
+in Python, with **no arbitrary pixel ceiling** -- `imsize` is bounded solely by
+available machine RAM via the Step 6 `free -b` memory check). Do not use a prime
+number -- `tclean` will run extremely slowly.
 
-Record as `{IMSIZE}`.
+**Retry growth on `edge_pb_max >= 0.02`:** If Step 9 measures
+`edge_pb_max >= 0.02` even with centered `phasecenter` and the formula above
+(e.g. strong tapered/Cassegrain sidelobes), **grow `imsize` beyond the formula**
+(add at least `+1.0 * pb_fwhm_arcsec` per side, i.e. `+2.0 * pb_fwhm_arcsec`
+total, rounded up to the next even `2^a * 3^b * 5^c` within available RAM)
+rather than re-evaluating the identical `4.0 * pb_fwhm_arcsec` formula.
+
+Record as `{IMSIZE}` (or `[{IMSIZE_X}, {IMSIZE_Y}]`).
 
 ---
 
@@ -206,19 +253,36 @@ fresnel = {DISH_DIAMETER_M}**2 / ({MAX_BASELINE_M} * lambda_m)
 
 ## Step 6 -- Choose gridder
 
+Evaluate the dimensionless wide-field W-phase parameter across the imaged half-width
+`theta_fov` (in radians; half the mosaic extent + primary beam radius for mosaics,
+or the primary beam radius for a single pointing):
+```
+w_phase_turns = ({MAX_BASELINE_M} / lambda_m) * theta_fov**2
+```
+
 | Condition | `gridder` | `wprojplanes` |
 |---|---|---|
-| Mosaic, first pass, not A-configuration, telescope in `{VLA, ALMA}` | `'mosaic'` | not set |
-| Mosaic, A-configuration | **check memory first** (below), then decide | -- |
-| Mosaic, telescope NOT in `{VLA, ALMA}` | `'mosaic'` only if CASA has a primary-beam model for it; else see note below | -- |
+| Mosaic, telescope has a CASA PB model, and wide-field W-phase `(B_max / lambda) * theta_fov^2` is modest (`< 1` or first-pass imaging) | `'mosaic'` | ignored by CASA (do not set) |
+| Mosaic, telescope has a CASA PB model, and wide-field W-phase `(B_max / lambda) * theta_fov^2 >= 1` | **check memory & A-projection CF feasibility first** (below), then `'awp2'` (if supported and within RAM; else `'mosaic'`) | from Step 5 |
+| Mosaic, telescope has NO CASA primary-beam model | see note below (`'wproject'` if W-terms required, else `'standard'`) | from Step 5 (if `'wproject'`) |
 | Single pointing AND W-terms required | `'wproject'` | from Step 5 |
 | Single pointing AND W-terms not required | `'standard'` | not set |
 
-**First pass on a mosaic is `gridder='mosaic'`.** The A-projection gridders
-(`awproject`, `awp2`) cost far more memory and time, and are a later choice
-when the science needs wide-field polarisation or beam-squint correction.
+**CASA `gridder='mosaic'` ignores `wprojplanes`.** `wprojplanes` applies only
+to `wproject`, `awproject`, and `awp2`. Because `MosaicFTNew` phase-rotates each
+pointing onto the common `phasecenter`, W-phase error scales with the
+dimensionless wide-field parameter `(B_max / lambda) * theta_fov^2` rather than
+a telescope-specific array configuration letter. `gridder='mosaic'` is accurate
+and fast for any telescope with a CASA primary-beam model when `phasecenter` is
+centered (`bbox_center_j2000`) and wide-field W-phase is small. When wide-field
+W-phase is large (`(B_max / lambda) * theta_fov^2 >= 1`), `gridder='mosaic'`
+cannot correct non-coplanar W-terms, so `'awp2'` + `wprojplanes` is needed --
+but ONLY after verifying both (1) available RAM (`free -b`, below) and (2) that
+CASA's A-projection convolution functions support the array/Stokes mode
+(A-projection gridders cost far more memory and time, and are otherwise a later
+choice when the science needs wide-field polarization or beam-squint correction).
 
-**Large mosaics (A-configuration, `imsize >= 2048`, or `>= 10` pointings): check
+**Large mosaics (long-baseline arrays, `imsize >= 2048`, or `>= 10` pointings): check
 that the image fits before calling tclean.** Large footprints with `mtmfs` +
 `multiscale` or `IQUV` cubes require significant memory. CASA needs roughly
 
@@ -360,12 +424,19 @@ and per-plane noise of full spectral resolution. This mirrors the chunking
 precal's polarization model fit already uses.
 
 - Derive `width` from the chunk size: e.g. a 1 GHz SPW split into 64 MHz
-  planes → `width='64MHz'`, `nchan=16`. Match the chunking you used in polcal
+  planes -> `width='64MHz'`, `nchan=16`. Match the chunking you used in polcal
   so the model and the cube share a frequency grid.
+- **Non-contiguous surviving SPWs (`spw={SURVIVING_SPWS}`):** When RFI triage
+  excluded one or more interior SPWs so surviving SPWs are non-contiguous, a
+  uniform `start/width/nchan` grid spanning the full band will create empty
+  (`sumwt=0`) planes across the dropped SPW gaps. Use gap-aware / per-SPW
+  channelization (either image per surviving SPW / contiguous SPW block, or set
+  `width` to one SPW width and note the expected empty gap planes explicitly
+  rather than treating them as imaging failures).
 - Set `start` to the band's low edge and `outframe='LSRK'` (TOPO is acceptable
   for continuum polarization, but be explicit).
 - Use **per-native-channel** only for narrow fractional bandwidth, or when RM
-  is large enough that Q/U rotates within a chunk (chunk Δ(λ²) must keep the
+  is large enough that Q/U rotates within a chunk (chunk delta(lambda^2) must keep the
   intra-chunk RM rotation well below a radian -- otherwise bandwidth
   depolarization washes out the signal you are trying to measure).
 
@@ -378,6 +449,8 @@ ms_tclean(
     ms_path     = {VIS},
     imagename   = {WORKDIR}/{imagename}_iquv,
     field       = {TARGET_FIELD},
+    spw         = {SURVIVING_SPWS},  # surviving clean continuum SPWs from postcal (or '')
+    phasecenter = {PHASECENTER},     # MANDATORY on multi-pointing mosaics: mosaic_groups[].bbox_center_j2000
     stokes      = 'IQUV',
     specmode    = 'cube',
     deconvolver = 'hogbom',
@@ -386,8 +459,8 @@ ms_tclean(
     width       = {CHUNK_WIDTH},     # e.g. '64MHz'
     outframe    = 'LSRK',
     gridder     = {gridder},         # Steps 5-6 as usual
-    cell        = {CELL},
-    imsize      = [{IMSIZE}, {IMSIZE}],
+    cell        = {CELL},            # derived at nu_cube_max (divisor 4) so highest-freq plane stays >= 3.0 px/beam
+    imsize      = [{IMSIZE_X}, {IMSIZE_Y}],  # padded by 2.0 * pb_fwhm(nu_cube_min, D_min) per side (tapered 1.15*lambda/D_min) so lowest-freq plane clears 1st positive sidelobe
     weighting   = 'briggs',
     robust      = 0.5,
     niter       = 50000,
@@ -402,8 +475,16 @@ ms_tclean(
 )
 ```
 
-Cell size and imsize are derived as in Steps 3-4 using the **highest** frequency
-in the band (smallest beam → finest cell), so every plane is adequately sampled.
+Derive `cell` from the **highest** imaged frequency of the cube (`nu_cube_max`,
+which is `max_freq_hz` for a full-band cube or the upper edge of the sub-band
+when imaging a narrow sub-band of a wideband SPW, divisor `4`) so even the
+narrowest-beam top-of-band plane satisfies `pixels_per_beam_minor >= 2.5`
+(prefer `>= 3.0`), and derive `imsize` from tapered `pb_fwhm = 1.15 * lambda /
+D_min` at the **lowest** imaged frequency of the cube (`nu_cube_min`,
+`extent + 4.0 * pb_fwhm`, rounded up to an even `2^a * 3^b * 5^c` bounded only
+by available RAM) so even the widest-beam bottom-of-band plane clears its first
+positive sidelobe (`edge_pb_max < 0.02`; grow `imsize` by `+1.0 * pb_fwhm` per
+side on retry if `edge_pb_max >= 0.02` persists).
 
 ### Quality gates (per-plane)
 

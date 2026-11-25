@@ -342,7 +342,7 @@ Converting one stage tests the idea without dropping that thread.
 
 One agent, `agents/inspect.md`: model haiku, `tools:` the two inspect tools by
 single name, the inspect command text as body. Sonnet calls it once on the
-fixture MS (`/var/mnt/fast/radio_analyst_runs/fixture_3c391_inspect/`).
+fixture MS (`/mnt/fast/radio_analyst_runs/fixture_3c391_inspect/`).
 Compare its handoff with what the existing inspect command gives on the same
 MS. This answers both open questions in section 9 in one run.
 

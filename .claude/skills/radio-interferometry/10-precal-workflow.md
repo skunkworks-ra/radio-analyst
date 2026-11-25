@@ -19,9 +19,9 @@ check:
 3. `ms_generate_priorcals` -> verified with `ms_verify_priorcals`
 4. `ms_setjy` (and `ms_setjy_polcal` when `pol_scope: on`)
 5. `ms_refant(calibrators.ms, field=bp_field)`
-6. **`ms_initial_bandpass` on `calibrators.ms` -> run** (produces `init_gain.g`, `BP0.b`, and populates `CORRECTED_DATA` on `bp_field`)
+6. **`ms_initial_bandpass` on `calibrators.ms` -> run** (solves `init_gain.g` and `BP0.b` once on `bp_field` and populates `CORRECTED_DATA` on `bp_field` only; do NOT run `ms_initial_bandpass` or `ms_apply_initial_rflag` on a distinct `angle_cal` in `precal`, see Step 8)
 7. `ms_verify_model(calibrators.ms, field=bp_field)`
-8. **`ms_apply_initial_rflag` on `calibrators.ms` -> run** (flags statistical RFI on `CORRECTED - MODEL` residuals)
+8. **`ms_apply_initial_rflag` on `calibrators.ms` -> run** (flags statistical RFI on `CORRECTED - MODEL` residuals strictly on `bp_field`)
 9. Final `ms_workflow_status(ms_path, workdir)` confirms `missing_precal_steps == []` and `next_recommended_step == 'delay_bandpass_gain'`. **Never conclude or summarize pre-calibration while `missing_precal_steps` is non-empty or `next_recommended_step` is earlier than `'delay_bandpass_gain'`.**
 
 ---
@@ -320,15 +320,37 @@ If the script reports either caltable missing, do not proceed to rflag. Diagnose
 default, by design.** Residual rflag is only meaningful on a field whose
 CORRECTED column is genuinely calibrated at the point you call it.
 
-**At this stage that field is the bandpass calibrator only (`field={BP_FIELD}`),
-and only if it is a primary with a real model.** Run `ms_verify_model` on it
-first. A residual against the 1 Jy default model is the sky, not RFI. If the
-bandpass calibrator has no setjy model, skip this step.
-`ms_initial_bandpass` solves gains on the bandpass calibrator alone, so it is the
-only field with a valid CORRECTED column right now. On every other field,
-CORRECTED−MODEL is dominated by uncorrected gain/phase error — not RFI — so a
-residual pass there flags almost the entire field, recoverable only by
-re-splitting the calibrators.
+**At this stage that field is strictly the bandpass calibrator
+(`field={BP_FIELD}`).** `ms_initial_bandpass(bp_field=bp_field,
+applycal_field=bp_field)` solves `init_gain.g` and `BP0.b` once on `{BP_FIELD}`
+and populates calibrated `CORRECTED_DATA` on `{BP_FIELD}` alone. Run
+`ms_verify_model(calibrators.ms, field=bp_field)` first (a residual against the
+1 Jy default model is the sky, not RFI; skip residual flagging if `bp_field` has
+no physical `setjy` / `setjy_polcal` model), then run
+`ms_apply_initial_rflag(calibrators.ms, workdir, field=bp_field, execute=False)`
+-> run.
+
+**WARNING -- distinct polarization-angle calibrator (`pol_scope: on` and
+`angle_cal != bp_field`):**
+- Do **NOT** run `ms_apply_initial_rflag(field=angle_cal)` in `precal`:
+  `angle_cal`'s `CORRECTED_DATA` is uncalibrated in `precal` (`CORRECTED - MODEL`
+  would be uncorrected gain/bandpass error and flag ~90% of `angle_cal`).
+- Do **NOT** run an independent per-channel `ms_initial_bandpass(bp_field=angle_cal)`
+  in `precal`: faint or high-frequency polarization calibrators often lack
+  per-channel SNR for an unaveraged bandpass solve (causing `applymode='calflag'`
+  to wipe out `angle_cal`), and `precal` does not hold gaincal / applycal tool
+  grants for a separate `BP0.b` transfer.
+- Instead, keep `precal` Steps 6 and 8 strictly on `{BP_FIELD}` (matching
+  `precal.md`). A distinct `angle_cal` receives calibrated `CORRECTED_DATA` in
+  `calibrate` Step 7b via `{BP_FIELD}`'s `bandpass.B` + `gain.fluxscaled` (with
+  `gainfield=angle_cal`), and any narrowband RFI-corrupted SPW on `angle_cal`
+  is handled in `polcal` Step 2 (caltable flagging on `kcross.K` or SPW
+  exclusion) and `13-postcal-rfi-flagging.md` Step 1.
+
+On every other field (such as the phase calibrator or any field without
+calibrated `CORRECTED_DATA`), `CORRECTED - MODEL` is dominated by uncorrected
+gain/phase error or a 1 Jy default model -- not RFI -- so a residual pass there
+flags almost the entire field, recoverable only by re-splitting the calibrators.
 
 Residual flagging never runs on the phase calibrator or the target: neither has
 a true model. Later residual flagging on the primaries (flux and polarization

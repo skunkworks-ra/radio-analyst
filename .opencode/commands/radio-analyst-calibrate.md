@@ -48,7 +48,7 @@ even if an earlier stage denied one of them: call them.
    If `next_recommended_step` is not `delay_bandpass_gain`, STOP.
 
 2. Gather placeholders via tool output (no hand-derivation):
-   - `ms_field_list(calibrators.ms)` -> flux_field, bp_field, phase_fields; `ms_field_list(ms_path)` -> target_fields (for a mosaic: comma-separated `mosaic_groups[].field_names`, never `group_name`)
+   - `ms_field_list(calibrators.ms)` -> `flux_field`, `bp_field`, `phase_fields`, plus any distinct `pol_angle_field` / `leakage_field` (`all_cal_fields` = ALL distinct calibrators; `transfer_cals` = `phase_fields` plus any distinct `pol_angle_field` / `leakage_field`); `ms_field_list(ms_path)` -> `target_fields` (for a mosaic: comma-separated `mosaic_groups[].field_names`, never `group_name`)
    - `ms_spectral_window_list(calibrators.ms)` -> suggested.center_channels_string,
      suggested.wide_channels_string, all_spw_string
    - `ms_antenna_list(calibrators.ms)` -> recommended_minblperant
@@ -61,7 +61,16 @@ even if an earlier stage denied one of them: call them.
 
 4. Delay (K): `ms_gaincal(..., gaintype='K', solint='inf', combine='scan',
    gaintable=[priorcals + G0], caltable=workdir/delay.K, execute=False)` -> run.
-   `ms_calsol_stats(delay.K)` -- delay_rms_ns outlier gate.
+   `ms_calsol_stats(delay.K)` -- check BOTH signed per-SPW `delay_median_ns` and
+   `delay_rms_ns` (since `gaintype='K'` antenna delays around `refant` have both
+   signs, symmetric RFI blowups inflate `delay_rms_ns` while `delay_median_ns`
+   stays near `0`) in dimensionless phase turns across each SPW: flag a
+   single-SPW outlier when
+   `max(|delay_median_ns[spw] - med_spw(delay_median_ns)|, |delay_rms_ns[spw] - med_spw(delay_rms_ns)|) * 1e-9 * spw_bw_hz > 0.25`
+   cycles (`90 deg` across the SPW; equivalently `* spw_bw_ghz > 0.25`) AND
+   `> 5 * MAD_spw_ns` (RFI hijacked that SPW's FFT delay peak -> flag that SPW
+   via `ms_flag_caltable(delay.K, mode='manual', spw='<bad_spw>', reason=...)`
+   or flag RFI data and re-solve / exclude SPW).
 
 5. Bandpass (B): `ms_bandpass(..., solint='inf', combine='scan',
    spw=all_spw_string, gaintable=[priorcals + G0 + K],
@@ -70,13 +79,15 @@ even if an earlier stage denied one of them: call them.
    `ms_calsol_stats(bandpass.B)` -- bandpass SNR per SpW. Then
    `ms_flag_caltable(bandpass.B, sigma=5.0)` before it is used (07 Step 3).
 
-6. Gain solve on all calibrators in one call (skill 07 Step 4, which has the
-   interp list):
-   `ms_gaincal(..., field='<flux_field>,<phase_fields>', gaintype='G',
+6. Gain solve on ALL distinct calibrators in one call (skill 07 Step 4, which has
+   the interp list):
+   `ms_gaincal(..., field='<all_cal_fields>', gaintype='G',
    calmode='ap', solint='inf', gaintable=[priorcals + K + B],
-   target_fields='<phase_fields>', caltable=workdir/gain.G, execute=False)` -> run.
-   calibrators.ms holds no target fields, so name the phase calibrators as the
-   transfer fields.
+   target_fields='<transfer_cals>', caltable=workdir/gain.G, execute=False)` -> run.
+   Include `{FLUX_FIELD},{PHASE_FIELD}` plus any distinct `{POL_ANGLE_FIELD}` /
+   `{LEAKAGE_FIELD}` so every calibrator has its own rows in `gain.G`.
+   `calibrators.ms` holds no science target fields, so name `<transfer_cals>` as
+   `target_fields`.
 
 7. `ms_calsol_stats(gain.G)` -- outliers block gate. (`ms_gaincal` has no append:
    a second call on the same caltable archives the first.) A named bad
@@ -84,12 +95,20 @@ even if an earlier stage denied one of them: call them.
    (07 "Flagging by hand").
 
 8. `ms_fluxscale(..., caltable=gain.G, fluxtable=workdir/gain.fluxscaled,
-   reference=flux_field, transfer=phase_fields, execute=False)` -> run.
+   reference=flux_field, transfer=<transfer_cals>, execute=False)` -> run.
+   Note (07 Step 6): for any pre-modeled calibrator that ALREADY has a physical
+   `setjy`/`setjy_polcal` model in `MODEL_DATA`, CASA `fluxscale` reports
+   dimensionless `S_obs / S_model ~ 1.0` (NOT its total Jy flux) while still
+   rescaling `gain.fluxscaled` correctly -- do NOT trigger the `~10x low`
+   `usescratch` HARD STOP on pre-modeled calibrators (only on 1-Jy-default
+   transfer / phase calibrators).
 
-9. Applycal -- flux cal, then each phase cal in its own call, then target, per
-   07-calibration-execution.md Step 7. Use `ms_applycal` with
-   appropriate `gainfield` and `interp` per call. Around each invocation run
-   the flag-jump check (07 "Flag jump at applycal"):
+9. Applycal -- flux cal, then EVERY non-reference calibrator (`phase_fields` plus
+   any distinct `pol_angle_field` / `leakage_field`) in its own call with
+   `gainfield=<self>`, then science target, per 07-calibration-execution.md Step 7.
+   Never transfer a phase calibrator's gain onto a distinct polarization-angle
+   or leakage calibrator, and never leave `gainfield=''` on `gain.fluxscaled`. Around each
+   invocation run the flag-jump check (07 "Flag jump at applycal"):
    `ms_flag_summary` on the fields that invocation writes, before and after it
    (calibrators.ms for the calibrators, the full MS for the target). A jump of
    15 percentage points or more on any field: find the cause, flag it, re-solve,

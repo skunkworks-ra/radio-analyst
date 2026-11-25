@@ -62,6 +62,84 @@ def _script_path(workdir: Path, field: str, ms_str: str = "") -> Path:
 
 
 _CASA_FIELD_META_CHARS = frozenset("*?~><^/;!&|()")
+_CROSS_CAL_GUARD_VISCAL = frozenset({"G JONES", "T JONES", "G", "T"})
+
+
+def _collect_gainfield_warnings(
+    ms_str: str,
+    field: str,
+    gaintable: list[str],
+    gainfield: list[str],
+) -> list[str]:
+    """Warn when a G/T Jones table has solutions for ``field`` itself, yet
+    ``gainfield`` is empty (multi-field linear mixing) or selects another field.
+
+    Never warns on single-calibrator B/K/Kcross/Df/Xf tables, or when ``field``
+    has no solutions of its own in the table (e.g. target using phase cal).
+    Non-fatal on unreadable tables or missing CASA metadata.
+    """
+    if not field or not gaintable:
+        return []
+    try:
+        with open_msmd(ms_str) as msmd:
+            field_names = [str(x) for x in msmd.fieldnames()]
+    except Exception:
+        try:
+            with open_table(ms_str + "/FIELD") as tb:
+                field_names = [str(x) for x in tb.getcol("NAME")]
+        except Exception:
+            return []
+    if not field_names:
+        return []
+
+    from ms_inspect.util.selection import match_field_names
+
+    try:
+        target_fids = set(match_field_names(field_names, field))
+    except ValueError:
+        return []
+
+    out: list[str] = []
+    for gt, gf_raw in zip(gaintable, gainfield, strict=False):
+        try:
+            with open_table(gt) as tb:
+                viscal = str(tb.getkeyword("VisCal")).strip()
+                if viscal.upper() not in _CROSS_CAL_GUARD_VISCAL:
+                    continue
+                cal_fids = {int(x) for x in tb.getcol("FIELD_ID")}
+        except Exception:
+            continue
+
+        own_fids = target_fids & cal_fids
+        if not own_fids:
+            continue
+
+        gf = gf_raw.strip()
+        gt_name = Path(gt).name
+        own_names = [field_names[i] for i in sorted(own_fids) if i < len(field_names)]
+        if not gf:
+            if len(cal_fids) >= 2:
+                out.append(
+                    f"Cross-calibrator gainfield risk on {gt_name} ({viscal}): "
+                    f"field={field!r} ({own_names}) has its own solutions in this multi-field "
+                    f"table ({len(cal_fids)} fields), but gainfield='' allows CASA to linearly "
+                    f"mix solutions across calibrators. Pass gainfield={field!r} explicitly."
+                )
+            continue
+
+        try:
+            gf_fids = set(match_field_names(field_names, gf))
+        except ValueError:
+            continue
+
+        if not (own_fids <= gf_fids) or bool(gf_fids - target_fids):
+            out.append(
+                f"Cross-calibrator gainfield mismatch on {gt_name} ({viscal}): "
+                f"field={field!r} ({own_names}) has its own solutions in this table, "
+                f"but gainfield={gf!r} selects different field(s). Use gainfield={field!r} "
+                "so a calibrator applies its own G/T solutions rather than another field's."
+            )
+    return out
 
 
 def _validate_literal_fields(ms_path: str, ms_str: str, field_sel: str) -> None:
@@ -267,6 +345,8 @@ def run(
                 f"Caltable not found: {gt}",
                 ms_path=ms_path,
             )
+
+    warnings.extend(_collect_gainfield_warnings(ms_str, field, gaintable, gainfield))
 
     script = _script_path(workdir_path, field, ms_str)
     _debug = debug_mode.validate(debug, debug_params, DEBUG_TASKS)

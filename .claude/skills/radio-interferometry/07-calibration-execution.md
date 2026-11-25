@@ -29,8 +29,9 @@ Fill every `{PLACEHOLDER}` from Phase 1–2 tool outputs before calling any solv
 | `{FLUX_FIELD}` | `ms_field_list` | field name of the primary flux/bandpass calibrator |
 | `{BP_FIELD}` | `ms_field_list` | same as FLUX_FIELD unless a dedicated BP cal is present |
 | `{PHASE_FIELD}` | `ms_field_list` | field name(s) of phase calibrators, comma-separated |
+| `{POL_ANGLE_FIELD}`, `{LEAKAGE_FIELD}` | `ms_field_list` | distinct polarization angle / leakage calibrator field name(s), if different from `{FLUX_FIELD}` and `{PHASE_FIELD}` (MUST be included in Step 4 `gain.G`, Step 6 `fluxscale`, and Step 7b `applycal` with `gainfield=<self>`) |
 | `{TARGET_FIELD}` | `ms_field_list` | field name(s) of the science target (for a mosaic: comma-separated `mosaic_groups[].field_names`, e.g. `'3C391 C1,3C391 C2,...'`, never `group_name`) |
-| `{CAL_FIELDS}` | `ms_field_list` | comma-separated names of ALL calibrators |
+| `{CAL_FIELDS}` | `ms_field_list` | comma-separated names of ALL distinct calibrators (`{FLUX_FIELD},{PHASE_FIELD}` plus distinct `{POL_ANGLE_FIELD}` / `{LEAKAGE_FIELD}`) |
 | `{ALL_SPW}` | `ms_spectral_window_list` | spw selection string, e.g. `'0~15'` |
 | `{CENTER_CHANNELS}` | `ms_spectral_window_list` | from `ms_spectral_window_list.suggested.center_channels_string` |
 | `{WIDE_CHANNELS}` | `ms_spectral_window_list` | from `ms_spectral_window_list.suggested.wide_channels_string` |
@@ -333,7 +334,7 @@ ms_calsol_stats(caltable_path = {WORKDIR}/delay.K)
 | Field | Index | Threshold | Action if exceeded |
 |---|---|---|---|
 | `delay_ns[ant]` / `delay_abs_max_ns` | all antennas | abs value < 30 ns | > 50 ns on one antenna -> hardware or cabling problem; note in summary |
-| `delay_rms_ns[spw, field=0]` | all SPWs | < 10 ns | > 10 ns → delay solve may have failed on that SPW |
+| `delay_median_ns[spw, field=0]` & `delay_rms_ns[spw, field=0]` (cross-SPW phase-turn check) | all SPWs | No single-SPW outlier with `max(\|delay_median_ns[spw] - med_spw(delay_median_ns)\|, \|delay_rms_ns[spw] - med_spw(delay_rms_ns)\|) * 1e-9 * spw_bw_hz > 0.25` cycles (`90 deg` across the SPW; equivalently `* spw_bw_ghz > 0.25`) AND `> 5 * MAD_spw_ns` (checks BOTH signed median shift and symmetric antenna-scatter RMS blowup, since `gaintype='K'` antenna delays around `refant` have both signs) | Single-SPW outlier exceeding both `0.25` cycles across the SPW and `5 * MAD_spw_ns` -> narrowband RFI hijacked the FFT delay peak (even at low visibility flag fraction); flag that SPW's solutions via `ms_flag_caltable(caltable_path='{WORKDIR}/delay.K', mode='manual', spw='<bad_spw>', reason=...)` or flag the RFI visibilities and re-solve / exclude that SPW |
 | `overall_flagged_frac` | scalar | < 0.10 | > 0.10 → check WIDE_CHANNELS selection |
 | `outliers.low_snr` | — | — | not reported for delay tables: CASA writes no solution SNR for K |
 | `antennas_lost` | list | empty | also in G0's list → flag it everywhere now (Dead antenna, above), no re-solve; only here → note it |
@@ -393,11 +394,14 @@ Both polarizations on a given antenna should show the same amplitude shape withi
 
 ## Step 4 — Gain calibration, all calibrators
 
-**Purpose:** solve for complex antenna gains on all calibrators in a single call.
-Solving all fields together produces one table that fluxscale can directly use
-to compare flux and phase calibrator solutions.
+**Purpose:** solve for complex antenna gains on **ALL distinct calibrators**
+(`{FLUX_FIELD}`, `{PHASE_FIELD}`, plus `{POL_ANGLE_FIELD}` and `{LEAKAGE_FIELD}`
+whenever distinct from `{FLUX_FIELD}`/`{PHASE_FIELD}`) in a single call.
+Solving every calibrator together ensures every calibrator has its own rows in
+`gain.G` and `gain.fluxscaled` -- NEVER omit a distinct polarization-angle or
+leakage calibrator from `gain.G` or transfer another calibrator's gains onto it.
 
-`solnorm=False` is required — we need the absolute amplitude scale. With
+`solnorm=False` is required -- we need the absolute amplitude scale. With
 `solnorm=False` the flux calibrator's gain amplitudes need not sit near 1.0;
 what matters is that they are stable, without jumps from scan to scan or
 between neighbouring solutions. Phase calibrator amplitudes will differ (its
@@ -407,8 +411,8 @@ model is the 1 Jy default); fluxscale rescales them in Step 6.
 ```
 ms_gaincal(
     ms_path       = {VIS},
-    field         = '{FLUX_FIELD},{PHASE_FIELD}',  # all calibrators in one call
-    target_fields = '{PHASE_FIELD}',               # transfer fields when VIS is calibrators.ms
+    field         = '{CAL_FIELDS}',                   # ALL distinct calibrators: {FLUX_FIELD},{PHASE_FIELD} + distinct {POL_ANGLE_FIELD}/{LEAKAGE_FIELD}
+    target_fields = '{TRANSFER_CALS}',                # all non-reference calibrators: {PHASE_FIELD} + distinct {POL_ANGLE_FIELD}/{LEAKAGE_FIELD}
     spw           = {WIDE_CHANNELS},
     caltable      = {WORKDIR}/gain.G,
     gaintype      = 'G',
@@ -544,9 +548,10 @@ place will bias the fluxscale transfer.
 
 ## Step 6 — Flux scale transfer (fluxscale)
 
-**Purpose:** rescale the phase calibrator gain amplitudes using the known flux
-density of the primary calibrator. Produces `gain.fluxscaled` in which both
-calibrators share the same amplitude scale.
+**Purpose:** rescale all non-reference calibrator gain amplitudes (`{PHASE_FIELD}`
+plus any distinct `{POL_ANGLE_FIELD}` / `{LEAKAGE_FIELD}`) using the known flux
+density of the primary calibrator `{FLUX_FIELD}`. Produces `gain.fluxscaled` in
+which every calibrator shares the same amplitude scale.
 
 **Call:**
 ```
@@ -555,12 +560,27 @@ ms_fluxscale(
     caltable    = {WORKDIR}/gain.G,
     fluxtable   = {WORKDIR}/gain.fluxscaled,
     reference   = {FLUX_FIELD},
-    transfer    = [{PHASE_FIELD}],
+    transfer    = [{TRANSFER_CALS}],  # {PHASE_FIELD} plus any distinct {POL_ANGLE_FIELD} / {LEAKAGE_FIELD}
     incremental = False,
     workdir     = {WORKDIR},
     execute     = False,
 )
 ```
+
+**CRITICAL distinction -- pre-modeled calibrators (`setjy` / `setjy_polcal`) vs.
+1-Jy-default transfer calibrators:**
+When a transfer calibrator ALREADY has a physical `setjy` or `setjy_polcal`
+model in `MODEL_DATA` (for example, a distinct polarization-angle calibrator
+whose physical model was written by `setjy_polcal` in precal), CASA
+`fluxscale` still assumes a 1 Jy transfer model and therefore reports the
+**dimensionless ratio $S_{\text{obs}} / S_{\text{model}} \approx 1.0$** (e.g.
+`~0.97` to `1.03`), **NOT** its total Jy flux density, while still rescaling
+its `gain.fluxscaled` amplitudes cleanly onto the primary flux scale. Do
+**NOT** compare that `~1.0` ratio against a catalogued total flux density or
+trigger the `~10x low` `usescratch` HARD STOP below on a pre-modeled calibrator
+-- `derived_flux_jy ~ 1.0` is the exact expected healthy result for a calibrator
+with a physical `MODEL_DATA`! Apply the `flux_estimate` / `~10x low` check below
+ONLY to 1-Jy-default transfer calibrators (phase calibrators).
 
 **Check the returned flux density** against an expected value you fetch, not one
 you remember:
@@ -654,7 +674,7 @@ Advance to applycal only when all of the following hold:
 | Gain flagged fraction | < 0.15 |
 | Antennas lost | ≤ 3 |
 | Every antenna in `antennas_lost` of both G0 and K | flagged on `{VIS}` and `{FULL_MS}` (Dead antenna) |
-| fluxscale derived flux density | not an order of magnitude off `flux_estimate` (> 20% off: check priorcals and flux cal model, then proceed) |
+| fluxscale derived flux density | 1-Jy-default transfer calibrators (phase cals): not an order of magnitude off `flux_estimate` (> 20% off: check priorcals and flux cal model, then proceed); pre-modeled calibrators with a physical `setjy`/`setjy_polcal` model in `MODEL_DATA`: dimensionless $S_{\text{obs}}/S_{\text{model}} \approx 1.0$ is expected (NOT a `~10x low` failure) |
 | `gain.fluxscaled` exists on disk | confirmed |
 
 If BP or gain flagged fraction exceeds threshold: loop back to RFI excision (10 Steps 2 and 8; 13 Step 1 on the primaries).
@@ -759,10 +779,13 @@ ms_applycal(
 )
 ```
 
-### 7b — Phase calibrators
+### 7b -- Phase and other distinct calibrators (`gainfield=<self>`)
 
-Every phase calibrator in `{PHASE_FIELD}`, one call each, each with its own
-gains (`<cal>` below is one name from that list):
+Every non-reference calibrator (`{PHASE_FIELD}` plus any distinct
+`{POL_ANGLE_FIELD}` / `{LEAKAGE_FIELD}`), one call each, each with its **own**
+gains (`<cal>` below is one name from that list -- NEVER transfer a phase
+calibrator's gain onto another calibrator, and never leave `gainfield=''` for
+`gain.fluxscaled`):
 
 ```
 ms_applycal(
@@ -848,5 +871,5 @@ solves replace them.
 Once Step 7c target `applycal` completes and `ms_workflow_status` advances past
 `applycal_target`:
 - If polarization calibration is in scope: **Read `09-polcal-execution.md`** before calling `ms_polcal`.
-- **Mandatory pre-imaging target spectrum gate (NEVER skip):** BEFORE calling `ms_tclean` on any target field, you MUST run `ms_spw_amp_severity(ms_path, datacolumn='CORRECTED_DATA', field=<target fields>)` and confirm the adjacent-channel complex difference spectrum is clean (`chan_diff_std_over_mad < 1.5`, `max_spw_chan_diff_std_over_mad < 1.8`, `chan_diff_gt10sigma_frac < 0.001`, `spw_rms_ratio < 1.5`). If ANY metric exceeds threshold, run `ms_apply_rflag(ms_path, workdir, field=<target fields>, datacolumn='corrected', execute=False)` -> run via `run-step.sh` (never amplitude-clip targets!) and RE-RUN `ms_spw_amp_severity` to verify the spectrum is clean BEFORE calling `ms_tclean`.
+- **Mandatory pre-imaging continuum target spectrum gate (NEVER skip on continuum SPWs, `specmode='mfs'`; exempt spectral-line / maser SPWs and rest-frequency line windows):** BEFORE calling `ms_tclean` on continuum target SPWs, you MUST run `ms_spw_amp_severity(ms_path, datacolumn='CORRECTED_DATA', field=<target fields>, spw=<surviving_spws or ''>)` and confirm the SEFD-invariant within-SPW Gaussianity metrics are clean (`chan_diff_std_over_mad < 1.5`, `max_spw_chan_diff_std_over_mad < 1.8`, `chan_diff_gt10sigma_frac < 0.001`; treat bandwidth-normalized `spw_noise_density_ratio` / `spw_rms_ratio` strictly as a secondary smoothness diagnostic for discontinuous single-SPW jumps vs smooth `T_sys(nu)` / atmospheric / sky-temperature gradients). If ANY primary metric exceeds threshold on continuum SPWs, run bounded `postcal` (`<= 2` `ms_apply_rflag(..., spw=<continuum_spws>)` rounds on continuum SPWs only, `datacolumn='corrected'`, never amplitude-clipping targets, never running automatic `freqdev` `rflag` or `surviving_spws` dropping on spectral-line / maser SPWs, and never destructively flagging whole SPWs) and RE-RUN `ms_spw_amp_severity(..., spw=<surviving_spws>)` to verify the surviving continuum SPWs are clean BEFORE calling `ms_tclean`.
 - **Read `11-imaging.md`** before calling `ms_tclean` for any target or calibrator imaging (never guess `specmode`, `deconvolver`, `cell`, `imsize`, `gridder`, `threshold`, `nsigma`, `pblimit`, `pbmask`, or masking parameters from memory).

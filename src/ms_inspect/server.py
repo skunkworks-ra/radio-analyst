@@ -200,6 +200,10 @@ class SpwAmpSeverityInput(BaseModel):
         default="",
         description="CASA field selection (empty = all fields).",
     )
+    spw: str = Field(
+        default="",
+        description="CASA SpW id/range selection (empty = all SpWs), e.g. '2~5,8,16~17'.",
+    )
     sigma: float = Field(
         default=5.0,
         description="Threshold scale band_floor + sigma*robust_sigma.",
@@ -1215,6 +1219,7 @@ async def ms_spw_amp_severity(params: SpwAmpSeverityInput) -> ToolResult:
         params.datacolumn:           'CORRECTED_DATA' (default), 'DATA', 'MODEL_DATA',
                                      or 'residual' (CORRECTED - MODEL).
         params.field:                CASA field selection (empty = all).
+        params.spw:                  CASA SpW id/range selection (empty = all).
         params.sigma:                Elevation threshold multiplier (default 5.0).
         params.max_samples_per_chan: Reservoir size per channel (default 5000).
         params.row_chunk:            Rows per read block (default 20000).
@@ -1232,6 +1237,7 @@ async def ms_spw_amp_severity(params: SpwAmpSeverityInput) -> ToolResult:
         params.row_chunk,
         params.max_per_chan_records,
         workdir=params.workdir,
+        spw=params.spw,
     )
 
 

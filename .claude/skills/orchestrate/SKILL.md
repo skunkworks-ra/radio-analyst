@@ -47,10 +47,25 @@ the result with the read-only tools above, and decide what happens next. Every
 MCP tool takes one argument, `params` (and returns bare values under `data` plus
 non-`COMPLETE` entries in `field_flags`).
 
-**Retry cap: 5 attempts per stage.** On the 5th failed attempt, stop and ask
+**Retry cap: 5 attempts per stage** (and **`<= 3` orchestrator retries for
+`image` and `image_iquv`**; `postcal` is bounded at `<= 2` `rflag` rounds total
+with no destructive whole-SPW flagging; inside each `image-stage` invocation,
+failed-convergence recovery retries are capped at `<= 2`, separate from normal
+Phase A/B/C progression). On the final failed attempt at the cap, stop and ask
 the user, summarizing every attempt's deciding check.
 
 ## The record: call `ms_record_stage_decision` after every stage attempt
+
+**TWO HARD INVARIANTS (NEVER VIOLATE):**
+1. **Every `Agent`/`task` stage call MUST be immediately followed by
+   verification + `ms_record_stage_decision`** -- including terminal failures
+   and `decision="stop_ask_user"`. Never launch another stage call or call
+   `ms_report` while any prior stage call lacks its decision record.
+2. **After `decision="stop_ask_user"`, NO downstream `Agent`/`task` call may
+   EVER be invoked.** Do not rationalize continuing to another `postcal`,
+   `image`, `selfcal`, or `image_iquv` call after stopping. Only call
+   `ms_report(..., image_path="")` if a final report is required, then end your
+   turn immediately with plain text summarizing the stop.
 
 After checking each stage attempt (whether proceeding, retrying, or stopping),
 call the `ms_record_stage_decision` tool (`ms-create_ms_record_stage_decision`
@@ -68,8 +83,8 @@ handoff and check provenance) -- you do NOT call `Write` and do NOT emit prose
 Because `ms_record_stage_decision` is a tool call, control always returns to you
 after it completes -- immediately invoke the next `Agent` / `task(...)` stage
 call (or diagnostic / `ms_report` tool call). Only end a turn with plain text
-(no tool call) when `decision` is `"stop_ask_user"` or after the final
-`ms_report` has completed.
+(no tool call) when `decision` is `"stop_ask_user"` (after optional
+`ms_report(..., image_path="")`) or after the final `ms_report` has completed.
 
 Example tool call:
 
@@ -120,17 +135,25 @@ Find them once from context; the stages do not search for them.
 | 3 | calibrate | `radio-analyst:calibrate-stage` | `<ms_path> workdir=<workdir>` |
 | 3b | polcal (`stokes=IQUV` only) | `radio-analyst:polcal-stage` | `<ms_path> workdir=<workdir>`, `angle_cal: <the precal handoff's angle_cal>` (plus any user `spw:` / `constraints:`) |
 | 3c | postcal (pre-imaging, when section 3c RFI triage detects target outliers) | `radio-analyst:postcal-stage` | `<ms_path> workdir=<workdir>`, `field: <target fields>` |
-| 4 | image | `radio-analyst:image-stage` | `<ms_path> workdir=<workdir>`, `stokes: I`, plus EVERY explicit user imaging constraint (`field:`, `spw:`, `cell:`, `imsize:`, `deconvolver:`, `pblimit:`, `pbmask:`, `nsigma:`, `constraints:`) |
+| 4 | image | `radio-analyst:image-stage` | `<ms_path> workdir=<workdir>`, `stokes: I`, `spw: <surviving_spws>` (from `postcal` handoff / user `spw:`), plus EVERY explicit user imaging constraint (`field:`, `cell:`, `imsize:`, `deconvolver:`, `pblimit:`, `pbmask:`, `nsigma:`, `constraints:`) |
 | 4b | postcal (post-imaging fallback, if 3c did not run and section 4 B or C finds outliers) | `radio-analyst:postcal-stage` | `<ms_path> workdir=<workdir>`, `field: <target fields>` |
-| 5 | selfcal (when section 4 says so) | `radio-analyst:selfcal-stage` | `<ms_path> workdir=<workdir> imagename=<prefix of the image to improve>`; with `stokes=IQUV`, `pol_tables: <kcross.K, dterms.D, and polangle.X if solved, full paths>` |
-| 6 | image, IQUV cube (`stokes=IQUV` only, last) | `radio-analyst:image-stage` | `<ms_path> workdir=<workdir>`, `stokes: IQUV`, `imagename: <prefix of the last target image>`, plus any explicit user constraints (`spw:`, `cell:`, `imsize:`, `pblimit:`, `pbmask:`, `nsigma:`, `cube_width:`, `constraints:`) |
+| 5 | selfcal (when section 4 says so) | `radio-analyst:selfcal-stage` | `<ms_path> workdir=<workdir> imagename=<prefix of the image to improve>`, `spw: <surviving_spws>` (from `postcal` handoff / user `spw:`); with `stokes=IQUV`, `pol_tables: <kcross.K, dterms.D, and polangle.X if solved, full paths>` |
+| 6 | image, IQUV cube (`stokes=IQUV` only, last) | `radio-analyst:image-stage` | `<ms_path> workdir=<workdir>`, `stokes: IQUV`, `imagename: <prefix of the last target image>`, `spw: <surviving_spws>` (from `postcal` handoff / user `spw:`, noting gap-aware / per-SPW channelization when surviving SPWs are non-contiguous), plus any explicit user constraints (`cell:`, `imsize:`, `pblimit:`, `pbmask:`, `nsigma:`, `cube_width:`, `constraints:`) |
 
-**User constraint forwarding (mandatory):** Whenever the user prompt states
-explicit constraints (`field`, `spw`, `cell`, `imsize`, `deconvolver`,
-`pblimit`, `pbmask`, `nsigma`, `cube_width`, or continuum-SPW selection), pass
-each constraint verbatim as a `name: value` line (and any free-form requirements
-as `constraints: <text>`) to the relevant stage agent. Never silently drop or
-override user parameters across stage handoffs.
+**User constraint & `surviving_spws` forwarding (mandatory):** Whenever the user
+prompt states explicit constraints (`field`, `spw`, `cell`, `imsize`,
+`deconvolver`, `pblimit`, `pbmask`, `nsigma`, `cube_width`, or continuum-SPW
+selection), pass each constraint verbatim as a `name: value` line (and any
+free-form requirements as `constraints: <text>`) to the relevant stage agent.
+Never silently drop or override user parameters across stage handoffs. Whenever `postcal-stage` reports `surviving_spws:` in `STAGE HANDOFF: postcal`
+(always valid CASA SPW syntax such as `2,3,4,5` or `0~15`, or `""` empty string
+when all SPWs are clean -- NEVER pass the literal word `all`, which
+`parse_spw_selection` and CASA `MSSelection` reject), forward
+`spw: <surviving_spws>` (respecting any narrower user `spw:`) to ALL FOUR
+downstream consumers: (1) post-check `ms_spw_amp_severity`, (2) Stage 4
+`image-stage` + `ms_radiometer_estimate`, (3) Stage 5 `selfcal-stage`, and (4)
+Stage 6 `image_iquv` (with gap-aware / per-SPW channelization on non-contiguous
+surviving SPWs).
 
 ## Skill excerpts: static stage bundles
 
@@ -239,7 +262,7 @@ MSs: no read-only tool measures it) and 07:657 (fluxscale flux vs
 | Check | Tool, field | Pass | On fail |
 |---|---|---|---|
 | Pol solves and the pol apply on the target recorded (commands/polcal.md steps 4-7) | `ms_workflow_status({ms}, workdir, stokes='IQUV')` `next_recommended_step` | `postcal_target_rfi` or `first_image` | retry |
-| Kcross amplitude (09 "Decision summary") | `ms_calsol_stats({workdir}/kcross.K)` `delay_abs_max_ns` | < 2 | pass, and put it in the caveats ("Flag in summary") |
+| Kcross cross-SPW coherence & jump (09 "Decision summary") | `ms_calsol_stats({workdir}/kcross.K)` signed per-SPW `delay_median_ns` and `delay_abs_max_ns` | Cross-SPW coherence `MAD_spw_ns * 1e-9 * spw_bw_hz << 0.1` cycles (equivalently `MAD_spw_ns * spw_bw_ghz << 0.1`; static cable offsets calibrate out cleanly on any array/band); no SPW with `\|delay_ns - median_delay_ns\| * 1e-9 * spw_bw_hz > 0.25` cycles (`90 deg`; equivalently `* spw_bw_ghz > 0.25`) AND `\|delay_ns - median_delay_ns\| > 5 * MAD_spw_ns` | single-SPW outlier: retry `polcal-stage` to flag that SPW in `kcross.K` via `ms_flag_caltable(mode='manual')` or exclude that SPW; array-wide incoherence: pass and put it in the caveats ("Flag in summary") |
 | D-term median amplitude (09 "Decision summary") | `ms_calsol_stats({workdir}/dterms.D)` `amp_median` | < 0.05 | 0.05 to 0.10: pass, and put it in the caveats. Over 0.10: stop and ask; 09 names no action there, so this stop is our rule: say so |
 | D-term outlier antennas (09 "Decision summary") | same, `outliers.amp_outliers_n_antennas` and `amp_outliers_by_antenna` | report it | none |
 | PA coverage of the leakage cal (09 "PA coverage for a `Df+QU` solve") | `ms_pol_cal_conditions({cal})` `leakage_calibrator.pa_spread_deg` | report it | none |
@@ -248,55 +271,88 @@ MSs: no read-only tool measures it) and 07:657 (fluxscale flux vs
 Note as `not_checked` for `caveats`, with the reason that no tool measures them:
 the Xf PA residual and the `Df+QU` recovered Q/U (09 "Decision summary").
 
-### 3c. Pre-imaging target CORRECTED_DATA RFI triage (before Stage 4)
+### 3c. Pre-imaging continuum target CORRECTED_DATA RFI triage (before Stage 4)
+
+**Scope strictly to continuum SPWs (`specmode='mfs'`):** automatic `postcal`
+`freqdev` `rflag` and `surviving_spws` dropping apply **only to continuum SPWs**.
+Explicitly **exempt spectral-line / maser SPWs and rest-frequency line windows**,
+where genuine narrow astronomical line derivatives trigger `chan_diff_*`. When
+spectral-line SPWs are present alongside continuum SPWs, pass
+`spw: <continuum_spws>` to `postcal-stage` (and `spw=<continuum_spws>` to
+`ms_spw_amp_severity` below; `""` when all SPWs are continuum).
 
 Run right after Stage 3 `calibrate` passes (for `stokes=I`), or right after
 Stage 3b `polcal` passes (for `stokes=IQUV`), **before** launching Stage 4
-`image`. Imaging unflagged target RFI wastes a full `tclean` pass, causes
-`stopcode=6` divergence, and inflates residual RMS even when calibration is
-spotless; on clean data this check is a fast read-only no-op.
+`image`. Imaging unflagged continuum target RFI wastes a full `tclean` pass,
+causes `stopcode=6` divergence, and inflates residual RMS even when calibration
+is spotless; on clean data this check is a fast read-only no-op.
 
-Run both read-only tools on the target fields:
-1. `ms_spw_amp_severity({ms}, datacolumn='CORRECTED_DATA', field=<targets>, workdir=workdir)`
+Run both read-only tools on the target fields (continuum SPWs):
+1. `ms_spw_amp_severity({ms}, datacolumn='CORRECTED_DATA', field=<targets>, spw=<continuum_spws or ''>, workdir=workdir)`
 2. `ms_vis_amp_time_stats({ms}, field=<targets>, datacolumn='CORRECTED_DATA', top_k=5)`
 
-Trigger `radio-analyst:postcal-stage` (conservative `rflag` only on target
-`CORRECTED_DATA`, NEVER amplitude clip) BEFORE Stage 4 `image` if ANY of these
-sky-cancelling adjacent-channel spectrum or time-outlier indicators is measured:
+Trigger `radio-analyst:postcal-stage` (passing `spw: <continuum_spws>` whenever
+spectral-line SPWs are present; bounded `<= 2` `rflag` rounds on continuum SPWs
+of target `CORRECTED_DATA`, NEVER amplitude clip, NEVER automatic `freqdev`
+`rflag` or `surviving_spws` dropping on spectral-line / maser SPWs, NEVER
+destructive whole-SPW flagging) BEFORE Stage 4 `image` if ANY of these
+SEFD-invariant within-SPW Gaussianity or time-outlier indicators is measured on
+continuum SPWs:
 - `chan_diff_std_over_mad >= 1.5` OR `max_spw_chan_diff_std_over_mad >= 1.8` in `ms_spw_amp_severity`, OR
 - `chan_diff_gt10sigma_frac >= 0.001` (`>= 0.1%` >10-sigma adjacent-channel outliers), OR
-- `spw_rms_ratio >= 1.5` (`max_spw_rms / median_spw_rms`), OR
 - Any well-populated integration (`npts >= 0.25 * median_npts`) in `ms_vis_amp_time_stats.top_outliers` has `ratio_to_median >= 2.0`.
 
-If NONE of these hold (clean target spectrum, e.g. `chan_diff_std_over_mad ~ 1.02`
-on clean C-band or L-band), skip `postcal-stage` and proceed directly to Stage 4
-`image`. If `postcal-stage` runs here:
-- Verify it against the Section 4b checks (`rc 0`, before/after `ms_flag_summary`,
-  AND after-flagging `ms_spw_amp_severity` proving `chan_diff_std_over_mad < 1.5`,
-  `max_spw_chan_diff_std_over_mad < 1.8`, `chan_diff_gt10sigma_frac < 0.001`, and
-  `spw_rms_ratio < 1.5`).
+Treat bandwidth-normalized `spw_noise_density_ratio` (from
+`chan_diff_noise_density = chan_diff_rms * sqrt(chan_width_hz)`) /
+`spw_rms_ratio` strictly as a secondary smoothness diagnostic (distinguishing a
+discontinuous single-SPW RFI jump from a smooth `T_sys(nu)` / atmospheric /
+sky-temperature gradient), not a hard trigger gate.
+
+If NONE of these hold (clean continuum target spectrum, e.g.
+`chan_diff_std_over_mad ~ 1.02`), skip `postcal-stage` and proceed directly to
+Stage 4 `image`. If `postcal-stage` runs here:
+- Read `surviving_spws:` from `STAGE HANDOFF: postcal` (must be valid CASA SPW
+  syntax, e.g. `2,3,4,5`, `0~15`, or `""` empty string when every SPW is clean
+  -- NEVER pass the word `all` as `spw=`; if `postcal` identified persistently
+  RFI-saturated or atmospheric-absorption-dominated continuum SPWs from
+  `per_spw`, it emits the clean surviving continuum SPW list rather than
+  spinning 3+ `rflag` rounds; spectral-line / maser SPWs are never auto-dropped).
+- Verify it against the Section 4b checks (`rc 0`, `<= 2` `rflag` rounds,
+  before/after `ms_flag_summary`, AND after-flagging
+  `ms_spw_amp_severity({ms}, datacolumn='CORRECTED_DATA', field=<targets>,
+  spw=<surviving_spws>, workdir=workdir)` proving `chan_diff_std_over_mad < 1.5`,
+  `max_spw_chan_diff_std_over_mad < 1.8`, and `chan_diff_gt10sigma_frac < 0.001`).
 - Call `ms_record_stage_decision(stage="postcal", ...)` with the before/after
-  spectrum numbers, and proceed to Stage 4 `image`.
-- Postcal runs at most once per reduction (unless a retry is required because
-  default `5.0/5.0` still left `chan_diff_std_over_mad >= 1.5`); if it already
-  cleaned the spectrum in 3c, do not repeat it in Section 4 Step D.
+  spectrum numbers and `surviving_spws`, and forward `spw: <surviving_spws>` to
+  Stage 4 `image` (+ `ms_radiometer_estimate`), Stage 5 `selfcal`, and Stage 6
+  `image_iquv`.
+- Postcal runs at most once per reduction (`<= 2` `rflag` rounds total; never
+  spin on persistently RFI-saturated or atmospheric-absorption-dominated SPWs);
+  if it already cleaned and triaged the surviving continuum SPWs in 3c, do not
+  repeat it in Section 4 Step D.
 
 ### 4. image (11-imaging.md:327-365, quality gates)
 
 The image stage makes an initial shallow pass (`hogbom`, or `mtmfs nterms=2`
-with `specmode='mfs'` and `nsigma=5.0` when `fractional_span > 0.2` on a mosaic)
-followed by adaptive masked `multiscale` / `mtmfs` passes (commands/image.md
-steps 4-5, 11-imaging.md Step 2). Run the checks on the final image
-(`.image.pbcor`, or `.image.tt0.pbcor` / `.image.pbcor.tt0` + `.psf.tt0` for
-`mtmfs`) using `pb_level=0.1` (or user `pbmask`); report the first-pass numbers
-beside them. Compute the radiometer prediction directly with
-`ms_radiometer_estimate({ms}, field=<targets>, spw=<user spw or ''>, stokes='I', weighting='briggs', robust=0.5)`
-(`thermal_rms_jy`, `fractional_span`).
+with `specmode='mfs'`, `nsigma=5.0`, `savemodel='none'` when
+`fractional_span > 0.2` on a mosaic, ALWAYS passing `phasecenter =
+mosaic_groups[].bbox_center_j2000` on multi-pointing mosaics) followed by
+adaptive masked `multiscale` / `mtmfs` passes (commands/image.md steps 4-5,
+11-imaging.md Step 2). Run the checks on the final image (`.image.pbcor`, or
+`.image.tt0.pbcor` / `.image.pbcor.tt0` + `.psf.tt0` for `mtmfs`) using
+`pb_level=0.1` (or user `pbmask`); report the first-pass numbers beside them.
+Compute the radiometer prediction directly with
+`ms_radiometer_estimate({ms}, field=<targets>, spw=<surviving_spws or user spw or ''>, stokes='I', weighting='briggs', robust=0.5)`
+(`thermal_rms_jy`, `fractional_span`, `min_freq_hz`, `max_freq_hz`). Orchestrator
+retry cap for `image` is **`<= 3`** (never retry by coarsening `cell` below
+Nyquist or shrinking `imsize` below `extent + 4.0 * pb_fwhm(min_freq)`).
 
 | Check | Tool, field | Pass | On fail |
 |---|---|---|---|
 | Image measures | `ms_image_stats(<imagename>.image.pbcor, psf_path, pb_level)` | status ok | retry |
-| `tclean` convergence & deliverable hygiene (11 Step 8 & 9) | Read last `tclean` entry in `{workdir}/stage_log.jsonl`: `measurement.converged`, `measurement.stopcode`, and verify delivered product prefix | `converged == true` (`stopcode` is `2` or `8`) AND no rejected/diverged image listed or left unquarantined in `{workdir}` | **HARD FAIL** on `stopcode=1`, `5`, or `6`: NEVER accept or ship. Quarantine/move `<rejected>.*` into `{workdir}/rejected/` before retrying; keep Phase A shallow (`nsigma=5.0`), mask inside `PB >= 0.1`, verify clean target spectrum and full `imsize` (NEVER raise `threshold` above `~3--5x` rms) |
+| `tclean` convergence & deliverable hygiene (11 Step 8 & 9) | Read last `tclean` entry in `{workdir}/stage_log.jsonl`: `measurement.converged`, `measurement.stopcode`, and verify delivered product prefix | `converged == true` (`stopcode` is `2` or `8`) AND no rejected/diverged image listed or left unquarantined in `{workdir}` | **HARD FAIL** on `stopcode=1`, `5`, or `6`: NEVER accept or ship (`tclean.py` auto-quarantines `stopcode in (5, 6)` to `{workdir}/rejected/`). Fix root cause (`phasecenter = bbox_center_j2000`, `fov >= extent + 4.0 * pb_fwhm(min_freq)`, `pixels_per_beam_minor >= 2.5`, clean `spw=<surviving_spws>` spectrum, shallow Phase A `nsigma=5.0` + tight PyBDSF `usemask='user'` mask inside `PB >= 0.1`, never retrying unmasked `usemask='pb'` more than once after `stopcode=5/6`, never coarsening `cell` / shrinking `imsize` / raising `threshold` above `~3--5x` rms) |
+| Mosaic `edge_pb_max` + geometric FOV padding (11 Step 4 & 9) | `ms_image_stats` `edge_pb_max` **AND** `imsize * cell` vs `extent + 4.0 * pb_fwhm(nu_low, D_min)` (`ms_field_list` `mosaic_groups[]` + tapered `1.15 * lambda / D_min`) | `edge_pb_max < 0.02` **AND** `fov >= extent + 4.0 * pb_fwhm(nu_low, D_min)` (`4.0 * pb_fwhm` single-pointing) with `phasecenter = bbox_center_j2000` (a 1st-null border reads `0.0` while still wrapping the 1st positive sidelobe!) | retry `image-stage` with `phasecenter = mosaic_groups[].bbox_center_j2000` (noting `central_field_name` / `psfphasecenter` if `central_field_offset_arcmin > 0.5 * pb_fwhm`) and `imsize` padded by `2.0 * pb_fwhm(nu_low, D_min)` per side; if `edge_pb_max >= 0.02` persists on retry, explicitly **grow `imsize` beyond the formula** (e.g. `+1.0 * pb_fwhm` per side, rounded up to an even `2^a * 3^b * 5^c` within available RAM) instead of re-evaluating the identical formula |
+| Nyquist sampling (11 Step 3 & 9) | `ms_image_stats` `pixels_per_beam_minor` | `>= 2.5` (prefer `>= 3.0`, derived with divisor `4`) | `< 2.5` (sub-Nyquist): retry `image-stage` with finer `cell` (`<= beam_minor_arcsec / 3.0`); NEVER coarsen `cell` below Nyquist on retry |
 | `.model` positivity (Stokes I, 11 Step 9) | `ms_image_stats`: `model_neg_to_pos_flux_ratio`, `model_neg_pixel_fraction`, `model_neg_to_pos_peak_ratio`, `model_outer_pb_flux_frac` | Predominantly positive (`model_neg_to_pos_flux_ratio < 0.25`, `model_neg_to_pos_peak_ratio < 0.25`) | Negative-dominated or surging negative `.model`: quarantine rejected image and retry `image-stage` with tighter mask/scales or revert to cleaner earlier round (programmatic check; does not require vision) |
 | Deconvolution convergence inside `PB >= 0.1` (11 Step 2 & 9) | `ms_image_stats`: `residual_out_mask_peak_snr`, `residual_in_mask_peak_snr`, `residual_in_to_out_rms_ratio`, `residual_in_model_rms_ratio` | `< 5.0`, `< 3.5`, `< 1.5`, `< 1.5` (quick-look `usemask='pb'` with `residual_in_model_rms_ratio > 1.5` or `residual_rms_jy > 1.3 * thermal_rms_jy` MUST run masked deep clean) | unmasked flux outside mask (`>= 5.0`) or uncleaned flux inside mask/model (`>= 3.5` or ratio `>= 1.5`): retry `image-stage` with `ms_make_mask` (`pb_level=0.1`) or Phase C deep clean (`nsigma=1.5`) BEFORE blaming calibration/RFI |
 | Outer-PB residual probe (`0 < PB < 0.1`, 11 Step 2 & 9) | `ms_image_stats`: `residual_outer_pb_peak_snr`, `residual_outer_pb_peak_pb`, `residual_outer_pb_peak_j2000` | Report always; **trigger Version-1 baby-peel probe** whenever `residual_outer_pb_peak_snr >= 20` AND science-PB RMS `> 1.3 * thermal_rms_jy` | When triggered: cross-match `(ra_deg, dec_deg)` against `ms_field_list` (if phasecal, include pointing), else retry `image-stage` to run Version-1 baby-peel probe (before/after dirty mosaic RMS) -- keep peeled MS if science-PB RMS improves, else keep unpeeled and report probe delta |
@@ -399,13 +455,13 @@ remaining gap is the imaging. Work down this order, one step per attempt:
    the prefix of the last target-field image (it wrote MODEL_DATA, which selfcal
    solves against; never the calibrator noise image).
 
-### 4b. postcal (rflag only)
+### 4b. postcal (bounded `<= 2` `rflag` rounds on continuum SPWs + per-SPW triage, no clip)
 
 | Check | Tool, field | Pass | On fail |
 |---|---|---|---|
-| rflag ran on the targets | handoff `scripts` (`.rc` 0) and `ms_workflow_status` | rc 0 | retry |
+| rflag ran on continuum SPWs of targets (`<= 2` rounds) | handoff `scripts` (`.rc` 0), `surviving_spws:` line, and `ms_workflow_status` | rc 0, `<= 2` `rflag` rounds on continuum SPWs only (spectral-line / maser SPWs exempt), valid CASA SPW syntax in `surviving_spws:` (e.g. `2,3,4,5`, `0~15`, or `""` -- never `all`) | retry (if non-zero `.rc` or missing/invalid `surviving_spws:`; never spin 3+ `rflag` rounds on persistently RFI-saturated or atmospheric-absorption-dominated SPWs) |
 | Flagged fraction before and after, per target field | the stage's `ms_flag_summary` numbers, from the handoff | report it | none |
-| Target spectrum clean after rflag | `ms_spw_amp_severity({ms}, datacolumn='CORRECTED_DATA', field=<targets>, workdir=workdir)` | `chan_diff_std_over_mad < 1.5`, `max_spw_chan_diff_std_over_mad < 1.8`, `chan_diff_gt10sigma_frac < 0.001`, `spw_rms_ratio < 1.5` | retry once with tighter thresholds (`timedevscale=4.0, freqdevscale=4.0`) or stop and ask |
+| Surviving continuum SPWs clean after rflag | `ms_spw_amp_severity({ms}, datacolumn='CORRECTED_DATA', field=<targets>, spw=<surviving_spws>, workdir=workdir)` | `chan_diff_std_over_mad < 1.5`, `max_spw_chan_diff_std_over_mad < 1.8`, `chan_diff_gt10sigma_frac < 0.001` (treat bandwidth-normalized `spw_noise_density_ratio` / `spw_rms_ratio` strictly as a secondary smoothness diagnostic, not a hard gate) | if `< 2` `rflag` rounds ran so far, retry once (`timedevscale=4.0, freqdevscale=4.0`) on continuum SPWs and re-triage `surviving_spws` from `per_spw`; otherwise stop and ask (never run destructive whole-SPW flagging in `postcal` and never auto-drop spectral-line / maser SPWs) |
 
 ### 5. selfcal (12-selfcal.md:193-246)
 
@@ -426,11 +482,15 @@ Read `<prefix>_sc1.png` and record `png_reviewed` as in section 4.
 ### 6. image, IQUV cube (11-imaging.md, "Polarization frequency cubes")
 
 `stokes=IQUV` only, after every Stokes I stage. The cube is one hogbom pass with
-`savemodel='none'`, so the Stokes I model in MODEL_DATA stays as it was.
+`savemodel='none'`, so the Stokes I model in MODEL_DATA stays as it was. Pass
+`spw: <surviving_spws>` (noting gap-aware / per-SPW channelization on
+non-contiguous surviving SPWs) and enforce `phasecenter = bbox_center_j2000` on
+multi-pointing mosaics; orchestrator retry cap is `<= 3`.
 
 | Check | Tool, field | Pass | On fail |
 |---|---|---|---|
 | Cube measures | `ms_image_stats(<prefix>_iquv.image.pbcor, psf_path, pb_level)` | status ok, `planes` present | retry |
+| Cube geometry & Nyquist (11 Step 3, 4 & 9) | same: `edge_pb_max`, `pixels_per_beam_minor`, `fov >= extent + 4.0 * pb_fwhm(nu_cube_min, D_min)` (tapered `1.15 * lambda / D_min`) | `edge_pb_max < 0.02` + `fov` padded `2.0 * pb_fwhm(nu_cube_min, D_min)` per side, `pixels_per_beam_minor >= 2.5` (prefer `>= 3.0`) | retry with `phasecenter = bbox_center_j2000`, `cell` at cube's imaged `nu_cube_max` (divisor `4`), `imsize` at cube's imaged `nu_cube_min` (`4.0 * pb_fwhm`, growing `imsize` by `+1.0 * pb_fwhm` per side if `edge_pb_max >= 0.02` persists) |
 | Stokes V near the noise (11 "Quality gates (per-plane)") | same, `planes`: V `peak_jy` / `rms_jy` per plane | report it | V over 5 times its rms in every plane: stop and ask. 11 gives no number, so 5 is our rule: say so |
 | Q and U present (same table) | same, Q and U `peak_jy` per plane | report it | none |
 
@@ -466,11 +526,18 @@ To choose a value that no skill or stage command gives, call
 
 ## End
 
-Before calling `ms_report`, verify: if target `residual_out_mask_rms_jy` (or
-`residual_rms_jy` when unmasked) exceeded `2x thermal_rms_jy` after
-deconvolution converged, Check A (calibrator noise image) was executed and the
-noise ladder was either resolved or closed with `decision: "stop_ask_user"`
-(never silently accepted).
+Before calling `ms_report`, verify ALL THREE invariants:
+1. Every `Agent`/`task` stage call executed in this run has a matching
+   `ms_record_stage_decision` record (including terminal failures and
+   `stop_ask_user`).
+2. If any decision was `"stop_ask_user"`, NO downstream `Agent`/`task` call was
+   invoked after it; pass `image_path=""` to `ms_report` when no converged target
+   image was accepted, then end your turn immediately.
+3. If target `residual_out_mask_rms_jy` (or `residual_rms_jy` when unmasked)
+   exceeded `2x thermal_rms_jy` after deconvolution converged, Check A
+   (calibrator noise image) was executed and the noise ladder was either
+   resolved or closed with `decision: "stop_ask_user"` (never silently
+   accepted).
 
 After the last stage (or a stop), build the report with
 `ms_report(workdir, summary, decisions, caveats, image_path=<last .image.pbcor>)`.

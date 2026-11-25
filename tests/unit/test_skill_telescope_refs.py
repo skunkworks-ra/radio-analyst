@@ -182,18 +182,23 @@ class TestSefdTableMatchesProfiles:
 # ---------------------------------------------------------------------------
 class TestCanonicalNameMatching:
     CANONICAL = {spec.canonical for spec in _SPECS.values()}
+    NON_CANONICAL_ALIASES = {
+        alias for spec in _SPECS.values() for alias in spec.aliases
+    } - CANONICAL
 
     @pytest.mark.parametrize("path", GRIDDER_FILES, ids=lambda p: p.name)
     def test_gridder_rule_matches_canonical_names(self, path: Path) -> None:
         """
-        The Step 6 gridder rule compares against ms_inspect's `telescope` field,
-        which is the canonical name. Matching on an alias silently sends VLA
-        mosaics down the unsupported-telescope path.
+        The Step 6 gridder rule compares against ms_inspect's `telescope_name`
+        field (canonical name) or CASA primary-beam model availability.
+        Matching on a raw alias (e.g. EVLA, JVLA, GMRT) silently sends mosaics
+        down the unsupported-telescope path.
         """
         text = path.read_text(encoding="utf-8")
-        rules = re.findall(r"telescope (?:in|NOT in) `\{([^}]*)\}`", text)
-        assert rules, f"{path.name}: gridder telescope rule not found or reshaped."
 
+        # (a) If any explicit `telescope (in|NOT in) {...}` rule appears, every
+        # listed name must be canonical.
+        rules = re.findall(r"telescope (?:in|NOT in) `\{([^}]*)\}`", text)
         bad: list[str] = []
         for rule in rules:
             for name in (n.strip() for n in rule.split(",")):
@@ -202,4 +207,27 @@ class TestCanonicalNameMatching:
         assert not bad, (
             f"{path.name} matches telescope on non-canonical name(s): {bad}. "
             "resolve_telescope() returns the canonical name."
+        )
+
+        # (b) Step 6 gridder section must exist and must not use any non-canonical
+        # telescope alias in its gridder decision rules/table (the explicit
+        # normalization warning citing raw MS::OBSERVATION::TELESCOPE_NAME is exempt).
+        step6_match = re.search(r"(^## Step 6\b.*?)(?=^## |\Z)", text, re.M | re.S)
+        assert step6_match, f"{path.name}: Step 6 gridder section not found."
+        step6_text = step6_match.group(1)
+        rule_lines = [
+            line
+            for line in step6_text.splitlines()
+            if "MS::OBSERVATION::TELESCOPE_NAME" not in line
+            and "which may be `EVLA` or `JVLA`" not in line
+        ]
+        rule_text = "\n".join(rule_lines)
+        alias_hits = [
+            alias
+            for alias in sorted(self.NON_CANONICAL_ALIASES)
+            if re.search(rf"(?<![A-Za-z0-9_]){re.escape(alias)}(?![A-Za-z0-9_])", rule_text)
+        ]
+        assert not alias_hits, (
+            f"{path.name} Step 6 gridder rules contain non-canonical telescope "
+            f"alias(es): {alias_hits} (canonical names: {sorted(self.CANONICAL)})"
         )

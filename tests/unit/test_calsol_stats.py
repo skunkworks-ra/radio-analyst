@@ -524,6 +524,7 @@ class TestRunG:
             result = calsol_stats.run(str(tbl))
         assert "delay_ns" not in result["data"]
         assert "delay_rms_ns" not in result["data"]
+        assert "delay_median_ns" not in result["data"]
 
     def test_g_table_has_amp_phase_fields(self, tmp_path):
         tbl = tmp_path / "gain.g"
@@ -842,3 +843,21 @@ class TestKcrossAndSignedCompactDelay:
         # Both corr 0 and corr 1 contribute to K-table RMS (including legitimate 0.0 on ant 2 corr 1)
         expected_rms = math.sqrt(np.mean(np.array([1.0, 2.0, 3.0, 1.1, -2.5, 0.0]) ** 2))
         assert compact["delay_rms_ns"]["value"] == [[pytest.approx(expected_rms)]]
+
+    def test_delay_median_ns_present_in_compact_and_distinguishes_sign_flip(self, tmp_path):
+        """Signed delay_median_ns exposes -8.5 ns -> +8.5 ns SPW flips hidden by unsigned delay_rms_ns."""
+        tbl = tmp_path / "kcross_flip.K"
+        tbl.mkdir()
+        f_neg = np.array([[[-8.5, -8.5, -8.5]], [[0.0, 0.0, 0.0]]], dtype=float)
+        f_pos = np.array([[[8.5, 8.5, 8.5]], [[0.0, 0.0, 0.0]]], dtype=float)
+
+        for verbosity in ("compact", "full"):
+            ot = self._mock_delay_table(tbl, "Kcross Jones", {0: f_neg, 1: f_pos})
+            with patch("ms_inspect.tools.calsol_stats.open_table", side_effect=ot):
+                d = calsol_stats.run(str(tbl), verbosity=verbosity)["data"]
+
+            # Unsigned RMS is identical across both SPWs (8.5 ns), hiding the 17 ns sign flip.
+            assert d["delay_rms_ns"]["value"] == [[pytest.approx(8.5)], [pytest.approx(8.5)]]
+            # Signed delay_median_ns directly distinguishes -8.5 ns vs +8.5 ns in both modes!
+            assert d["delay_median_ns"]["flag"] == "COMPLETE"
+            assert d["delay_median_ns"]["value"] == [[pytest.approx(-8.5)], [pytest.approx(8.5)]]

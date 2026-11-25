@@ -67,29 +67,51 @@ until `status=done`.
    and then redo the calibration solve: it was made against a Stokes-I model.
 
 4. Cross-hand delay on calibrators.ms: `ms_gaincal(..., field=angle_cal,
-   gaintype='KCROSS', solint='inf', combine='scan', smodel=[1, 0, 1, 0],
-   gaintable=[priorcals + K + B + G], caltable=workdir/kcross.K, execute=False)`
-   -> run. `ms_calsol_stats(kcross.K)` -- report `delay_abs_max_ns` (09: < 2 ns).
+   gaintype='KCROSS', solint='inf', combine='scan',
+   gaintable=[priorcals + K + B + G],
+   gainfield=['' per priorcal, '', '', angle_cal],
+   caltable=workdir/kcross.K, execute=False)` -> run. When `angle_cal` already
+   has a physical polarized `MODEL_DATA` written by `ms_setjy_polcal`, **omit
+   `smodel`** (letting CASA use true `(I, Q, U)` with `parang=True`, avoiding
+   the linear-feed `XY -> 0` null at `psi = +-45 deg`); pass `smodel` only when
+   solving `KCROSS` on an unmodeled source away from the feed null. ALWAYS pass
+   `gainfield=[..., angle_cal]` in the `gain.G` slot -- never leave `gainfield`
+   blank on `gain.G`. `ms_calsol_stats(kcross.K)` -- report `delay_abs_max_ns`
+   and signed per-SPW `delay_median_ns`, checking **cross-SPW coherence**
+   (`MAD_spw_ns * 1e-9 * spw_bw_hz << 0.1` cycles, equivalently
+   `MAD_spw_ns * spw_bw_ghz << 0.1`; static receiver cable offsets calibrate out
+   cleanly on any array/band) and single-SPW phase-turn jumps: if any SPW has
+   `|delay_ns - median_delay_ns| * 1e-9 * spw_bw_hz > 0.25` cycles (`90 deg`
+   across the SPW; equivalently `* spw_bw_ghz > 0.25`) AND
+   `|delay_ns - median_delay_ns| > 5 * MAD_spw_ns`, flag that SPW's solutions via
+   `ms_flag_caltable(workdir/kcross.K, mode='manual',
+   spw='<bad_spw>', reason='cross-SPW kcross phase-turn outlier (>0.25 cycles and >5*MAD)')`
+   or exclude that SPW before Step 5.
 
 5. D-term leakage on calibrators.ms: `ms_polcal(..., field=leakage_cal,
    poltype=<recommended_df_poltype: 'Df' for a known- or zero-pol source, 'Df+QU'
    for an unknown-pol one>, solint='inf', combine='scan',
-   gaintable=[priorcals + K + B + G + kcross], caltable=workdir/dterms.D,
-   execute=False)` -> run. Then `ms_flag_caltable(dterms.D, sigma=5.0)` before it
-   is used (09 Step 3). `ms_calsol_stats(dterms.D)` -- report `amp_median` and
+   gaintable=[priorcals + K + B + G + kcross],
+   gainfield=['' per priorcal, '', '', leakage_cal, ''],
+   caltable=workdir/dterms.D, execute=False)` -> run. Then
+   `ms_flag_caltable(dterms.D, sigma=5.0)` before it is used (09 Step 3).
+   `ms_calsol_stats(dterms.D)` -- report `amp_median` and
    `outliers.amp_outliers_n_antennas`.
 
 6. Position angle on calibrators.ms (only if an angle standard was observed):
    `ms_polcal(..., field=angle_cal, poltype='Xf', solint='inf', combine='scan',
    gaintable=[priorcals + K + B + G + kcross + dterms],
+   gainfield=['' per priorcal, '', '', angle_cal, '', ''],
    caltable=workdir/polangle.X, execute=False)` -> run.
 
 7. One applycal step, after every polarisation solve, with `parang=True`
    (mandatory), one call per field type as 09-polcal-execution.md Step 5:
    priorcals -> K -> B -> `gain.fluxscaled` -> kcross -> dterms -> polangle (when
-   solved), with the gainfield and interp that step gives. Each calibrator on
-   calibrators.ms (5a), the target on the full MS (5b). Never `gain.G` here: it
-   leaves the target off the flux scale.
+   solved), with `gainfield=<self>` on EVERY calibrator in `calibrators.ms` (5a
+   -- NEVER transfer the phase calibrator's gain onto a distinct
+   polarization-angle or leakage calibrator, and never leave `gainfield=''` on
+   `gain.fluxscaled`) and `gainfield=phase_cal` on the science target in the
+   full MS (5b). Never `gain.G` here: it leaves the target off the flux scale.
 
 **Output:** summary of each polcal step, `delay_abs_max_ns` for kcross.K,
 `amp_median` and outlier antennas for dterms.D, whether Xf was solved and why,

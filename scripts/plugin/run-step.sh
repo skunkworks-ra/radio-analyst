@@ -98,6 +98,16 @@ if [ -f "$PID_FILE" ] && [ ! "$SCRIPT" -nt "$PID_FILE" ]; then
         exit 1
     fi
 else
+    script_dir="$(dirname "$SCRIPT")"
+    for pfile in "$script_dir"/*.pid; do
+        [ -f "$pfile" ] || continue
+        [ -f "${pfile%.pid}.rc" ] && continue
+        opid="$(tr -d '[:space:]' < "$pfile" || true)"
+        if _pid_alive "$opid"; then
+            echo "status=busy active=${pfile%.pid} pid=${opid} pid_alive=true"
+            exit 1
+        fi
+    done
     rm -f "$RC_FILE" "$PID_FILE" "${RC_FILE}.tmp"
     : > "$LOG_FILE"
     setsid bash -c '

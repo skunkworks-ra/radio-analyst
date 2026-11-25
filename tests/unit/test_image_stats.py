@@ -928,3 +928,224 @@ class TestMinJyAndNegativeBowl:
         assert (
             "fallback to residual_in_model_rms_ratio" in out["residual_in_to_out_rms_ratio"]["note"]
         )
+
+
+class TestEdgePbMaxAndPixelsPerBeamMinor:
+    """2-pixel rim edge_pb_max across all planes and min-beam pixels_per_beam_minor."""
+
+    def test_edge_pb_max_reads_2px_rim_when_outer_pixel_zero_padded(self, tmp_path):
+        """CASA often zero-pads pixel 0 while pixel 1 holds the clipped PB (e.g. 0.7443)."""
+        import numpy as np
+
+        from ms_inspect.tools import image_stats
+
+        img_dir = tmp_path / "mosaic.image.tt0.pbcor"
+        pb_dir = tmp_path / "mosaic.pb.tt0"
+        img_dir.mkdir()
+        pb_dir.mkdir()
+
+        pb = np.zeros((32, 32, 1, 1), dtype=float)
+        # Interior PB is 0.95 (must NOT count as edge!)
+        pb[4:28, 4:28, 0, 0] = 0.95
+        # Pixel 0 is zero-padded (and NaN at one corner), pixel 1 holds 0.7443
+        pb[0, 0, 0, 0] = np.nan
+        pb[1, 16, 0, 0] = 0.7443
+
+        def fake_open(path):
+            ia = MagicMock()
+            ia.getchunk.return_value = pb
+            cm = MagicMock()
+            cm.__enter__.return_value = ia
+            return cm
+
+        with patch.object(image_stats, "open_image", side_effect=fake_open):
+            res = image_stats._edge_pb_max(str(img_dir), [], [])
+
+        assert res["flag"] == "COMPLETE"
+        assert res["value"] == pytest.approx(0.7443)
+
+    def test_edge_pb_max_checks_all_spectral_planes(self, tmp_path):
+        """Lowest-frequency spectral plane may have the widest PB; check across all planes."""
+        import numpy as np
+
+        from ms_inspect.tools import image_stats
+
+        img_dir = tmp_path / "cube.image.pbcor"
+        pb_dir = tmp_path / "cube.pb"
+        img_dir.mkdir()
+        pb_dir.mkdir()
+
+        # Shape [32, 32, 1, 3]: chan 0 & 1 have small border PB, chan 2 has 0.345 at y=-2
+        pb = np.zeros((32, 32, 1, 3), dtype=float)
+        pb[5:27, 5:27, :, :] = 0.9
+        pb[0, :, 0, 0] = 0.01
+        pb[:, -2, 0, 2] = 0.345
+
+        def fake_open(path):
+            ia = MagicMock()
+            ia.getchunk.return_value = pb
+            cm = MagicMock()
+            cm.__enter__.return_value = ia
+            return cm
+
+        with patch.object(image_stats, "open_image", side_effect=fake_open):
+            res = image_stats._edge_pb_max(str(img_dir), [], [])
+
+        assert res["flag"] == "COMPLETE"
+        assert res["value"] == pytest.approx(0.345)
+
+    def test_edge_pb_max_missing_pb_returns_unavailable(self, tmp_path):
+        from ms_inspect.tools import image_stats
+
+        img_dir = tmp_path / "no_pb.image"
+        img_dir.mkdir()
+        res = image_stats._edge_pb_max(str(img_dir), [], [])
+        assert res["flag"] == "UNAVAILABLE"
+        assert res["value"] is None
+
+    def test_pixels_per_beam_minor_uses_min_beam_across_all_planes_and_max_cdelt(self, tmp_path):
+        """Multi-beam cube must use min(beam_minor_arcsec) across all planes / max(|cdelt_x|, |cdelt_y|)."""
+        import math
+
+        import numpy as np
+
+        from ms_inspect.tools import image_stats
+
+        img_dir = tmp_path / "iquv_cube.image"
+        pb_dir = tmp_path / "iquv_cube.pb"
+        img_dir.mkdir()
+        pb_dir.mkdir()
+
+        # 3-channel ascending-frequency cube: chan 0 has 14" minor, chan 2 has 7.0" minor!
+        # Rectangular pixel size: cdelt_x = -2.0", cdelt_y = +2.5" -> max = 2.5" -> 7.0 / 2.5 = 2.8
+        multi_beam = {
+            "nChannels": 3,
+            "nStokes": 2,
+            "beams": {
+                "*0": {
+                    "*0": {
+                        "major": {"value": 20.0, "unit": "arcsec"},
+                        "minor": {"value": 14.0, "unit": "arcsec"},
+                        "positionangle": {"value": 10.0, "unit": "deg"},
+                    },
+                    "*1": {
+                        "major": {"value": 20.0, "unit": "arcsec"},
+                        "minor": {"value": 14.0, "unit": "arcsec"},
+                        "positionangle": {"value": 10.0, "unit": "deg"},
+                    },
+                },
+                "*1": {
+                    "*0": {
+                        "major": {"value": 15.0, "unit": "arcsec"},
+                        "minor": {"value": 10.0, "unit": "arcsec"},
+                        "positionangle": {"value": 10.0, "unit": "deg"},
+                    },
+                },
+                "*2": {
+                    "*0": {
+                        "major": {"value": 10.5, "unit": "arcsec"},
+                        "minor": {"value": 7.0, "unit": "arcsec"},
+                        "positionangle": {"value": 10.0, "unit": "deg"},
+                    },
+                },
+            },
+        }
+
+        pb = np.zeros((16, 16, 1, 3), dtype=float)
+        pb[4:12, 4:12, :, :] = 0.8
+        pb[1, 8, 0, 2] = 0.125
+
+        cube = np.zeros((16, 16, 1, 3), dtype=float)
+        cube[8, 8, 0, :] = 0.05
+
+        csys = MagicMock()
+        csys.stokes.return_value = ["I"]
+        csys.findcoordinate.side_effect = lambda kind: (
+            {"return": True, "pixel": [3]} if kind == "spectral" else {"return": False, "pixel": []}
+        )
+        csys.increment.return_value = {
+            "numeric": np.array(
+                [
+                    -math.radians(2.0 / 3600.0),
+                    math.radians(2.5 / 3600.0),
+                    1.0,
+                    6.4e7,
+                ]
+            )
+        }
+        csys.units.return_value = ["rad", "rad", "", "Hz"]
+
+        ia_img = MagicMock()
+        ia_img.shape.return_value = list(cube.shape)
+        ia_img.coordsys.return_value = csys
+        ia_img.getchunk.return_value = cube
+        ia_img.statistics.side_effect = [
+            {"medabsdevmed": [0.001]},
+            {"max": [0.05], "min": [-0.002], "rms": [0.002]},
+        ]
+        ia_img.restoringbeam.return_value = multi_beam
+
+        ia_pb = MagicMock()
+        ia_pb.shape.return_value = list(pb.shape)
+        ia_pb.getchunk.return_value = pb
+
+        def fake_open(path):
+            cm = MagicMock()
+            cm.__enter__.return_value = ia_pb if Path(path).name.endswith(".pb") else ia_img
+            return cm
+
+        with patch.object(image_stats, "open_image", side_effect=fake_open):
+            res = image_stats.run(str(img_dir))
+
+        d = res["data"]
+        assert d["beam_minor_arcsec"]["value"] == pytest.approx(14.0)
+        assert d["pixels_per_beam_minor"]["flag"] == "COMPLETE"
+        assert d["pixels_per_beam_minor"]["value"] == pytest.approx(7.0 / 2.5, abs=1e-3)
+        assert d["edge_pb_max"]["flag"] == "COMPLETE"
+        assert d["edge_pb_max"]["value"] == pytest.approx(0.125)
+        csys.done.assert_called()
+
+    def test_edge_pb_max_uses_blc_trc_border_slab_reads_when_supported(self, tmp_path):
+        """When ia.shape() and ia.getchunk(blc=..., trc=...) are supported, _edge_pb_max reads
+        only the 4 outer 2-pixel border slabs and never loads the full interior cube."""
+        import numpy as np
+
+        from ms_inspect.tools import image_stats
+
+        img_dir = tmp_path / "bigcube.image.pbcor"
+        pb_dir = tmp_path / "bigcube.pb"
+        img_dir.mkdir()
+        pb_dir.mkdir()
+
+        pb = np.zeros((32, 24, 2, 3), dtype=float)
+        # Huge interior value must never be read or returned
+        pb[4:28, 4:20, :, :] = 0.99
+        # Put edge max on top 2-pixel slab at y=22 (ny-2) in chan 2, stokes 1
+        pb[10, 22, 1, 2] = 0.4125
+        # Put a smaller value on left 2-pixel slab at x=1
+        pb[1, 12, 0, 0] = 0.25
+
+        slab_calls: list[tuple[list[int], list[int]]] = []
+
+        class _SlabOnlyImage:
+            def shape(self):
+                return list(pb.shape)
+
+            def getchunk(self, blc=None, trc=None):
+                if blc is None or trc is None:
+                    raise AssertionError("full-cube getchunk() must not be called")
+                slab_calls.append((list(blc), list(trc)))
+                slices = tuple(slice(b, t + 1) for b, t in zip(blc, trc, strict=True))
+                return pb[slices]
+
+        def fake_open(_path):
+            cm = MagicMock()
+            cm.__enter__.return_value = _SlabOnlyImage()
+            return cm
+
+        with patch.object(image_stats, "open_image", side_effect=fake_open):
+            res = image_stats._edge_pb_max(str(img_dir), [], [])
+
+        assert len(slab_calls) == 4
+        assert res["flag"] == "COMPLETE"
+        assert res["value"] == pytest.approx(0.4125)

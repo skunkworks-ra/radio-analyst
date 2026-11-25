@@ -8,7 +8,7 @@ quote them from memory.
 All content is specific to this band and supplements general calibration guidance
 in 07-calibration-execution.md.
 
-Reference observation: 3C129 P-band continuum, B-configuration, CASA 6.7.2 guide.
+Applies to VLA P-band (224--480 MHz) continuum observations in any configuration.
 
 ---
 
@@ -142,6 +142,4 @@ Prefer a mid-array antenna with:
 - Stable gain solutions in the initial phase solve
 - Low flag fraction from `ms_antenna_flag_fraction`
 
-For the 3C129 dataset, `ea09` (W08) is the standard reference antenna used in
-the CASA guide. If `ms_refant` recommends a different antenna, use that recommendation
-unless it has a flag fraction > 20%.
+Use the `ms_refant` recommendation unless it has a flag fraction > 20%.

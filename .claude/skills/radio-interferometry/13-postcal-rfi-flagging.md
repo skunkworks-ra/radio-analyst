@@ -98,21 +98,59 @@ that is the only whole-SpW drop this skill makes.
 
 ---
 
-## Step 3 — Target spectrum check & channel triage (no clip)
+## Step 3 -- Continuum target spectrum check, bounded `postcal` rflag & SPW triage (no clip)
 
-Before imaging any science target, run `ms_spw_amp_severity(ms_path,
-datacolumn='CORRECTED_DATA', field='<target fields>')`. Its adjacent-channel
-complex difference metrics (`|V(ch) - V(ch-1)| / sqrt(2)` on unflagged parallel
-hands) cancel smooth continuum sky emission on all baselines (including bright
-extended sources such as 3C391 where raw `|V|` is heavy-tailed):
+**Scope strictly to continuum SPWs (`specmode='mfs'`):** automatic `postcal`
+`freqdev` `rflag` and `surviving_spws` dropping apply **only to continuum SPWs**.
+Explicitly **exempt spectral-line / maser SPWs and rest-frequency line windows**,
+where genuine narrow astronomical lines have steep adjacent-channel sky
+derivatives that trigger `chan_diff_*` and would be destroyed by `freqdev`
+`rflag` or dropped from `surviving_spws`.
 
-- Clean target spectrum: `chan_diff_std_over_mad < 1.5`,
-  `max_spw_chan_diff_std_over_mad < 1.8`, `chan_diff_gt10sigma_frac < 0.001`, and
-  `spw_rms_ratio < 1.5`.
-- Elevated target RFI: run `ms_apply_rflag(field='<target fields>',
-  datacolumn='corrected', timedevscale=5.0, freqdevscale=5.0)` first (never
-  amplitude-clip targets), then re-run `ms_spw_amp_severity` to confirm the
-  spectrum is clean.
+Before imaging continuum science targets, run `ms_spw_amp_severity(ms_path,
+datacolumn='CORRECTED_DATA', field='<target fields>', workdir=workdir)`. Its
+adjacent-channel complex difference metrics (`|V(ch) - V(ch-1)| / sqrt(2)` on
+unflagged parallel hands) cancel smooth continuum sky emission on all baselines
+(including bright extended continuum sources where raw `|V|` is heavy-tailed):
+
+- **Primary SEFD-invariant clean continuum target spectrum gate (within-SPW Gaussianity):**
+  - `chan_diff_std_over_mad < 1.5`
+  - `max_spw_chan_diff_std_over_mad < 1.8`
+  - `chan_diff_gt10sigma_frac < 0.001` (`< 0.1%`)
+  - **Secondary smoothness diagnostic (not a hard gate):** inspect
+    bandwidth-normalized `spw_noise_density_ratio` (from
+    `chan_diff_noise_density = chan_diff_rms * sqrt(chan_width_hz)` in
+    `Jy * Hz^{1/2}`, which normalizes mixed channel widths) alongside
+    `spw_rms_ratio` to distinguish a discontinuous single-SPW RFI jump from a
+    smooth `T_sys(nu)` / atmospheric / sky-temperature gradient across the band.
+- **Bounded `postcal` `rflag` (`<= 2` rounds max on continuum SPWs, NO destructive whole-SPW flagging):**
+  When continuum target RFI exceeds the primary Gaussianity gate above:
+  1. Round 1: run `ms_apply_rflag(field='<target fields>',
+     spw='<continuum_spws>', datacolumn='corrected', timedevscale=5.0,
+     freqdevscale=5.0)` (pass `spw=''` when all SPWs are continuum, or the
+     explicit continuum SPW list when spectral-line / maser SPWs are present;
+     never amplitude-clip targets, and never run automatic `freqdev` `rflag` on
+     spectral-line / maser SPWs or rest-frequency line windows), then re-run
+     `ms_spw_amp_severity`.
+  2. Round 2 (optional, only if cleanable RFI spikes remain on candidate
+     continuum SPWs): run at most ONE stricter pass (`spw='<continuum_spws>'`,
+     `timedevscale=4.0, freqdevscale=4.0`). **Hard cap: `<= 2` `rflag` rounds
+     total in `postcal`.** Never spin 3--5 rounds on persistently RFI-saturated
+     or atmospheric-absorption-dominated SPWs, and never perform destructive
+     whole-SPW flagging in `postcal`.
+  3. **Per-SPW triage & surviving SPW verification (continuum SPWs only):**
+     Inspect `per_spw` from `ms_spw_amp_severity` (checking each SPW's
+     `unflagged_fraction`, `chan_diff_std_over_mad`, `chan_diff_gt10sigma_frac`,
+     `chan_diff_noise_density`, and `centre_freq_ghz`). Exclude persistently
+     RFI-saturated, atmospheric-absorption-dominated, or >95%-flagged continuum
+     SPWs by selection rather than destructive flagging (never auto-drop
+     spectral-line / maser SPWs): form `<surviving_spws>` in valid CASA SPW
+     syntax (e.g. `'2,3,4,5'`, `'0~15'`, or `''` when all SPWs are clean --
+     NEVER the word `'all'`), verify them with `ms_spw_amp_severity(ms_path,
+     datacolumn='CORRECTED_DATA', field='<target fields>',
+     spw='<surviving_spws>', workdir=workdir)`, and report `surviving_spws:` in
+     the `postcal` handoff so downstream `image`, `selfcal`, and `image_iquv`
+     all receive `spw=<surviving_spws>`.
 
 If broad channel- or half-SpW-level contamination still persists after `rflag`,
 measure per-channel robust noise on the target: sigma = 1.4826 × MAD of
