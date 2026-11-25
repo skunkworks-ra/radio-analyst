@@ -14,6 +14,7 @@ can take hours.
 
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 import re
@@ -135,7 +136,12 @@ _archive_tclean_products = _archive_ns["_archive_tclean_products"]
 
 _CELL_RE = re.compile(r"^\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*([a-zA-Z\"']+)?\s*$")
 _HMS_RE = re.compile(r"^(\d+)[h:](\d+)[m:](\d+(?:\.\d+)?)s?$", re.IGNORECASE)
-_DMS_RE = re.compile(r"^([+-]?)(\d+)[d:.](\d+)[m:.](\d+(?:\.\d+)?)s?$", re.IGNORECASE)
+_DMS_RE = re.compile(
+    r"^([+-]?)(?:(\d+)d(\d+)m(\d+(?:\.\d+)?)s?|(\d+)\.(\d+)\.(\d+(?:\.\d+)?))$",
+    re.IGNORECASE,
+)
+_J2000_EQUIV_FRAMES = frozenset({"J2000", "ICRS"})
+_REJECTED_FRAMES = frozenset({"FK5"})
 _ANGLE_QTY_RE = re.compile(
     r"^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*(deg|rad|arcsec|arcmin)$",
     re.IGNORECASE,
@@ -215,7 +221,14 @@ def _parse_cell_arcsec(cell: str) -> float | None:
 
 
 def _parse_angle_token(tok: str, *, is_ra: bool) -> float | None:
-    """Parse one CASA RA or Dec token into radians."""
+    """Parse one CASA RA or Dec token into radians.
+
+    For Declination (is_ra=False), colon-separated tokens like '+30:35:59.4' are
+    rejected because CASA interprets ':' as hours (15x sky error); use d/m/s
+    ('+30d35m59.4s') or dot-separated DMS ('+30.35.59.4').
+    """
+    if not is_ra and ":" in tok:
+        return None
     q = _ANGLE_QTY_RE.match(tok)
     if q:
         val = float(q.group(1))
@@ -238,38 +251,205 @@ def _parse_angle_token(tok: str, *, is_ra: bool) -> float | None:
     m = _DMS_RE.match(tok)
     if m:
         sign = -1.0 if m.group(1) == "-" else 1.0
-        d, mn, sec = int(m.group(2)), int(m.group(3)), float(m.group(4))
+        if m.group(2) is not None:
+            d, mn, sec = int(m.group(2)), int(m.group(3)), float(m.group(4))
+        else:
+            d, mn, sec = int(m.group(5)), int(m.group(6)), float(m.group(7))
         return sign * math.radians(d + mn / 60.0 + sec / 3600.0)
     return None
 
 
+def _parse_phasecenter_detail(
+    phasecenter: int | str,
+    field_names: list[str],
+    all_coords: list[tuple[float, float]],
+) -> tuple[tuple[float, float] | None, str | None]:
+    """Resolve a CASA phasecenter (int field ID, field name, or coords) to J2000 (ra, dec) rad.
+
+    Returns (coords_rad, error_reason). error_reason is None on success or empty input.
+    """
+    if isinstance(phasecenter, bool) or not isinstance(phasecenter, (int, str)):
+        return None, "must be an integer field ID or direction string."
+    if isinstance(phasecenter, int):
+        if 0 <= phasecenter < len(all_coords):
+            return all_coords[phasecenter], None
+        return (
+            None,
+            f"field ID {phasecenter} is out of range (MS has {len(all_coords)} field(s)).",
+        )
+
+    pc = phasecenter.strip()
+    if not pc:
+        return None, None
+    if pc.isdigit():
+        idx = int(pc)
+        if 0 <= idx < len(all_coords):
+            return all_coords[idx], None
+        return (
+            None,
+            f"field ID {idx} is out of range (MS has {len(all_coords)} field(s)).",
+        )
+    if pc in field_names:
+        idx = field_names.index(pc)
+        if idx < len(all_coords):
+            return all_coords[idx], None
+        return None, f"field {pc!r} has no coordinates."
+
+    parts = pc.split()
+    if len(parts) == 2:
+        frame = "J2000"
+        ra_tok, dec_tok = parts[0], parts[1]
+    elif len(parts) == 3:
+        frame = parts[0].upper()
+        ra_tok, dec_tok = parts[1], parts[2]
+    else:
+        return (
+            None,
+            "expected a valid field ID, field name, or CASA direction string "
+            "(e.g. 'J2000 03h26m24.16s +30d35m59.4s').",
+        )
+
+    if frame in _REJECTED_FRAMES:
+        return (
+            None,
+            f"CASA tclean rejects frame {frame!r}; use 'J2000' or 'ICRS' instead.",
+        )
+    if ":" in dec_tok:
+        return (
+            None,
+            f"colon-separated Declination {dec_tok!r} is not allowed because CASA treats ':' "
+            "in Declination as hours (15x error) instead of degrees -- use d/m/s or '.' "
+            "(e.g. '+30d35m59.4s' or '+30.35.59.4').",
+        )
+
+    # Fast pure-Python parse for J2000 / ICRS.
+    if frame in _J2000_EQUIV_FRAMES:
+        ra = _parse_angle_token(ra_tok, is_ra=True)
+        dec = _parse_angle_token(dec_tok, is_ra=False)
+        if ra is not None and dec is not None and math.isfinite(ra) and math.isfinite(dec):
+            return (ra % (2.0 * math.pi), dec), None
+
+    # Fallback via casatools.measures for non-J2000 frames (e.g. B1950, GALACTIC)
+    # and CASA direction syntax not covered by the fast regexes.
+    me = None
+    try:
+        import casatools  # type: ignore[import]
+
+        me = casatools.measures()
+        d = me.direction(frame, ra_tok, dec_tok)
+        if not isinstance(d, dict) or str(d.get("refer", "")).upper() != frame:
+            return (
+                None,
+                "expected a valid field ID, field name, or CASA direction string "
+                "(e.g. 'J2000 03h26m24.16s +30d35m59.4s').",
+            )
+        j = me.measure(d, "J2000")
+        if not isinstance(j, dict) or "m0" not in j or "m1" not in j:
+            return (
+                None,
+                "expected a valid field ID, field name, or CASA direction string "
+                "(e.g. 'J2000 03h26m24.16s +30d35m59.4s').",
+            )
+        ra = float(j["m0"]["value"])
+        dec = float(j["m1"]["value"])
+        if not (math.isfinite(ra) and math.isfinite(dec)):
+            return (
+                None,
+                "expected a valid field ID, field name, or CASA direction string "
+                "(e.g. 'J2000 03h26m24.16s +30d35m59.4s').",
+            )
+        return (ra % (2.0 * math.pi), dec), None
+    except Exception:
+        return (
+            None,
+            "expected a valid field ID, field name, or CASA direction string "
+            "(e.g. 'J2000 03h26m24.16s +30d35m59.4s').",
+        )
+    finally:
+        if me is not None:
+            with contextlib.suppress(Exception):
+                me.done()
+
+
 def _parse_phasecenter(
-    phasecenter: str,
+    phasecenter: int | str,
     field_names: list[str],
     all_coords: list[tuple[float, float]],
 ) -> tuple[float, float] | None:
-    """Resolve a CASA phasecenter string (field ID, field name, or J2000 coords) to (ra, dec) rad."""
-    pc = phasecenter.strip()
+    """Resolve a CASA phasecenter (field ID, field name, or coords) to J2000 (ra, dec) rad."""
+    coords, _ = _parse_phasecenter_detail(phasecenter, field_names, all_coords)
+    return coords
+
+
+def _resolve_phasecenter_for_casa(
+    val: int | str,
+    field_names: list[str],
+    all_coords: list[tuple[float, float]],
+    *,
+    field_read_ok: bool,
+    param_name: str,
+) -> tuple[int | str, tuple[float, float] | None, str | None]:
+    """Normalize phasecenter/psfphasecenter for CASA tclean and validate coordinates.
+
+    Live CASA 6 tclean accepts integer FIELD_ID (e.g. 29) and direction strings,
+    and rejects string field IDs ('29') and field names ('TARGET_1'). This helper
+    converts numeric strings and known MS field names to int FIELD_IDs for CASA.
+
+    Returns (resolved_value, parsed_j2000_rad, error_message).
+    """
+    if isinstance(val, bool) or not isinstance(val, (int, str)):
+        return (
+            val,
+            None,
+            f"Invalid {param_name}={val!r}: must be an integer field ID or direction string.",
+        )
+    if isinstance(val, int):
+        if val < 0:
+            return val, None, f"Invalid {param_name}={val}: field ID must be >= 0."
+        if field_read_ok:
+            if 0 <= val < len(all_coords):
+                return val, all_coords[val], None
+            return (
+                val,
+                None,
+                f"Unparseable or unknown {param_name}={val!r}: field ID {val} is out of range "
+                f"(MS has {len(all_coords)} field(s)).",
+            )
+        return val, None, None
+
+    pc = val.strip()
     if not pc:
-        return None
+        return "", None, None
     if pc.isdigit():
         idx = int(pc)
-        return all_coords[idx] if 0 <= idx < len(all_coords) else None
-    if pc in field_names:
+        if field_read_ok:
+            if 0 <= idx < len(all_coords):
+                return idx, all_coords[idx], None
+            return (
+                idx,
+                None,
+                f"Unparseable or unknown {param_name}={val!r}: field ID {idx} is out of range "
+                f"(MS has {len(all_coords)} field(s)).",
+            )
+        return idx, None, None
+    if field_read_ok and pc in field_names:
         idx = field_names.index(pc)
-        return all_coords[idx] if idx < len(all_coords) else None
-    parts = pc.split()
-    if len(parts) >= 3:
-        ra_tok, dec_tok = parts[-2], parts[-1]
-    elif len(parts) == 2:
-        ra_tok, dec_tok = parts[0], parts[1]
-    else:
-        return None
-    ra = _parse_angle_token(ra_tok, is_ra=True)
-    dec = _parse_angle_token(dec_tok, is_ra=False)
-    if ra is None or dec is None:
-        return None
-    return ra % (2.0 * math.pi), dec
+        coords = all_coords[idx] if idx < len(all_coords) else None
+        return idx, coords, None
+
+    if field_read_ok:
+        coords, reason = _parse_phasecenter_detail(pc, field_names, all_coords)
+        if coords is None:
+            return pc, None, f"Unparseable or unknown {param_name}={val!r}: {reason}"
+        return pc, coords, None
+
+    # FIELD unreadable: still validate multi-token direction strings (rejects FK5 / ':' in Dec).
+    if len(pc.split()) >= 2:
+        coords, reason = _parse_phasecenter_detail(pc, [], [])
+        if coords is None:
+            return pc, None, f"Unparseable or unknown {param_name}={val!r}: {reason}"
+        return pc, coords, None
+    return pc, None, None
 
 
 def _ang_sep_rad(ra1: float, dec1: float, ra2: float, dec2: float) -> float:
@@ -410,9 +590,13 @@ def _collect_param_warnings(
     workdir_path: Path,
     ms_str: str,
     n_spw: int | None = None,
-) -> list[str]:
-    """Pure parameter, outlierfile, stage_log, and live-PID preflight warnings."""
+) -> tuple[list[str], list[str]]:
+    """Pure parameter, outlierfile, stage_log, and live-PID preflight checks.
+
+    Returns (warnings, errors).
+    """
     warnings: list[str] = []
+    errors: list[str] = []
 
     if usemask == "pb" and mask:
         warnings.append(
@@ -605,7 +789,7 @@ def _collect_param_warnings(
     except Exception:
         pass
 
-    # Live-PID concurrency warning: warn if another tclean_*.py in workdir is still running.
+    # Live-PID concurrency guard: hard error if another tclean_*.py in workdir is still running.
     try:
         for pid_file in sorted(workdir_path.glob("tclean_*.py.pid")):
             script_base = str(pid_file)[:-4]
@@ -613,7 +797,7 @@ def _collect_param_warnings(
                 continue
             raw_pid = pid_file.read_text(errors="replace").strip()
             if raw_pid.isdigit() and _pid_is_alive(int(raw_pid)):
-                warnings.append(
+                errors.append(
                     f"Live tclean job detected in workdir: {Path(script_base).name} "
                     f"(pid={raw_pid}, no .rc file). Do not launch a concurrent tclean in the "
                     "same workdir -- poll the running job with run-step.sh until completion."
@@ -621,7 +805,7 @@ def _collect_param_warnings(
     except Exception:
         pass
 
-    return warnings
+    return warnings, errors
 
 
 def _collect_ms_geometry_warnings(
@@ -630,19 +814,24 @@ def _collect_ms_geometry_warnings(
     field: str,
     spw: str,
     gridder: str,
-    phasecenter: str,
+    phasecenter: int | str,
+    psfphasecenter: int | str = "",
     cell: str,
     imsize: list[int],
     specmode: str = "mfs",
     nchan: int | None = None,
     start: str | None = None,
     width: str | None = None,
-) -> tuple[list[str], int | None]:
+    allow_geometry_override: bool = False,
+    debug_params: dict | None = None,
+) -> tuple[list[str], list[str], int | None, int | str, int | str]:
     """Read-only subtable preflight checks (FIELD, SPECTRAL_WINDOW, ANTENNA; < 5 ms).
 
-    Returns (warnings, n_spw). All subtable reads are non-fatal.
+    Returns (warnings, errors, n_spw, resolved_phasecenter, resolved_psfphasecenter).
+    All subtable reads are non-fatal.
     """
     warnings: list[str] = []
+    errors: list[str] = []
     field_names: list[str] = []
     all_coords: list[tuple[float, float]] = []
     matched_fids: list[int] = []
@@ -755,17 +944,41 @@ def _collect_ms_geometry_warnings(
     )
     is_multi_pointing = len(matched_fids) >= 2 and max_extent_arcsec > min_mosaic_extent_arcsec
 
+    # Resolve & validate phasecenter and psfphasecenter once (converting numeric strings
+    # and MS field names to integer FIELD_IDs for CASA, and validating direction strings).
+    resolved_pc, parsed_pc, pc_err = _resolve_phasecenter_for_casa(
+        phasecenter,
+        field_names,
+        all_coords,
+        field_read_ok=field_read_ok,
+        param_name="phasecenter",
+    )
+    if pc_err is not None:
+        errors.append(pc_err)
+
+    resolved_psf_pc, _, psf_pc_err = _resolve_phasecenter_for_casa(
+        psfphasecenter,
+        field_names,
+        all_coords,
+        field_read_ok=field_read_ok,
+        param_name="psfphasecenter",
+    )
+    if psf_pc_err is not None:
+        errors.append(psf_pc_err)
+
+    has_phasecenter = resolved_pc != ""
+
     cell_arcsec = _parse_cell_arcsec(cell)
     nx = imsize[0]
     ny = imsize[-1]
     fov_ra_arcsec: float | None = nx * cell_arcsec if cell_arcsec is not None else None
     fov_dec_arcsec: float | None = ny * cell_arcsec if cell_arcsec is not None else None
     if fov_ra_arcsec is not None and fov_dec_arcsec is not None and pb_fwhm_arcsec is not None:
-        is_small_cutout = bool(phasecenter) and (
+        is_small_cutout = has_phasecenter and (
             max(fov_ra_arcsec, fov_dec_arcsec) < 1.5 * pb_fwhm_arcsec
         )
     else:
-        is_small_cutout = bool(phasecenter) and max(imsize) <= 256
+        is_small_cutout = has_phasecenter and max(imsize) <= 256
 
     # 4. Multi-pointing mosaic with gridder='standard' (fixes wildcard 'TARGET_*' bypass;
     #    ignores co-located multi-EB single pointings and small-angle cutouts).
@@ -784,16 +997,16 @@ def _collect_ms_geometry_warnings(
             "pointings. Use gridder='mosaic' for multi-pointing mosaics (11-imaging.md Step 6)."
         )
 
-    # 5. Mosaic phasecenter == "" warning (with exact circular-unwrapped bbox center & offset).
+    # 5. Mosaic phasecenter == "" hard error (with exact circular-unwrapped bbox center & offset).
     if (
         gridder in _MOSAIC_GRIDDERS
         and is_multi_pointing
-        and not phasecenter
+        and not has_phasecenter
         and bbox_info is not None
     ):
         _, _, bbox_center_j2000, _, _, first_offset_arcmin = bbox_info
         first_name = field_names[matched_fids[0]] if matched_fids[0] < len(field_names) else "?"
-        warnings.append(
+        errors.append(
             f"gridder={gridder!r} with {len(matched_fids)} matched fields and phasecenter='': "
             f"CASA defaults phasecenter to the first pointing ({first_name!r}), which is "
             f"offset by {first_offset_arcmin:.2f} arcmin from the mosaic bounding-box midpoint "
@@ -802,12 +1015,11 @@ def _collect_ms_geometry_warnings(
         )
 
     # 6. Mosaic / AWP FOV vs extent + 3.6 * pb_fwhm(min_freq) (1.8 * pb_fwhm per side to clear
-    #    the 1st positive sidelobe; skip standard gridder, co-located single pointings,
-    #    small-angle cutouts, and off-axis outlier cutouts).
+    #    the 1st positive sidelobe; skip standard gridder, co-located single pointings, and
+    #    off-axis outlier cutouts whose explicit phasecenter sits outside the mosaic footprint).
     if (
         gridder in _MOSAIC_GRIDDERS
         and is_multi_pointing
-        and not is_small_cutout
         and cell_arcsec is not None
         and fov_ra_arcsec is not None
         and fov_dec_arcsec is not None
@@ -819,67 +1031,93 @@ def _collect_ms_geometry_warnings(
         req_ra_arcsec = extent_ra_arcsec + 3.6 * pb_fwhm_arcsec
         req_dec_arcsec = extent_dec_arcsec + 3.6 * pb_fwhm_arcsec
 
-        # Determine effective phase center for border-margin check.
-        parsed_pc: tuple[float, float] | None = None
-        if not phasecenter:
-            pc_ra, pc_dec = matched_coords[0]
-        else:
-            parsed_pc = _parse_phasecenter(phasecenter, field_names, all_coords)
-            pc_ra, pc_dec = parsed_pc if parsed_pc is not None else (bbox_ra, bbox_dec)
+        # Determine effective phase center for border-margin check. If an explicit
+        # phasecenter failed to parse, an error is already queued; never fabricate bbox center.
+        effective_pc: tuple[float, float] | None = None
+        if not has_phasecenter:
+            effective_pc = matched_coords[0]
+        elif parsed_pc is not None:
+            effective_pc = parsed_pc
 
-        # Skip off-axis outlier cutouts whose explicit phasecenter sits outside
-        # the mosaic footprint.
-        arcsec_to_rad = math.pi / (180.0 * 3600.0)
-        off_axis_cutout = (
-            bool(phasecenter)
-            and parsed_pc is not None
-            and _ang_sep_rad(pc_ra, pc_dec, bbox_ra, bbox_dec)
-            > (0.5 * math.hypot(extent_ra_arcsec, extent_dec_arcsec) + 0.5 * pb_fwhm_arcsec)
-            * arcsec_to_rad
-        )
-
-        if not off_axis_cutout:
-            cos_pc = max(math.cos(pc_dec), 1e-6)
-            two_pi = 2.0 * math.pi
-            max_dra_arcsec = max(
-                abs(((ra - pc_ra + math.pi) % two_pi - math.pi) * cos_pc)
-                * (180.0 * 3600.0 / math.pi)
-                for ra, _ in matched_coords
+        if effective_pc is not None:
+            pc_ra, pc_dec = effective_pc
+            # Skip off-axis outlier cutouts whose explicit phasecenter sits outside
+            # the mosaic footprint.
+            arcsec_to_rad = math.pi / (180.0 * 3600.0)
+            off_axis_cutout = (
+                has_phasecenter
+                and parsed_pc is not None
+                and _ang_sep_rad(pc_ra, pc_dec, bbox_ra, bbox_dec)
+                > (0.5 * math.hypot(extent_ra_arcsec, extent_dec_arcsec) + 0.5 * pb_fwhm_arcsec)
+                * arcsec_to_rad
             )
-            max_ddec_arcsec = max(
-                abs(dec - pc_dec) * (180.0 * 3600.0 / math.pi) for _, dec in matched_coords
-            )
-            margin_ra_arcsec = 0.5 * fov_ra_arcsec - max_dra_arcsec
-            margin_dec_arcsec = 0.5 * fov_dec_arcsec - max_ddec_arcsec
-            min_side_req = 1.8 * pb_fwhm_arcsec
 
-            if (
-                fov_ra_arcsec < req_ra_arcsec
-                or fov_dec_arcsec < req_dec_arcsec
-                or margin_ra_arcsec < min_side_req
-                or margin_dec_arcsec < min_side_req
-            ):
-                rec_nx = math.ceil((extent_ra_arcsec + 4.0 * pb_fwhm_arcsec) / cell_arcsec)
-                rec_ny = math.ceil((extent_dec_arcsec + 4.0 * pb_fwhm_arcsec) / cell_arcsec)
-                warnings.append(
-                    f"Mosaic/PB FOV check: imsize={imsize} at cell={cell} "
-                    f"({fov_ra_arcsec / 60.0:.1f}' x {fov_dec_arcsec / 60.0:.1f}') leaves "
-                    f"outer pointings within ({margin_ra_arcsec / 60.0:.1f}' RA, "
-                    f"{margin_dec_arcsec / 60.0:.1f}' Dec) of the border -- below "
-                    f"1.8 * PB_FWHM ({min_side_req / 60.0:.1f}' at "
-                    f"min_freq={min_freq_hz / 1e9:.3f} GHz, "
-                    f"PB_FWHM={pb_fwhm_arcsec / 60.0:.1f}'). "
-                    "Clearing the first positive sidelobe prevents toroidal FFT aliasing; "
-                    f"pad to extent + 4.0 * PB_FWHM (~[{rec_nx}, {rec_ny}] px (centered) "
-                    f"at cell={cell})."
+            if not off_axis_cutout:
+                cos_pc = max(math.cos(pc_dec), 1e-6)
+                two_pi = 2.0 * math.pi
+                max_dra_arcsec = max(
+                    abs(((ra - pc_ra + math.pi) % two_pi - math.pi) * cos_pc)
+                    * (180.0 * 3600.0 / math.pi)
+                    for ra, _ in matched_coords
                 )
+                max_ddec_arcsec = max(
+                    abs(dec - pc_dec) * (180.0 * 3600.0 / math.pi) for _, dec in matched_coords
+                )
+                margin_ra_arcsec = 0.5 * fov_ra_arcsec - max_dra_arcsec
+                margin_dec_arcsec = 0.5 * fov_dec_arcsec - max_ddec_arcsec
+                min_side_req = 1.8 * pb_fwhm_arcsec
 
-    # 7. Warn-only Nyquist cell advisory using max_freq_hz of selected spw + ANTENNA max baseline.
+                if (
+                    fov_ra_arcsec < req_ra_arcsec
+                    or fov_dec_arcsec < req_dec_arcsec
+                    or margin_ra_arcsec < min_side_req
+                    or margin_dec_arcsec < min_side_req
+                ):
+                    rec_nx = math.ceil((extent_ra_arcsec + 4.0 * pb_fwhm_arcsec) / cell_arcsec)
+                    rec_ny = math.ceil((extent_dec_arcsec + 4.0 * pb_fwhm_arcsec) / cell_arcsec)
+                    fov_msg = (
+                        f"Mosaic/PB FOV check: imsize={imsize} at cell={cell} "
+                        f"({fov_ra_arcsec / 60.0:.1f}' x {fov_dec_arcsec / 60.0:.1f}') leaves "
+                        f"outer pointings within ({margin_ra_arcsec / 60.0:.1f}' RA, "
+                        f"{margin_dec_arcsec / 60.0:.1f}' Dec) of the border -- below "
+                        f"1.8 * PB_FWHM ({min_side_req / 60.0:.1f}' at "
+                        f"min_freq={min_freq_hz / 1e9:.3f} GHz, "
+                        f"PB_FWHM={pb_fwhm_arcsec / 60.0:.1f}'). "
+                        "Clearing the first positive sidelobe prevents toroidal FFT aliasing; "
+                        f"pad to extent + 4.0 * PB_FWHM (~[{rec_nx}, {rec_ny}] px (centered) "
+                        f"at cell={cell}), or pass allow_geometry_override=True to override."
+                    )
+                    if allow_geometry_override:
+                        warnings.append(fov_msg)
+                    else:
+                        errors.append(fov_msg)
+
+    # 7. Nyquist cell check using max_freq_hz of selected spw + ANTENNA max baseline.
+    #    Strict < 2.0 px/beam without uvtaper is a hard error (downgradable via
+    #    allow_geometry_override=True); 2.0 <= px_per_beam < 2.5 and tapered calls warn.
     if cell_arcsec is not None and max_freq_hz is not None and max_baseline_m is not None:
         approx_beam_arcsec = angular_resolution_arcsec(max_baseline_m, max_freq_hz)
         if math.isfinite(approx_beam_arcsec) and approx_beam_arcsec > 0:
             px_per_beam = approx_beam_arcsec / cell_arcsec
-            if px_per_beam < 2.5:
+            tclean_dbg = (debug_params or {}).get("tclean")
+            has_uvtaper = bool(tclean_dbg.get("uvtaper")) if isinstance(tclean_dbg, dict) else False
+            if px_per_beam < 2.0 and not has_uvtaper:
+                rec_cell = approx_beam_arcsec / 4.0
+                nyq_msg = (
+                    f'Nyquist cell violation: cell={cell} ({cell_arcsec:.3g}") gives '
+                    f"~{px_per_beam:.2f} px per estimated unprojected beam "
+                    f'({approx_beam_arcsec:.2f}" = lambda/B_max at '
+                    f"max_freq={max_freq_hz / 1e9:.3f} GHz, B_max={max_baseline_m:.0f} m), "
+                    f"below the strict 2.0 px/beam Nyquist limit. Use "
+                    f"cell~'{rec_cell:.2f}arcsec' (~4 px/beam), or pass "
+                    "allow_geometry_override=True if UV foreshortening, weighting, or "
+                    "uvtaper makes the actual restoring beam larger."
+                )
+                if allow_geometry_override:
+                    warnings.append(nyq_msg)
+                else:
+                    errors.append(nyq_msg)
+            elif px_per_beam < 2.5:
                 rec_cell = approx_beam_arcsec / 4.0
                 warnings.append(
                     f'Nyquist cell advisory: cell={cell} ({cell_arcsec:.3g}") gives '
@@ -891,7 +1129,7 @@ def _collect_ms_geometry_warnings(
                     "weighting, or uvtaper -- verify pixels_per_beam_minor via ms_image_stats."
                 )
 
-    return warnings, n_spw
+    return warnings, errors, n_spw, resolved_pc, resolved_psf_pc
 
 
 def _build_tclean_kwargs(
@@ -924,7 +1162,8 @@ def _build_tclean_kwargs(
     width: str | None,
     outframe: str | None,
     scales: list[int] | None = None,
-    phasecenter: str = "",
+    phasecenter: int | str = "",
+    psfphasecenter: int | str = "",
     outlierfile: str = "",
 ) -> dict:
     """Single source of truth for tclean arguments shared by _build_script and execute=True."""
@@ -938,8 +1177,10 @@ def _build_tclean_kwargs(
     }
     if spw:
         kwargs["spw"] = spw
-    if phasecenter:
+    if phasecenter != "":
         kwargs["phasecenter"] = phasecenter
+    if psfphasecenter != "":
+        kwargs["psfphasecenter"] = psfphasecenter
     if outlierfile:
         kwargs["outlierfile"] = outlierfile
     if deconvolver == "mtmfs" and nterms is not None:
@@ -1115,8 +1356,10 @@ def run(
     width: str | None = None,
     outframe: str | None = None,
     scales: list[int] | None = None,
-    phasecenter: str = "",
+    phasecenter: int | str = "",
+    psfphasecenter: int | str = "",
     outlierfile: str = "",
+    allow_geometry_override: bool = False,
     execute: bool = False,
     debug: bool = False,
     debug_params: dict | None = None,
@@ -1177,8 +1420,11 @@ def run(
         outframe:    Output spectral reference frame, e.g. 'LSRK' (specmode=
                      'cube' only). None lets CASA default.
         phasecenter: Optional phase center (e.g. 'J2000 03h30m26.21s +30d03m44.6s'
-                     or field ID) for small-box outlier imaging / baby peeling.
+                     or field ID) for mosaic centering or small-box outlier imaging.
+        psfphasecenter: Optional PSF phase center for mosaic/wide-field imaging.
         outlierfile: Optional path to a CASA outlier-field definition file.
+        allow_geometry_override: If True, downgrade undersized mosaic FOV and strict
+                     Nyquist (< 2.0 px/beam) hard errors to warnings.
         execute:     If False (default), write script and return.
                      If True, run tclean in-process (intended for test data only).
 
@@ -1243,7 +1489,14 @@ def run(
 
     imagename = str(validate_output_caltable(imagename, str(workdir_path), ms_str))
 
-    phasecenter = phasecenter.strip() if phasecenter else ""
+    for _pc_name, _pc_val in (("phasecenter", phasecenter), ("psfphasecenter", psfphasecenter)):
+        if isinstance(_pc_val, bool) or not isinstance(_pc_val, (int, str)):
+            raise ComputationError(
+                f"{_pc_name} must be an integer field ID or direction string, got {_pc_val!r}",
+                ms_path=ms_path,
+            )
+    phasecenter = phasecenter.strip() if isinstance(phasecenter, str) else phasecenter
+    psfphasecenter = psfphasecenter.strip() if isinstance(psfphasecenter, str) else psfphasecenter
     outlierfile_path: Path | None = None
     outlierfile_str = ""
     if outlierfile and outlierfile.strip():
@@ -1275,47 +1528,57 @@ def run(
             ms_path=ms_path,
         )
 
-    geo_warnings, n_spw = _collect_ms_geometry_warnings(
-        ms_str=ms_str,
-        field=field,
-        spw=spw,
-        gridder=gridder,
-        phasecenter=phasecenter,
-        cell=cell,
-        imsize=imsize,
-        specmode=specmode,
-        nchan=nchan,
-        start=start,
-        width=width,
-    )
-    warnings.extend(
-        _collect_param_warnings(
+    geo_warnings, geo_errors, n_spw, resolved_phasecenter, resolved_psfphasecenter = (
+        _collect_ms_geometry_warnings(
+            ms_str=ms_str,
             field=field,
             spw=spw,
-            stokes=stokes,
-            specmode=specmode,
-            deconvolver=deconvolver,
             gridder=gridder,
-            wprojplanes=wprojplanes,
-            cfcache=cfcache,
-            pblimit=pblimit,
-            pbmask=pbmask,
-            usemask=usemask,
-            mask=mask,
-            nsigma=nsigma,
-            niter=niter,
+            phasecenter=phasecenter,
+            psfphasecenter=psfphasecenter,
+            cell=cell,
+            imsize=imsize,
+            specmode=specmode,
             nchan=nchan,
             start=start,
             width=width,
-            outframe=outframe,
-            scales=scales,
-            imagename=imagename,
-            outlierfile_path=outlierfile_path,
-            workdir_path=workdir_path,
-            ms_str=ms_str,
-            n_spw=n_spw,
+            allow_geometry_override=allow_geometry_override,
+            debug_params=debug_params,
         )
     )
+    param_warnings, param_errors = _collect_param_warnings(
+        field=field,
+        spw=spw,
+        stokes=stokes,
+        specmode=specmode,
+        deconvolver=deconvolver,
+        gridder=gridder,
+        wprojplanes=wprojplanes,
+        cfcache=cfcache,
+        pblimit=pblimit,
+        pbmask=pbmask,
+        usemask=usemask,
+        mask=mask,
+        nsigma=nsigma,
+        niter=niter,
+        nchan=nchan,
+        start=start,
+        width=width,
+        outframe=outframe,
+        scales=scales,
+        imagename=imagename,
+        outlierfile_path=outlierfile_path,
+        workdir_path=workdir_path,
+        ms_str=ms_str,
+        n_spw=n_spw,
+    )
+    all_errors = param_errors + geo_errors
+    if all_errors:
+        raise ComputationError(
+            "ms_tclean preflight failed:\n- " + "\n- ".join(all_errors),
+            ms_path=ms_path,
+        )
+    warnings.extend(param_warnings)
     warnings.extend(geo_warnings)
 
     clean_mask = mask.strip() if (usemask == "user" and mask) else None
@@ -1348,7 +1611,8 @@ def run(
         width=width,
         outframe=outframe,
         scales=scales,
-        phasecenter=phasecenter,
+        phasecenter=resolved_phasecenter,
+        psfphasecenter=resolved_psfphasecenter,
         outlierfile=outlierfile_str,
     )
 

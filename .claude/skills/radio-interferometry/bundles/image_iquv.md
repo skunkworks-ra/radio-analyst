@@ -95,7 +95,7 @@ All placeholders are populated from Phase 1-2 tool outputs before calling `ms_tc
 | `{IS_MOSAIC}` | Step 0 | True if imaging multiple pointings together |
 | `{STOKES}` | Step 0 | `'IQUV'` if polcal ran, else `'I'` |
 | `{POINTING_CENTERS}` | `ms_field_list` | RA/Dec of each target pointing and `mosaic_groups[]` (`extent_ra_arcmin`, `extent_dec_arcmin`, `max_extent_arcmin`) |
-| `{PHASECENTER}` | `ms_field_list` | `mosaic_groups[].bbox_center_j2000` (MANDATORY on every multi-pointing mosaic; check `central_field_name` / `central_field_offset_arcmin` for hollow mosaics) |
+| `{PHASECENTER}` | `ms_field_list` | `mosaic_groups[].bbox_center_j2000` (MANDATORY on every multi-pointing mosaic; check `central_field_id` / `central_field_name` / `central_field_offset_arcmin` for hollow mosaics) |
 | `{SURVIVING_SPWS}` | `postcal` / `ms_spw_amp_severity` | comma-separated clean continuum SPWs (or `''` if all SPWs are clean) |
 | `{MAX_BASELINE_M}` | `ms_baseline_lengths` | `max_baseline_m` |
 | `{CENTER_FREQ_HZ}` | `ms_radiometer_estimate` | `center_freq_hz` (also read `min_freq_hz` for PB `imsize` and `max_freq_hz` for wideband/cube `cell`) |
@@ -162,11 +162,18 @@ every `ms_tclean` call. Omitting `phasecenter` (`""`) defaults in CASA to the
 first selected pointing -- often an outer-edge pointing -- which shifts the grid
 off-center, slices through the opposite edge's primary beam, and triggers
 toroidal FFT wrap-around (`stopcode=5`). Also check
-`mosaic_groups[].central_field_name` and `central_field_offset_arcmin`: if
-`central_field_offset_arcmin > 0.5 * pb_fwhm` (a hollow or ring mosaic whose
-bounding-box midpoint sits in an unobserved gap where `PB ~ 0`), set CASA's
-`psfphasecenter = central_field_name` so `makePSF()` evaluates on an observed
-pointing. Record `bbox_center_j2000` as `{PHASECENTER}`.
+`mosaic_groups[].central_field_id`, `central_field_name`, and
+`central_field_offset_arcmin`: if `central_field_offset_arcmin > 0.5 * pb_fwhm`
+(a hollow or ring mosaic whose bounding-box midpoint sits in an unobserved gap
+where `PB ~ 0`), pass `psfphasecenter = central_field_id` (integer field ID) or
+a `J2000` direction string to `ms_tclean` so CASA `makePSF()` evaluates on an
+observed pointing. For both `phasecenter` and `psfphasecenter`, CASA `tclean`
+accepts an integer field ID (`central_field_id`) or a `J2000` direction string
+using `d/m/s` or `.` for Declination (e.g. `'J2000 03h26m24.16s +30d35m59.4s'`
+or `'J2000 03:26:24.16 +30.35.59.4'` -- NEVER `:` in Declination, which CASA
+interprets as hours, and NEVER `'FK5'`); `ms_tclean` also accepts
+`central_field_name` (or a numeric string) and converts it to the integer field
+ID for CASA. Record `bbox_center_j2000` as `{PHASECENTER}`.
 
 Primary beam FWHM: use the tapered-aperture approximation
 `PB_FWHM ~ 1.15 * lambda / D_min` (where `D_min` is the smallest active dish

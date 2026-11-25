@@ -553,6 +553,80 @@ def test_run_step_busy_guard_reattach_and_finished_pid_with_rc(tmp_path: Path):
         time.sleep(0.1)
 
 
+def test_run_step_concurrent_launch_lock_allows_exactly_one(tmp_path: Path):
+    """Spawning 3 run-step.sh launches simultaneously in the same workdir lets
+    exactly 1 launch while the other 2 exit 1 with status=busy, and cleans up
+    .run-step.launch.lock (including stale lock reclamation)."""
+    scripts = []
+    markers = []
+    for idx in range(3):
+        marker = tmp_path / f"ran_{idx}.flag"
+        script = tmp_path / f"race_{idx}.py"
+        script.write_text(
+            f"import time\n"
+            f"from pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text('ran')\n"
+            f"print('race_{idx} started', flush=True)\n"
+            f"time.sleep(1.5)\n"
+            f"print('race_{idx} done', flush=True)\n"
+        )
+        scripts.append(script)
+        markers.append(marker)
+
+    procs = [
+        subprocess.Popen(
+            [
+                "bash",
+                str(RUN_STEP_SH),
+                sys.executable,
+                str(s),
+                "--wait",
+                "6",
+                "--interval",
+                "1",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for s in scripts
+    ]
+    results = []
+    for proc in procs:
+        out, err = proc.communicate(timeout=15)
+        results.append((proc.returncode, out, err))
+
+    ok = [r for r in results if r[0] == 0]
+    busy = [r for r in results if r[0] == 1 and "status=busy" in r[1]]
+    assert len(ok) == 1, f"expected 1 launch, got results={results}"
+    assert "status=done rc=0" in ok[0][1]
+    assert len(busy) == 2, f"expected 2 busy exits, got results={results}"
+    assert sum(1 for m in markers if m.exists()) == 1
+    assert not (tmp_path / ".run-step.launch.lock").exists()
+
+    # Stale launch lock with dead owner.pid is reclaimed cleanly.
+    victim = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    victim.send_signal(signal.SIGKILL)
+    victim.wait(timeout=5)
+    time.sleep(0.05)
+    lock_dir = tmp_path / ".run-step.launch.lock"
+    lock_dir.mkdir()
+    (lock_dir / "owner.pid").write_text(f"{victim.pid}\n")
+
+    reclaim_script = tmp_path / "reclaim.py"
+    reclaim_script.write_text("print('reclaimed ok')\n")
+    res_reclaim = subprocess.run(
+        ["bash", str(RUN_STEP_SH), sys.executable, str(reclaim_script), "--wait", "5"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res_reclaim.returncode == 0
+    assert "status=done rc=0" in res_reclaim.stdout
+    assert "reclaimed ok" in res_reclaim.stdout
+    assert not lock_dir.exists()
+
+
 def test_auto_ledger_derivation_deduplication_and_report(
     tmp_path: Path,
     real_ms_calibrated_copy: str,

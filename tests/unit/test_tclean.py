@@ -222,6 +222,8 @@ class TestPbMask:
             str(workdir / "mosaic_pospb"),
             field="0,1",
             gridder="mosaic",
+            phasecenter="0",
+            allow_geometry_override=True,
             pblimit=0.1,
             nsigma=3.0,
             workdir=str(workdir),
@@ -236,6 +238,8 @@ class TestPbMask:
             str(workdir / "mosaic_lowpbmask"),
             field="0,1",
             gridder="mosaic",
+            phasecenter="0",
+            allow_geometry_override=True,
             pblimit=-0.01,
             pbmask=None,
             usemask="pb",
@@ -251,6 +255,8 @@ class TestPbMask:
             str(workdir / "mosaic_good"),
             field="0,1",
             gridder="mosaic",
+            phasecenter="0",
+            allow_geometry_override=True,
             pblimit=-0.01,
             pbmask=0.1,
             usemask="pb",
@@ -267,6 +273,8 @@ class TestPbMask:
             str(workdir / "mosaic_mtmfs_low_nsigma"),
             field="0,1",
             gridder="mosaic",
+            phasecenter="0",
+            allow_geometry_override=True,
             deconvolver="mtmfs",
             nterms=2,
             specmode="mfs",
@@ -284,6 +292,8 @@ class TestPbMask:
             str(workdir / "mosaic_mtmfs_shallow"),
             field="0,1",
             gridder="mosaic",
+            phasecenter="0",
+            allow_geometry_override=True,
             deconvolver="mtmfs",
             nterms=2,
             specmode="mfs",
@@ -880,6 +890,7 @@ class TestTcleanGeometryAndProvenanceWarnings:
 
         import numpy as np
 
+        from ms_inspect.exceptions import ComputationError
         from ms_inspect.util.casa_context import open_table
         from ms_modify.tclean import run
 
@@ -927,30 +938,88 @@ class TestTcleanGeometryAndProvenanceWarnings:
         # gridder='standard' skips mosaic FOV check.
         assert not any("Mosaic/PB FOV check" in w for w in res_std["warnings"])
 
-        # 2. gridder='mosaic' with phasecenter='' warns with exact circular-unwrapped bbox
-        #    midpoint (RA=00h00m00.00s, Dec=+30d30m00.0s!) and first_field_offset_arcmin,
-        #    AND flags undersized FOV.
-        res_mos = run(
+        # 2. gridder='mosaic' with phasecenter='' raises hard ComputationError with exact
+        #    circular-unwrapped bbox midpoint (RA=00h00m00.00s, Dec=+30d30m00.0s!) and
+        #    first_field_offset_arcmin, AND flags undersized FOV, without writing any script.
+        with pytest.raises(ComputationError) as exc_bad:
+            run(
+                real_ms_calibrated_copy,
+                str(wd / "mos_bad"),
+                field="PER_FIELD_*",
+                gridder="mosaic",
+                phasecenter="",
+                cell="4.0arcsec",
+                imsize=[1024, 1024],
+                pblimit=-0.01,
+                pbmask=0.1,
+                nsigma=5.0,
+                workdir=str(wd),
+                execute=False,
+            )
+        msg_bad = str(exc_bad.value)
+        assert "J2000 00h00m00.00s +30d30m00.0s" in msg_bad
+        assert "arcmin" in msg_bad
+        assert "np.str_" not in msg_bad
+        assert "Mosaic/PB FOV check" in msg_bad
+        assert "(centered)" in msg_bad
+        assert "allow_geometry_override=True" in msg_bad
+        assert not (wd / "tclean_mos_bad.py").exists()
+
+        # 2b. Empty mosaic phasecenter is ALWAYS a hard error (cannot be overridden).
+        with pytest.raises(ComputationError, match="J2000 00h00m00.00s \\+30d30m00.0s"):
+            run(
+                real_ms_calibrated_copy,
+                str(wd / "mos_empty_pc_override"),
+                field="PER_FIELD_*",
+                gridder="mosaic",
+                phasecenter="",
+                cell="4.0arcsec",
+                imsize=[3600, 3600],
+                allow_geometry_override=True,
+                pblimit=-0.01,
+                pbmask=0.1,
+                nsigma=5.0,
+                workdir=str(wd),
+                execute=False,
+            )
+
+        # 2c. Centered undersized mosaic raises ComputationError by default, and downgrades
+        #     to a warning when allow_geometry_override=True.
+        with pytest.raises(ComputationError, match="allow_geometry_override=True"):
+            run(
+                real_ms_calibrated_copy,
+                str(wd / "mos_undersized"),
+                field="PER_FIELD_*",
+                gridder="mosaic",
+                phasecenter="J2000 00h00m00.00s +30d30m00.0s",
+                cell="4.0arcsec",
+                imsize=[1024, 1024],
+                pblimit=-0.01,
+                pbmask=0.1,
+                nsigma=5.0,
+                workdir=str(wd),
+                execute=False,
+            )
+        assert not (wd / "tclean_mos_undersized.py").exists()
+
+        res_ovr = run(
             real_ms_calibrated_copy,
-            str(wd / "mos_bad"),
+            str(wd / "mos_undersized_ovr"),
             field="PER_FIELD_*",
             gridder="mosaic",
-            phasecenter="",
+            phasecenter="J2000 00h00m00.00s +30d30m00.0s",
             cell="4.0arcsec",
             imsize=[1024, 1024],
+            allow_geometry_override=True,
             pblimit=-0.01,
             pbmask=0.1,
             nsigma=5.0,
             workdir=str(wd),
             execute=False,
         )
-        assert any(
-            "J2000 00h00m00.00s +30d30m00.0s" in w and "arcmin" in w for w in res_mos["warnings"]
-        )
-        assert not any("np.str_" in w for w in res_mos["warnings"])
-        assert any("Mosaic/PB FOV check" in w and "(centered)" in w for w in res_mos["warnings"])
+        assert any("Mosaic/PB FOV check" in w for w in res_ovr["warnings"])
 
-        # 3. Centered phasecenter + full extent + 4 * PB_FWHM clears both warnings!
+        # 3. Centered phasecenter + full extent + 4 * PB_FWHM clears both checks!
         #    At min_freq ~ 1.0 GHz (25m dish), PB_FWHM ~ 42.1'; extent 60' + 4 * 42.1' = 228.4'
         #    -> ~3426 px at 4" (so 3600x3600 clears 4 * PB_FWHM cleanly).
         res_good = run(
@@ -970,25 +1039,27 @@ class TestTcleanGeometryAndProvenanceWarnings:
         assert not any("defaults phasecenter" in w for w in res_good["warnings"])
         assert not any("Mosaic/PB FOV check" in w for w in res_good["warnings"])
 
-        # 4. Baby-peel cutout (max(imsize) <= 256) skips mosaic FOV check.
-        res_peel = run(
-            real_ms_calibrated_copy,
-            str(wd / "mos_peel"),
-            field="PER_FIELD_*",
-            gridder="mosaic",
-            phasecenter="J2000 00h00m00.00s +30d30m00.0s",
-            cell="4.0arcsec",
-            imsize=[256, 256],
-            pblimit=-0.01,
-            pbmask=0.1,
-            nsigma=5.0,
-            workdir=str(wd),
-            execute=False,
-        )
-        assert not any("Mosaic/PB FOV check" in w for w in res_peel["warnings"])
+        # 4. Severely undersized centered mosaic (fov = 256 * 4" = 17.1' < 1.5 * PB) with
+        #    phasecenter set MUST raise ComputationError (Fix 2: is_small_cutout must NOT
+        #    exempt gridder='mosaic').
+        with pytest.raises(ComputationError, match="Mosaic/PB FOV check"):
+            run(
+                real_ms_calibrated_copy,
+                str(wd / "mos_severe_undersized"),
+                field="PER_FIELD_*",
+                gridder="mosaic",
+                phasecenter="J2000 00h00m00.00s +30d30m00.0s",
+                cell="4.0arcsec",
+                imsize=[256, 256],
+                pblimit=-0.01,
+                pbmask=0.1,
+                nsigma=5.0,
+                workdir=str(wd),
+                execute=False,
+            )
 
         # 5. Off-axis outlier cutout (> 256 px, e.g. 512x512) centered outside the mosaic
-        #    footprint (~2.1 deg east of bbox center) must NOT emit a mosaic FOV warning.
+        #    footprint (~2.1 deg east of bbox center) MUST still be exempted.
         res_offaxis = run(
             real_ms_calibrated_copy,
             str(wd / "mos_offaxis_512"),
@@ -1012,25 +1083,83 @@ class TestTcleanGeometryAndProvenanceWarnings:
         import sys
         import time
 
+        import numpy as np
+
+        from ms_inspect.exceptions import ComputationError
+        from ms_inspect.util.casa_context import open_table
+        from ms_inspect.util.conversions import angular_resolution_arcsec, baselines_m
         from ms_inspect.util.stage_log import record_stage
         from ms_modify.tclean import run
 
         wd = tmp_path / "work"
         wd.mkdir()
 
-        # 1. Nyquist advisory fires for grossly coarse cell, stays silent for fine cell.
-        res_coarse = run(
+        # Compute exact unprojected beam lambda/B_max for marginal-Nyquist test.
+        with open_table(str(Path(real_ms_calibrated) / "SPECTRAL_WINDOW")) as tb:
+            max_freq_hz = max(
+                float(np.max(np.asarray(tb.getcell("CHAN_FREQ", sid), dtype=float)))
+                for sid in range(tb.nrows())
+            )
+        with open_table(str(Path(real_ms_calibrated) / "ANTENNA")) as tb:
+            pos = np.asarray(tb.getcol("POSITION"), dtype=float)
+            _, _, bl = baselines_m(pos)
+            max_bl_m = float(np.max(bl))
+        approx_beam_arcsec = angular_resolution_arcsec(max_bl_m, max_freq_hz)
+
+        # 1a. Strict Nyquist violation (px_per_beam < 2.0, no uvtaper) raises ComputationError.
+        with pytest.raises(ComputationError) as exc_nyq:
+            run(
+                real_ms_calibrated,
+                str(wd / "coarse"),
+                field="0",
+                cell="300arcsec",
+                workdir=str(wd),
+                execute=False,
+            )
+        assert "Nyquist" in str(exc_nyq.value)
+        assert "allow_geometry_override=True" in str(exc_nyq.value)
+        assert not (wd / "tclean_coarse.py").exists()
+
+        # 1b. allow_geometry_override=True downgrades strict Nyquist violation to a warning.
+        res_coarse_ovr = run(
             real_ms_calibrated,
-            str(wd / "coarse"),
+            str(wd / "coarse_ovr"),
+            field="0",
+            cell="300arcsec",
+            allow_geometry_override=True,
+            workdir=str(wd),
+            execute=False,
+        )
+        assert any("Nyquist" in w and "foreshortening" in w for w in res_coarse_ovr["warnings"])
+
+        # 1c. Tapered call (debug_params={"tclean": {"uvtaper": [...]}}) stays warn-only.
+        res_taper = run(
+            real_ms_calibrated,
+            str(wd / "coarse_taper"),
             field="0",
             cell="300arcsec",
             workdir=str(wd),
             execute=False,
+            debug=True,
+            debug_params={"tclean": {"uvtaper": ["600arcsec"]}},
         )
         assert any(
-            "Nyquist cell advisory" in w and "foreshortening" in w for w in res_coarse["warnings"]
+            "Nyquist cell advisory" in w and "foreshortening" in w for w in res_taper["warnings"]
         )
 
+        # 1d. Marginal Nyquist (2.0 <= px_per_beam < 2.5) stays a warning (no error).
+        marginal_cell = f"{approx_beam_arcsec / 2.2:.3f}arcsec"
+        res_marginal = run(
+            real_ms_calibrated,
+            str(wd / "marginal"),
+            field="0",
+            cell=marginal_cell,
+            workdir=str(wd),
+            execute=False,
+        )
+        assert any("Nyquist cell advisory" in w for w in res_marginal["warnings"])
+
+        # 1e. Fine cell stays silent.
         res_fine = run(
             real_ms_calibrated,
             str(wd / "fine"),
@@ -1039,7 +1168,7 @@ class TestTcleanGeometryAndProvenanceWarnings:
             workdir=str(wd),
             execute=False,
         )
-        assert not any("Nyquist cell advisory" in w for w in res_fine["warnings"])
+        assert not any("Nyquist" in w for w in res_fine["warnings"])
 
         # 2. SPW provenance warning when stage_log spw_amp_severity verified a narrower spw.
         record_stage(
@@ -1078,22 +1207,25 @@ class TestTcleanGeometryAndProvenanceWarnings:
         )
         assert not any("SPW provenance mismatch" in w for w in res_sub["warnings"])
 
-        # 3. Live tclean_*.py.pid warning (alive without .rc warns; with .rc or dead PID silent).
+        # 3. Live tclean_*.py.pid is ALWAYS a hard ComputationError (no override);
+        #    adding .rc or dead PID clears it.
         live_pid_file = wd / "tclean_other.py.pid"
         live_pid_file.write_text(f"{os.getpid()}\n")
-        res_live = run(
-            real_ms_calibrated,
-            str(wd / "live_check"),
-            field="0",
-            spw="0",
-            workdir=str(wd),
-            execute=False,
-        )
-        assert any(
-            "Live tclean job detected" in w and "tclean_other.py" in w for w in res_live["warnings"]
-        )
+        with pytest.raises(ComputationError) as exc_live:
+            run(
+                real_ms_calibrated,
+                str(wd / "live_check"),
+                field="0",
+                spw="0",
+                allow_geometry_override=True,
+                workdir=str(wd),
+                execute=False,
+            )
+        assert "Live tclean job detected" in str(exc_live.value)
+        assert "tclean_other.py" in str(exc_live.value)
+        assert not (wd / "tclean_live_check.py").exists()
 
-        # Adding .rc clears the live-PID warning (completed unharvested job).
+        # Adding .rc clears the live-PID error (completed unharvested job).
         (wd / "tclean_other.py.rc").write_text("0\n")
         res_done = run(
             real_ms_calibrated,
@@ -1105,7 +1237,7 @@ class TestTcleanGeometryAndProvenanceWarnings:
         )
         assert not any("Live tclean job detected" in w for w in res_done["warnings"])
 
-        # Dead PID without .rc does NOT trigger live-PID warning.
+        # Dead PID without .rc does NOT trigger live-PID error.
         victim = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
         victim.send_signal(signal.SIGKILL)
         victim.wait(timeout=5)
@@ -1128,6 +1260,7 @@ class TestTcleanGeometryAndProvenanceWarnings:
 
         import numpy as np
 
+        from ms_inspect.exceptions import ComputationError
         from ms_inspect.util.casa_context import open_table
         from ms_inspect.util.conversions import angular_resolution_arcsec
         from ms_modify.tclean import run
@@ -1175,14 +1308,36 @@ class TestTcleanGeometryAndProvenanceWarnings:
         wd.mkdir()
 
         # FOV = 450' clears 12 m (30' + 3.6 * pb_12m ~ 386') but is below 7 m (30' + 3.6 * pb_7m).
+        with pytest.raises(ComputationError) as exc_het:
+            run(
+                real_ms_calibrated_copy,
+                str(wd / "het_mos"),
+                field="HET_*",
+                gridder="mosaic",
+                phasecenter="J2000 10h00m00.00s +30d15m00.0s",
+                cell="60arcsec",
+                imsize=[450, 450],
+                pblimit=-0.01,
+                pbmask=0.1,
+                nsigma=5.0,
+                workdir=str(wd),
+                execute=False,
+            )
+        het_msg = str(exc_het.value)
+        assert "Mosaic/PB FOV check" in het_msg
+        assert f"PB_FWHM={pb_7m_arcmin:.1f}'" in het_msg
+        assert f"PB_FWHM={pb_12m_arcmin:.1f}'" not in het_msg
+
+        # With allow_geometry_override=True it downgrades cleanly to a warning.
         res = run(
             real_ms_calibrated_copy,
-            str(wd / "het_mos"),
+            str(wd / "het_mos_ovr"),
             field="HET_*",
             gridder="mosaic",
             phasecenter="J2000 10h00m00.00s +30d15m00.0s",
             cell="60arcsec",
             imsize=[450, 450],
+            allow_geometry_override=True,
             pblimit=-0.01,
             pbmask=0.1,
             nsigma=5.0,
@@ -1262,6 +1417,7 @@ class TestTcleanGeometryAndProvenanceWarnings:
 
         import numpy as np
 
+        from ms_inspect.exceptions import ComputationError
         from ms_inspect.util.casa_context import open_table
         from ms_modify.tclean import run
 
@@ -1294,7 +1450,7 @@ class TestTcleanGeometryAndProvenanceWarnings:
         center = "J2000 10h00m00.00s +30d15m00.0s"
 
         # 1. Compact-array mosaic (imsize=192 <= 256, but FOV = 192 * 40" = 128' >= 1.5 * PB ~ 71')
-        #    MUST still get both gridder='standard' and Mosaic/PB FOV checks.
+        #    MUST still get gridder='standard' warning and Mosaic/PB FOV hard error.
         res_cmp_std = run(
             real_ms_calibrated_copy,
             str(wd / "cmp_std"),
@@ -1308,24 +1464,26 @@ class TestTcleanGeometryAndProvenanceWarnings:
         )
         assert any("gridder='standard'" in w for w in res_cmp_std["warnings"])
 
-        res_cmp_mos = run(
-            real_ms_calibrated_copy,
-            str(wd / "cmp_mos"),
-            field="CMP_*",
-            gridder="mosaic",
-            phasecenter=center,
-            cell="40arcsec",
-            imsize=[192, 192],
-            pblimit=-0.01,
-            pbmask=0.1,
-            nsigma=5.0,
-            workdir=str(wd),
-            execute=False,
-        )
-        assert any("Mosaic/PB FOV check" in w for w in res_cmp_mos["warnings"])
+        with pytest.raises(ComputationError, match="Mosaic/PB FOV check"):
+            run(
+                real_ms_calibrated_copy,
+                str(wd / "cmp_mos"),
+                field="CMP_*",
+                gridder="mosaic",
+                phasecenter=center,
+                cell="40arcsec",
+                imsize=[192, 192],
+                pblimit=-0.01,
+                pbmask=0.1,
+                nsigma=5.0,
+                workdir=str(wd),
+                execute=False,
+            )
 
-        # 2. High-res small-angle cutout (512x512 > 256, but FOV = 512 * 2" = 17.1' < 1.5 * PB)
-        #    MUST skip both gridder='standard' and Mosaic/PB FOV checks.
+        # 2. High-res small-angle cutout (512x512 > 256, FOV = 512 * 2" = 17.1' < 1.5 * PB):
+        #    - gridder='standard' STILL skips the multi-field warning (Block 4 keeps is_small_cutout).
+        #    - gridder='mosaic' MUST raise ComputationError (Fix 2: is_small_cutout does NOT
+        #      exempt centered mosaic calls; only off_axis_cutout does).
         res_cut_std = run(
             real_ms_calibrated_copy,
             str(wd / "cut_std"),
@@ -1339,21 +1497,21 @@ class TestTcleanGeometryAndProvenanceWarnings:
         )
         assert not any("gridder='standard'" in w for w in res_cut_std["warnings"])
 
-        res_cut_mos = run(
-            real_ms_calibrated_copy,
-            str(wd / "cut_mos"),
-            field="CMP_*",
-            gridder="mosaic",
-            phasecenter=center,
-            cell="2.0arcsec",
-            imsize=[512, 512],
-            pblimit=-0.01,
-            pbmask=0.1,
-            nsigma=5.0,
-            workdir=str(wd),
-            execute=False,
-        )
-        assert not any("Mosaic/PB FOV check" in w for w in res_cut_mos["warnings"])
+        with pytest.raises(ComputationError, match="Mosaic/PB FOV check"):
+            run(
+                real_ms_calibrated_copy,
+                str(wd / "cut_mos"),
+                field="CMP_*",
+                gridder="mosaic",
+                phasecenter=center,
+                cell="2.0arcsec",
+                imsize=[512, 512],
+                pblimit=-0.01,
+                pbmask=0.1,
+                nsigma=5.0,
+                workdir=str(wd),
+                execute=False,
+            )
 
     def test_subband_cube_uses_cube_frequency_bounds_instead_of_full_spw(
         self, tmp_path, real_ms_calibrated_copy
@@ -1362,6 +1520,7 @@ class TestTcleanGeometryAndProvenanceWarnings:
 
         import numpy as np
 
+        from ms_inspect.exceptions import ComputationError
         from ms_inspect.util.casa_context import open_table
         from ms_inspect.util.conversions import angular_resolution_arcsec
         from ms_modify.tclean import run
@@ -1402,31 +1561,32 @@ class TestTcleanGeometryAndProvenanceWarnings:
         center = "J2000 10h00m00.00s +30d15m00.0s"
         pb_1418_arcmin = 1.15 * angular_resolution_arcsec(25.0, 1418e6) / 60.0
 
-        # 1. Undersized mosaic sub-band cube reports min_freq=1.418 GHz (not 0.856 GHz).
-        res_fov = run(
-            real_ms_calibrated_copy,
-            str(wd / "cube_fov_warn"),
-            field="HI_*",
-            spw="0",
-            specmode="cube",
-            start="1418MHz",
-            width="0.1MHz",
-            nchan=40,
-            gridder="mosaic",
-            phasecenter=center,
-            cell="30arcsec",
-            imsize=[200, 200],
-            pblimit=-0.01,
-            pbmask=0.1,
-            nsigma=5.0,
-            workdir=str(wd),
-            execute=False,
-        )
-        fov_warns = [w for w in res_fov["warnings"] if "Mosaic/PB FOV check" in w]
-        assert fov_warns
-        assert "min_freq=1.418 GHz" in fov_warns[0]
-        assert f"PB_FWHM={pb_1418_arcmin:.1f}'" in fov_warns[0]
-        assert "0.856 GHz" not in fov_warns[0]
+        # 1. Undersized mosaic sub-band cube raises ComputationError with min_freq=1.418 GHz.
+        with pytest.raises(ComputationError) as exc_fov:
+            run(
+                real_ms_calibrated_copy,
+                str(wd / "cube_fov_warn"),
+                field="HI_*",
+                spw="0",
+                specmode="cube",
+                start="1418MHz",
+                width="0.1MHz",
+                nchan=40,
+                gridder="mosaic",
+                phasecenter=center,
+                cell="30arcsec",
+                imsize=[200, 200],
+                pblimit=-0.01,
+                pbmask=0.1,
+                nsigma=5.0,
+                workdir=str(wd),
+                execute=False,
+            )
+        fov_msg = str(exc_fov.value)
+        assert "Mosaic/PB FOV check" in fov_msg
+        assert "min_freq=1.418 GHz" in fov_msg
+        assert f"PB_FWHM={pb_1418_arcmin:.1f}'" in fov_msg
+        assert "0.856 GHz" not in fov_msg
 
         # 2. FOV = 160' clears 30' + 3.6 * PB(1418 MHz) (~150') even though it would fail at 856 MHz (~229').
         res_fov_ok = run(
@@ -1451,53 +1611,368 @@ class TestTcleanGeometryAndProvenanceWarnings:
         assert not any("Mosaic/PB FOV check" in w for w in res_fov_ok["warnings"])
 
         # 3. Nyquist check uses max_freq=1.422 GHz (not 1.712 GHz), including negative width.
-        res_nyq = run(
-            real_ms_calibrated_copy,
-            str(wd / "cube_nyq"),
-            field="0",
-            spw="0",
-            specmode="cube",
-            start="1418MHz",
-            width="0.1MHz",
-            nchan=40,
-            cell="300arcsec",
-            workdir=str(wd),
-            execute=False,
-        )
-        nyq_warns = [w for w in res_nyq["warnings"] if "Nyquist cell advisory" in w]
-        assert nyq_warns
-        assert "max_freq=1.422 GHz" in nyq_warns[0]
-        assert "1.712 GHz" not in nyq_warns[0]
+        with pytest.raises(ComputationError) as exc_nyq:
+            run(
+                real_ms_calibrated_copy,
+                str(wd / "cube_nyq"),
+                field="0",
+                spw="0",
+                specmode="cube",
+                start="1418MHz",
+                width="0.1MHz",
+                nchan=40,
+                cell="300arcsec",
+                workdir=str(wd),
+                execute=False,
+            )
+        nyq_msg = str(exc_nyq.value)
+        assert "Nyquist" in nyq_msg
+        assert "max_freq=1.422 GHz" in nyq_msg
+        assert "1.712 GHz" not in nyq_msg
 
-        res_nyq_neg = run(
-            real_ms_calibrated_copy,
-            str(wd / "cube_nyq_neg"),
-            field="0",
-            spw="0",
-            specmode="cube",
-            start="1422MHz",
-            width="-0.1MHz",
-            nchan=40,
-            cell="300arcsec",
-            workdir=str(wd),
-            execute=False,
-        )
-        nyq_neg_warns = [w for w in res_nyq_neg["warnings"] if "Nyquist cell advisory" in w]
-        assert nyq_neg_warns and "max_freq=1.422 GHz" in nyq_neg_warns[0]
+        with pytest.raises(ComputationError) as exc_nyq_neg:
+            run(
+                real_ms_calibrated_copy,
+                str(wd / "cube_nyq_neg"),
+                field="0",
+                spw="0",
+                specmode="cube",
+                start="1422MHz",
+                width="-0.1MHz",
+                nchan=40,
+                cell="300arcsec",
+                workdir=str(wd),
+                execute=False,
+            )
+        assert "max_freq=1.422 GHz" in str(exc_nyq_neg.value)
 
         # 4. Non-frequency (velocity) cube falls back to full SPW [0.856, 1.712] GHz.
-        res_vel = run(
-            real_ms_calibrated_copy,
-            str(wd / "cube_vel"),
+        with pytest.raises(ComputationError) as exc_vel:
+            run(
+                real_ms_calibrated_copy,
+                str(wd / "cube_vel"),
+                field="0",
+                spw="0",
+                specmode="cube",
+                start="10km/s",
+                width="1km/s",
+                nchan=40,
+                cell="300arcsec",
+                workdir=str(wd),
+                execute=False,
+            )
+        assert "max_freq=1.712 GHz" in str(exc_vel.value)
+
+    def test_phasecenter_non_j2000_frames_and_malformed_errors(self, tmp_path, real_ms_calibrated):
+        import math
+
+        from ms_inspect.exceptions import ComputationError
+        from ms_modify.tclean import _parse_phasecenter, run
+
+        # 1. CASA colon-RA / dot-Dec syntax and 2-token frameless strings parse to expected J2000 rad.
+        pc_dot = _parse_phasecenter("03:26:24.16 +30.35.59.4", [], [])
+        assert pc_dot is not None
+        assert math.degrees(pc_dot[0]) == pytest.approx((3 + 26 / 60 + 24.16 / 3600) * 15, abs=1e-4)
+        assert math.degrees(pc_dot[1]) == pytest.approx(30 + 35 / 60 + 59.4 / 3600, abs=1e-4)
+
+        # Colon-separated Declination and FK5 are rejected by _parse_phasecenter too.
+        assert _parse_phasecenter("J2000 03:26:24.16 +30:35:59.4", [], []) is None
+        assert _parse_phasecenter("FK5 03h26m24.16s +30d35m59.4s", [], []) is None
+
+        # 2. B1950 -> J2000 conversion via casatools.measures (precession ~ +0.76 deg RA, +0.17 deg Dec).
+        pc_b1950 = _parse_phasecenter("B1950 03h23m18s +30d25m30s", [], [])
+        assert pc_b1950 is not None
+        assert math.degrees(pc_b1950[0]) == pytest.approx(51.5935, abs=0.02)
+        assert math.degrees(pc_b1950[1]) == pytest.approx(30.5994, abs=0.02)
+
+        # 3. GALACTIC -> J2000 conversion via casatools.measures.
+        pc_gal = _parse_phasecenter("GALACTIC 158.0deg -21.0deg", [], [])
+        assert pc_gal is not None
+        assert math.degrees(pc_gal[0]) == pytest.approx(51.6496, abs=0.05)
+        assert math.degrees(pc_gal[1]) == pytest.approx(31.1069, abs=0.05)
+
+        wd = tmp_path / "work_pc"
+        wd.mkdir()
+
+        # Valid dot-separated Dec, B1950, and GALACTIC phasecenters succeed in run().
+        res_dot = run(
+            real_ms_calibrated,
+            str(wd / "dot_dec_img"),
             field="0",
-            spw="0",
-            specmode="cube",
-            start="10km/s",
-            width="1km/s",
-            nchan=40,
-            cell="300arcsec",
+            phasecenter="J2000 03:26:24.16 +30.35.59.4",
             workdir=str(wd),
             execute=False,
         )
-        vel_warns = [w for w in res_vel["warnings"] if "Nyquist cell advisory" in w]
-        assert vel_warns and "max_freq=1.712 GHz" in vel_warns[0]
+        assert res_dot["status"] == "ok"
+
+        res_b = run(
+            real_ms_calibrated,
+            str(wd / "b1950_img"),
+            field="0",
+            phasecenter="B1950 03h23m18s +30d25m30s",
+            workdir=str(wd),
+            execute=False,
+        )
+        assert res_b["status"] == "ok"
+
+        res_g = run(
+            real_ms_calibrated,
+            str(wd / "gal_img"),
+            field="0",
+            phasecenter="GALACTIC 158.0deg -21.0deg",
+            workdir=str(wd),
+            execute=False,
+        )
+        assert res_g["status"] == "ok"
+
+        # 4. Colon-separated Declination raises ComputationError mentioning hours/degrees.
+        with pytest.raises(ComputationError) as exc_colon_dec:
+            run(
+                real_ms_calibrated,
+                str(wd / "colon_dec_img"),
+                field="0",
+                gridder="standard",
+                phasecenter="J2000 03:26:24.16 +30:35:59.4",
+                workdir=str(wd),
+                execute=False,
+            )
+        colon_msg = str(exc_colon_dec.value).lower()
+        assert "hours" in colon_msg and "degrees" in colon_msg
+        assert not (wd / "tclean_colon_dec_img.py").exists()
+
+        # 5. FK5 raises ComputationError (CASA tclean rejects FK5).
+        with pytest.raises(ComputationError, match="FK5"):
+            run(
+                real_ms_calibrated,
+                str(wd / "fk5_img"),
+                field="0",
+                gridder="standard",
+                phasecenter="FK5 03h26m24.16s +30d35m59.4s",
+                workdir=str(wd),
+                execute=False,
+            )
+        assert not (wd / "tclean_fk5_img.py").exists()
+
+        # 6. Malformed / unknown / out-of-range phasecenter raises ComputationError even on
+        #    gridder='standard' and single field, and never writes a script.
+        for bad_pc in (
+            "UNKNOWN_FIELD_NAME",
+            "999",
+            999,
+            -1,
+            "BOGUSFRAME 03h00m00s +30d00m00s",
+            "J2000 notanangle +30d00m00s",
+            "J2000 03h00m00s +30d00m00s extra",
+        ):
+            with pytest.raises(ComputationError):
+                run(
+                    real_ms_calibrated,
+                    str(wd / "bad_pc_img"),
+                    field="0",
+                    gridder="standard",
+                    phasecenter=bad_pc,
+                    allow_geometry_override=True,
+                    workdir=str(wd),
+                    execute=False,
+                )
+        assert not (wd / "tclean_bad_pc_img.py").exists()
+
+        # Invalid psfphasecenter also raises ComputationError (never writes a script).
+        for bad_psf_pc in (999, "FK5 03h26m24.16s +30d35m59.4s", "J2000 03:26:24.16 +30:35:59.4"):
+            with pytest.raises(ComputationError):
+                run(
+                    real_ms_calibrated,
+                    str(wd / "bad_psf_img"),
+                    field="0",
+                    psfphasecenter=bad_psf_pc,
+                    workdir=str(wd),
+                    execute=False,
+                )
+        assert not (wd / "tclean_bad_psf_img.py").exists()
+
+        # Boolean phasecenter/psfphasecenter rejected.
+        with pytest.raises(ComputationError, match="phasecenter"):
+            run(
+                real_ms_calibrated,
+                str(wd / "bool_pc"),
+                field="0",
+                phasecenter=True,
+                workdir=str(wd),
+                execute=False,
+            )
+
+    def test_phasecenter_and_psfphasecenter_int_and_name_resolution(
+        self, tmp_path, real_ms_calibrated_copy, monkeypatch
+    ):
+        import math
+        import sys
+        import types
+
+        import numpy as np
+        from pydantic import ValidationError
+
+        from ms_inspect.util.casa_context import open_table
+        from ms_modify.server import TcleanInput
+        from ms_modify.tclean import run
+
+        # Populate FIELD table so field ID 1 is 'TARGET_1' and field ID 29 exists.
+        with open_table(str(Path(real_ms_calibrated_copy) / "FIELD"), read_only=False) as tb:
+            orig_n = tb.nrows()
+            base_dir = tb.getcell("PHASE_DIR", 0)
+            base_time = tb.getcell("TIME", 0)
+            # Ensure row 1 is named TARGET_1 and add rows up through ID 29.
+            if orig_n > 1:
+                tb.putcell("NAME", 1, "TARGET_1")
+            need = max(0, 30 - orig_n)
+            if need > 0:
+                tb.addrows(need)
+                for k in range(need):
+                    row = orig_n + k
+                    pdir = np.array(base_dir, copy=True)
+                    pdir[0, 0] = math.radians(150.0 + 0.01 * k)
+                    pdir[1, 0] = math.radians(30.0)
+                    tb.putcell("NAME", row, "TARGET_1" if row == 1 else f"MOS_F_{row}")
+                    tb.putcell("CODE", row, "")
+                    tb.putcell("TIME", row, base_time)
+                    tb.putcell("NUM_POLY", row, 0)
+                    tb.putcell("DELAY_DIR", row, pdir)
+                    tb.putcell("PHASE_DIR", row, pdir)
+                    tb.putcell("REFERENCE_DIR", row, pdir)
+                    tb.putcell("SOURCE_ID", row, 70)
+                    tb.putcell("FLAG_ROW", row, False)
+
+        # TcleanInput accepts int and str, and rejects bool.
+        m_int = TcleanInput(
+            ms_path=real_ms_calibrated_copy,
+            imagename=str(tmp_path / "img"),
+            field="0",
+            workdir=str(tmp_path),
+            phasecenter=29,
+            psfphasecenter=29,
+        )
+        assert m_int.phasecenter == 29
+        assert m_int.psfphasecenter == 29
+        with pytest.raises(ValidationError):
+            TcleanInput(
+                ms_path=real_ms_calibrated_copy,
+                imagename=str(tmp_path / "img"),
+                field="0",
+                workdir=str(tmp_path),
+                phasecenter=True,
+            )
+
+        wd = tmp_path / "work_pc_res"
+        wd.mkdir()
+
+        captured: dict = {}
+
+        def fake_tclean(**kwargs):
+            captured.clear()
+            captured.update(kwargs)
+            (Path(kwargs["imagename"] + ".image")).mkdir()
+            return {"stopcode": 2}
+
+        monkeypatch.setitem(sys.modules, "casatasks", types.SimpleNamespace(tclean=fake_tclean))
+
+        # Check all combinations produce integer FIELD_IDs in generated script AND execute=True kwargs.
+        cases = [
+            ("int_29", 29, 29, 29, 29),
+            ("str_29", "29", "29", 29, 29),
+            ("name_target1", "TARGET_1", "TARGET_1", 1, 1),
+            ("int_zero", 0, 0, 0, 0),
+        ]
+        for label, pc_in, psf_in, expected_pc, expected_psf in cases:
+            res_script = run(
+                real_ms_calibrated_copy,
+                str(wd / f"s_{label}"),
+                field="0",
+                phasecenter=pc_in,
+                psfphasecenter=psf_in,
+                workdir=str(wd),
+                execute=False,
+            )
+            script_txt = Path(res_script["data"]["script_path"]["value"]).read_text()
+            assert f"phasecenter  = {expected_pc}," in script_txt
+            assert f"psfphasecenter = {expected_psf}," in script_txt
+
+            res_exec = run(
+                real_ms_calibrated_copy,
+                str(wd / f"e_{label}"),
+                field="0",
+                phasecenter=pc_in,
+                psfphasecenter=psf_in,
+                workdir=str(wd),
+                execute=True,
+            )
+            assert res_exec["status"] == "ok"
+            assert captured["phasecenter"] == expected_pc
+            assert type(captured["phasecenter"]) is int
+            assert captured["psfphasecenter"] == expected_psf
+            assert type(captured["psfphasecenter"]) is int
+
+    def test_psfphasecenter_forwarded_in_script_and_execute(
+        self, tmp_path, real_ms_calibrated, monkeypatch
+    ):
+        import sys
+        import types
+
+        from ms_modify.server import TcleanInput
+        from ms_modify.tclean import run
+
+        # Schema check on TcleanInput.
+        model = TcleanInput(
+            ms_path=real_ms_calibrated,
+            imagename=str(tmp_path / "img"),
+            field="0",
+            workdir=str(tmp_path),
+            psfphasecenter="  J2000 13h31m08.29s +30d30m32.96s  ",
+            allow_geometry_override=True,
+        )
+        assert model.psfphasecenter == "J2000 13h31m08.29s +30d30m32.96s"
+        assert model.allow_geometry_override is True
+
+        wd = tmp_path / "work_psfpc"
+        wd.mkdir()
+        psf_pc = "J2000 13h31m08.29s +30d30m32.96s"
+
+        # execute=False: omitted when empty, rendered when non-empty.
+        res_empty = run(
+            real_ms_calibrated,
+            str(wd / "no_psfpc"),
+            field="0",
+            workdir=str(wd),
+            execute=False,
+        )
+        script_empty = Path(res_empty["data"]["script_path"]["value"]).read_text()
+        assert "psfphasecenter =" not in script_empty
+
+        res_set = run(
+            real_ms_calibrated,
+            str(wd / "with_psfpc"),
+            field="0",
+            psfphasecenter=f"  {psf_pc}  ",
+            workdir=str(wd),
+            execute=False,
+        )
+        script_set = Path(res_set["data"]["script_path"]["value"]).read_text()
+        assert f"psfphasecenter = {psf_pc!r}," in script_set
+
+        # execute=True: forwarded in kwargs to casatasks.tclean.
+        captured: dict = {}
+
+        def fake_tclean(**kwargs):
+            captured.update(kwargs)
+            (Path(kwargs["imagename"] + ".image")).mkdir()
+            return {"stopcode": 2}
+
+        monkeypatch.setitem(sys.modules, "casatasks", types.SimpleNamespace(tclean=fake_tclean))
+        res_exec = run(
+            real_ms_calibrated,
+            str(wd / "exec_psfpc"),
+            field="0",
+            psfphasecenter=f"  {psf_pc}  ",
+            workdir=str(wd),
+            execute=True,
+        )
+        assert res_exec["status"] == "ok"
+        assert captured["psfphasecenter"] == psf_pc

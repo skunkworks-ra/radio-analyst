@@ -13,7 +13,7 @@ import os
 from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ms_inspect.util.dispatch import CASA_LOG_NOTE, ToolResult, run_tool
 from ms_inspect.util.logs import init_server_logging
@@ -1852,17 +1852,41 @@ class TcleanInput(BaseModel):
     )
     width: str | None = Field(default=None, description="Cube channel width (specmode='cube').")
     outframe: str | None = Field(default=None, description="Cube spectral frame, e.g. 'LSRK'.")
-    phasecenter: str = Field(
+    phasecenter: int | str = Field(
         default="",
-        description="Optional phase center (e.g. 'J2000 HHhMMmSS.SSs +DDdMMmSS.Ss') for small-box outlier imaging / baby peeling.",
+        description=(
+            "Optional phase center: integer field ID, field name (converted to int field ID "
+            "for CASA), or J2000 direction string (e.g. 'J2000 HHhMMmSS.SSs +DDdMMmSS.Ss'; "
+            "never ':' in Declination or 'FK5')."
+        ),
+    )
+    psfphasecenter: int | str = Field(
+        default="",
+        description=(
+            "Optional PSF phase center for mosaic/wide-field imaging: integer field ID, "
+            "field name (converted to int field ID for CASA), or J2000 direction string."
+        ),
     )
     outlierfile: str = Field(
         default="",
         description="Optional path to a CASA outlier-field definition file.",
     )
+    allow_geometry_override: bool = Field(
+        default=False,
+        description="Downgrade undersized mosaic FOV and strict Nyquist (< 2.0 px/beam) hard errors to warnings.",
+    )
     execute: bool = Field(default=False, description="False writes script; True runs in-process.")
     debug: bool = _debug_field()
     debug_params: dict[str, dict[str, Any]] = _debug_params_field()
+
+    @field_validator("phasecenter", "psfphasecenter", mode="before")
+    @classmethod
+    def _reject_bool_phasecenter(cls, v: Any) -> Any:
+        if isinstance(v, bool):
+            raise ValueError(
+                "phasecenter/psfphasecenter must be an int field ID or string, not bool."
+            )
+        return v
 
 
 # ---------------------------------------------------------------------------
@@ -1962,7 +1986,9 @@ async def ms_tclean(params: TcleanInput) -> ToolResult:
         outframe=params.outframe,
         scales=params.scales,
         phasecenter=params.phasecenter,
+        psfphasecenter=params.psfphasecenter,
         outlierfile=params.outlierfile,
+        allow_geometry_override=params.allow_geometry_override,
         execute=params.execute,
         debug=params.debug,
         debug_params=params.debug_params,

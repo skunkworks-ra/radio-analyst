@@ -95,7 +95,7 @@ All placeholders are populated from Phase 1-2 tool outputs before calling `ms_tc
 | `{IS_MOSAIC}` | Step 0 | True if imaging multiple pointings together |
 | `{STOKES}` | Step 0 | `'IQUV'` if polcal ran, else `'I'` |
 | `{POINTING_CENTERS}` | `ms_field_list` | RA/Dec of each target pointing and `mosaic_groups[]` (`extent_ra_arcmin`, `extent_dec_arcmin`, `max_extent_arcmin`) |
-| `{PHASECENTER}` | `ms_field_list` | `mosaic_groups[].bbox_center_j2000` (MANDATORY on every multi-pointing mosaic; check `central_field_name` / `central_field_offset_arcmin` for hollow mosaics) |
+| `{PHASECENTER}` | `ms_field_list` | `mosaic_groups[].bbox_center_j2000` (MANDATORY on every multi-pointing mosaic; check `central_field_id` / `central_field_name` / `central_field_offset_arcmin` for hollow mosaics) |
 | `{SURVIVING_SPWS}` | `postcal` / `ms_spw_amp_severity` | comma-separated clean continuum SPWs (or `''` if all SPWs are clean) |
 | `{MAX_BASELINE_M}` | `ms_baseline_lengths` | `max_baseline_m` |
 | `{CENTER_FREQ_HZ}` | `ms_radiometer_estimate` | `center_freq_hz` (also read `min_freq_hz` for PB `imsize` and `max_freq_hz` for wideband/cube `cell`) |
@@ -254,7 +254,7 @@ stopping after an arbitrary fixed pass count:
      `threshold = max(2 * thermal_rms_jy, 1.5 * residual_out_mask_rms_jy)`, and
      `savemodel='modelcolumn'` **ONLY when `selfcal` (`dynamic_range >= 30`) or
      `uvsub` will consume `MODEL_DATA`** (otherwise keep `savemodel='none'` to
-     avoid ~15 min/pass `MODEL_DATA` I/O overhead on large MSs). Verify
+     avoid expensive `MODEL_DATA` write/I/O overhead on large MSs). Verify
      `converged=True` AND that `.model` positivity did not degrade compared to
      Phase B; if Phase C only added negative model components without improving
      residuals, keep the cleaner Phase B round.
@@ -406,11 +406,18 @@ every `ms_tclean` call. Omitting `phasecenter` (`""`) defaults in CASA to the
 first selected pointing -- often an outer-edge pointing -- which shifts the grid
 off-center, slices through the opposite edge's primary beam, and triggers
 toroidal FFT wrap-around (`stopcode=5`). Also check
-`mosaic_groups[].central_field_name` and `central_field_offset_arcmin`: if
-`central_field_offset_arcmin > 0.5 * pb_fwhm` (a hollow or ring mosaic whose
-bounding-box midpoint sits in an unobserved gap where `PB ~ 0`), set CASA's
-`psfphasecenter = central_field_name` so `makePSF()` evaluates on an observed
-pointing. Record `bbox_center_j2000` as `{PHASECENTER}`.
+`mosaic_groups[].central_field_id`, `central_field_name`, and
+`central_field_offset_arcmin`: if `central_field_offset_arcmin > 0.5 * pb_fwhm`
+(a hollow or ring mosaic whose bounding-box midpoint sits in an unobserved gap
+where `PB ~ 0`), pass `psfphasecenter = central_field_id` (integer field ID) or
+a `J2000` direction string to `ms_tclean` so CASA `makePSF()` evaluates on an
+observed pointing. For both `phasecenter` and `psfphasecenter`, CASA `tclean`
+accepts an integer field ID (`central_field_id`) or a `J2000` direction string
+using `d/m/s` or `.` for Declination (e.g. `'J2000 03h26m24.16s +30d35m59.4s'`
+or `'J2000 03:26:24.16 +30.35.59.4'` -- NEVER `:` in Declination, which CASA
+interprets as hours, and NEVER `'FK5'`); `ms_tclean` also accepts
+`central_field_name` (or a numeric string) and converts it to the integer field
+ID for CASA. Record `bbox_center_j2000` as `{PHASECENTER}`.
 
 Primary beam FWHM: use the tapered-aperture approximation
 `PB_FWHM ~ 1.15 * lambda / D_min` (where `D_min` is the smallest active dish
@@ -646,7 +653,8 @@ ms_tclean(
     imagename    = {WORKDIR}/{imagename},
     field        = {TARGET_FIELD},
     spw          = {SURVIVING_SPWS},     # surviving clean continuum SPWs from postcal (or '')
-    phasecenter  = {PHASECENTER},        # MANDATORY on multi-pointing mosaics: mosaic_groups[].bbox_center_j2000
+    phasecenter  = {PHASECENTER},        # MANDATORY on multi-pointing mosaics: mosaic_groups[].bbox_center_j2000 (J2000 d/m/s or '.' for Dec, never ':' or FK5; or int field ID)
+    psfphasecenter = '',                 # optional: int central_field_id (or central_field_name, converted to int for CASA) or J2000 direction on hollow mosaics (central_field_offset_arcmin > 0.5 * pb_fwhm)
     stokes       = {STOKES},
     specmode     = {specmode},
     deconvolver  = {deconvolver},
@@ -672,7 +680,19 @@ ms_tclean(
 `savemodel`: use **`savemodel='none'`** on Phase A and intermediate Phase B
 passes; set `savemodel='modelcolumn'` **ONLY** on the final converged Stokes I
 pass when `selfcal` (`dynamic_range >= 30`) or `uvsub` will actually consume
-`MODEL_DATA` (avoids ~15 min/pass `MODEL_DATA` I/O overhead on large MSs).
+`MODEL_DATA` (avoids expensive `MODEL_DATA` write/I/O overhead on large MSs).
+
+**Hard pre-flight guards (`tclean.py`):** Before writing or executing a script,
+`ms_tclean` raises `ComputationError` on (a) a live `tclean_*.py.pid` in
+`workdir`, (b) missing `phasecenter=''` on a multi-pointing mosaic, (c) an
+unparseable or invalid `phasecenter` / `psfphasecenter` (including `:` in
+Declination, `'FK5'`, or an out-of-range field ID), (d) an undersized centered
+mosaic FOV (`fov < extent + 3.6 * pb_fwhm` or margin `< 1.8 * pb_fwhm`), and
+(e) a strict unprojected Nyquist violation (`px_per_beam < 2.0` without
+`uvtaper`). Items (a)--(c) are always hard errors; only geometry checks (d)--(e)
+can be downgraded to warnings by passing `allow_geometry_override=True`
+(reserved for intentional non-standard diagnostics, never for routine science
+imaging or panic retries).
 
 Generate the script (`execute=False`), then run it via `run-step.sh` (`--wait 240`,
 SKILL.md "Running generated scripts"), re-running on `status=running` until

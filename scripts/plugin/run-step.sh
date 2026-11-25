@@ -99,6 +99,57 @@ if [ -f "$PID_FILE" ] && [ ! "$SCRIPT" -nt "$PID_FILE" ]; then
     fi
 else
     script_dir="$(dirname "$SCRIPT")"
+    lock_dir="$script_dir/.run-step.launch.lock"
+    _release_lock() {
+        rm -rf "$lock_dir"
+    }
+    lock_acquired=0
+    lpid=""
+    _retry=0
+    while true; do
+        if mkdir "$lock_dir" 2>/dev/null; then
+            lock_acquired=1
+            trap _release_lock EXIT
+            printf "%s\n" "$$" > "$lock_dir/owner.pid"
+            break
+        fi
+        lpid=""
+        if [ -f "$lock_dir/owner.pid" ]; then
+            lpid="$(tr -d '[:space:]' < "$lock_dir/owner.pid" 2>/dev/null || true)"
+        fi
+        if [ -n "$lpid" ] && ! _pid_alive "$lpid"; then
+            stale_dir="${lock_dir}.stale.$$"
+            if mv "$lock_dir" "$stale_dir" 2>/dev/null; then
+                rm -rf "$stale_dir"
+            fi
+            if [ "$_retry" -lt 5 ]; then
+                _retry=$(( _retry + 1 ))
+                continue
+            fi
+        elif [ -z "$lpid" ] && [ -d "$lock_dir" ]; then
+            lock_mtime="$(stat -c %Y "$lock_dir" 2>/dev/null || stat -f %m "$lock_dir" 2>/dev/null || echo 0)"
+            now_s="$(date +%s)"
+            if [ "$lock_mtime" -gt 0 ] && [ $(( now_s - lock_mtime )) -gt 30 ]; then
+                stale_dir="${lock_dir}.stale.$$"
+                if mv "$lock_dir" "$stale_dir" 2>/dev/null; then
+                    rm -rf "$stale_dir"
+                fi
+                if [ "$_retry" -lt 5 ]; then
+                    _retry=$(( _retry + 1 ))
+                    continue
+                fi
+            fi
+        fi
+        if [ "$_retry" -ge 5 ]; then
+            break
+        fi
+        _retry=$(( _retry + 1 ))
+        sleep 0.1
+    done
+    if [ "$lock_acquired" -ne 1 ]; then
+        echo "status=busy active=launch_lock pid=${lpid:-unknown} pid_alive=true"
+        exit 1
+    fi
     for pfile in "$script_dir"/*.pid; do
         [ -f "$pfile" ] || continue
         [ -f "${pfile%.pid}.rc" ] && continue
@@ -119,6 +170,8 @@ else
     pid="$!"
     printf "%s\n" "$pid" > "${PID_FILE}.tmp"
     mv -f "${PID_FILE}.tmp" "$PID_FILE"
+    trap - EXIT
+    _release_lock
 fi
 
 start_epoch="$(date +%s)"

@@ -56,7 +56,7 @@ expected `.image.pbcor` exists on disk first.
    steps 3-7 for Stokes I, then step 8 if polcal ran. State both in the report.
 
 3. Gather placeholders from tool outputs (no hand math) and confirm clean continuum target spectrum:
-   - `ms_field_list(ms_path)` -> target field names and, for multi-pointing mosaics, `mosaic_groups[].bbox_center_j2000` (mandatory `phasecenter`), `extent_ra_arcmin`, `extent_dec_arcmin`, `max_extent_arcmin`, `central_field_name`, `central_field_offset_arcmin`
+   - `ms_field_list(ms_path)` -> target field names and, for multi-pointing mosaics, `mosaic_groups[].bbox_center_j2000` (mandatory `phasecenter`), `extent_ra_arcmin`, `extent_dec_arcmin`, `max_extent_arcmin`, `central_field_id`, `central_field_name`, `central_field_offset_arcmin`
    - `ms_spw_amp_severity(ms_path, datacolumn='CORRECTED_DATA', field, spw=<spw or ''>, workdir=workdir)` -> on **continuum SPWs (`specmode='mfs'`)** (explicitly exempt spectral-line / maser SPWs and rest-frequency line windows, where genuine astronomical line derivatives trigger `chan_diff_*`), verify the SEFD-invariant within-SPW Gaussianity gate: `chan_diff_std_over_mad < 1.5`, `max_spw_chan_diff_std_over_mad < 1.8`, `chan_diff_gt10sigma_frac < 0.001` (treat bandwidth-normalized `spw_noise_density_ratio` / `spw_rms_ratio` strictly as a secondary smoothness diagnostic for discontinuous single-SPW jumps vs smooth `T_sys(nu)` / atmospheric / sky-temperature gradients). If primary metrics are elevated on continuum SPWs, STOP and run bounded `/postcal` continuum target rflag + SPW triage first -- never image unflagged RFI
    - `ms_radiometer_estimate(ms_path, field, spw=<spw or ''>, stokes, weighting='briggs', robust=0.5)` -> `telescope_name`, `center_freq_hz`, `min_freq_hz`, `max_freq_hz`, `freq_span_hz`, `fractional_span`, `total_bw_hz`, `eff_bw_hz`, `n_ant_unflagged`, `on_source_s`, `thermal_rms_jy`
    - `ms_antenna_list(ms_path)` -> smallest active dish diameter `D_min` (`min(diameter_m)` across unflagged antennas on heterogeneous arrays; `dish_diameter_m` on homogeneous arrays), `n_antennas`
@@ -73,11 +73,14 @@ expected `.image.pbcor` exists on disk first.
      arguments give `deconvolver:`, the second pass uses it (`'asp'` is the last resort:
      `ms_tclean` warns it is expensive). Report the scales with the beam (arcsec) and cell they
      came from, so they can be recomputed.
-   - `phasecenter` (Step 4, MANDATORY on multi-pointing mosaics): pass
+   - `phasecenter` / `psfphasecenter` (Step 4, `phasecenter` MANDATORY on multi-pointing mosaics): pass
      `phasecenter = mosaic_groups[].bbox_center_j2000` on EVERY mosaic `ms_tclean` call
      (never leave `phasecenter=''`, which centers on the first edge pointing and causes toroidal
-     wrap-around!). If `central_field_offset_arcmin > 0.5 * pb_fwhm` (hollow mosaic), also note
-     `central_field_name` / CASA `psfphasecenter`.
+     wrap-around!). CASA `tclean` accepts an integer field ID (`central_field_id`) or a `J2000`
+     direction string (using `d/m/s` or `.` for Declination, never `:` or `FK5`; `ms_tclean` also
+     accepts `central_field_name` and converts it to the integer field ID for CASA). If
+     `central_field_offset_arcmin > 0.5 * pb_fwhm` (hollow mosaic), also pass
+     `psfphasecenter=central_field_id` (or `central_field_name`, converted to `int` by `ms_tclean`).
    - cell (Step 3): `1 / (max_baseline_lambda * 4)` using `nu_cube_max` (the cube's imaged upper
      frequency bound) for `specmode='cube'`, `max_freq_hz` for wideband continuum (`fractional_span > 0.2`),
      or `center_freq_hz` for narrowband continuum, rounded down to target `pixels_per_beam_minor >= 3.0`
@@ -175,7 +178,7 @@ expected `.image.pbcor` exists on disk first.
    - **`savemodel` rule:** Use `savemodel='none'` on Phase A and intermediate
      Phase B passes; set `savemodel='modelcolumn'` ONLY on the final converged
      Stokes I pass when `selfcal` (`dynamic_range >= 30`) or `uvsub` will
-     consume `MODEL_DATA` (avoids ~15 min/pass I/O waste on large MSs).
+     consume `MODEL_DATA` (avoids expensive `MODEL_DATA` write/I/O overhead on large MSs).
    **Outer-PB offending source handling (11-imaging.md Step 2):** Uncleaned
    outer-PB sources (`0 < PB < 0.1`) are normal and NOT an automatic failure,
    EXCEPT when **`residual_outer_pb_peak_snr >= 20` AND science-PB RMS

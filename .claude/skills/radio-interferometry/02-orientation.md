@@ -114,7 +114,7 @@ Key implications:
 - **Calibration:** all mosaic pointings share the same calibration solutions —
   do not calibrate each pointing independently.
 - **Primary beam:** the mosaic footprint must be planned around the primary beam
-  FWHM: θ_pb ≈ 1.02 λ / D where D is the dish diameter.
+  FWHM: θ_pb ≈ 1.15 λ / D for tapered Cassegrain dishes (vs 1.02 λ / D for an untapered uniform disk), where D is the dish diameter (use D_min on heterogeneous arrays; matches the sizing formula in 11-imaging.md).
   VLA (25 m): L-band θ_pb ≈ 27 arcmin.
   MeerKAT (13.5 m): L-band θ_pb ≈ 58 arcmin.
   uGMRT (45 m): L-band θ_pb ≈ 25 arcmin.
