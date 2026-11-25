@@ -18,7 +18,7 @@ a CompletionFlag on a numeric field; the skill reasons about what to do:
   3. Polarization presence — for fields the caller marks as pol-angle calibrators
      (polcal_fields), the cross-hand correlations (RL/LR, XY/YX) must be non-zero
      relative to the parallel hands. A Stokes-I-only model (or a polarized model
-     clobbered by a later plain setjy) has zero cross-hands — the G55 failure.
+     clobbered by a later plain setjy) has zero cross-hands.
 
 Requires the physical MODEL_DATA column (usescratch=True). A virtual model
 (usescratch=False) writes no MODEL_DATA and cannot be probed this way.

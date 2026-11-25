@@ -15,7 +15,7 @@ PARALLEL_CORR = {5: "RR", 8: "LL", 9: "XX", 12: "YY"}
 def match_field_names(names: list[str], field_sel: str) -> list[int]:
     """Resolve a CASA-style field selection against FIELD names. CASA-free.
 
-    Tokens (comma-separated): exact name, shell wildcard ('PER_FIELD_*'),
+    Tokens (comma-separated): exact name, shell wildcard ('SRC_*'),
     integer id ('3') or inclusive id range ('3~7'). Every token must match at
     least one field — an unmatched token raises ValueError rather than silently
     widening the selection to every field.

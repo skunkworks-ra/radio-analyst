@@ -20,8 +20,8 @@ summary counts that in-memory state.
 Also checks FLAG_CMD subtable for pre-existing online shadow flags.
 
 Why not `flagdata(mode='shadow')` on its own, which is what this tool used to
-call: verified 2026-07-31 against casatasks 6.7.5.18 and a real VLA MS (3C391,
-D-config), that call returns an **empty dict**. It computes but reports nothing,
+call: verified 2026-07-31 against casatasks 6.7.5.18 and a real VLA MS
+(D-config), that call returns an **empty dict**. It computes but reports nothing,
 because with `action='calculate'` flagdata emits a report only when the run
 includes a summary agent. The old code read that empty dict as
 `shadow_flag_fraction = 0.0`, COMPLETE.

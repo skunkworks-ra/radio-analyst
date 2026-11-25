@@ -329,7 +329,7 @@ def run_correlator_config(ms_path: str) -> dict:
 
         # Try to get dump time from first scan.
         # NOTE: msmd.exposuretime(scan=...) hard-segfaults CASA 6.7.x on some
-        # MSs (G55/AB1345), taking the whole process down (uncatchable), so we
+        # MSs, taking the whole process down (uncatchable), so we
         # derive the dump time from the times array instead.
         try:
             scan_nums = sorted(msmd.scannumbers())

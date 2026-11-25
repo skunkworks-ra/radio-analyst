@@ -28,7 +28,7 @@ ms_calsol_stats reads):
 Gain tables (G, T) are flagged along time, so rflag needs enough solution
 intervals per antenna to have neighbours to compare against. With solint='inf'
 and a handful of scans there are only 2-3 points per antenna per field, and rflag
-flags real solutions (24A-376: 3C147 went 16% -> 28% flagged on 2 scans). The
+flags real solutions (observed: a flux calibrator went 16% -> 28% flagged on 2 scans). The
 tool counts solution intervals per (field, SpW, antenna) and reports them; when
 the median is below min_intervals (default 10) auto-routing refuses, and an
 explicit mode= override runs with a warning quoting the counts.

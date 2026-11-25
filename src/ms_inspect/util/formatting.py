@@ -421,13 +421,13 @@ def normalize_field_sel(value: str) -> str:
     """
     Normalize a CASA field selection string.
 
-    LLMs sometimes pass Python list syntax ("[0, 1]" or "['J1331', 'J1822']")
-    instead of CASA's comma-separated syntax ("0,1" or "J1331,J1822").
+    LLMs sometimes pass Python list syntax ("[0, 1]" or "['J1331', 'J0137']")
+    instead of CASA's comma-separated syntax ("0,1" or "J1331,J0137").
     Passes already-valid strings through unchanged.
 
     Examples:
         "[0, 1]"                       → "0,1"
-        "['J1331+3030', 'J1822-0938']" → "J1331+3030,J1822-0938"
+        "['J1331+3030', 'J0137+3309']" → "J1331+3030,J0137+3309"
         "0,1"                          → "0,1"
         ""                             → ""
     """

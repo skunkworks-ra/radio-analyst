@@ -106,12 +106,12 @@ Fill every `{PLACEHOLDER}` from Phase 1-2 tool outputs before calling any solve 
 | `{BP_FIELD}` | `ms_field_list` | same as FLUX_FIELD unless a dedicated BP cal is present |
 | `{PHASE_FIELD}` | `ms_field_list` | field name(s) of phase calibrators, comma-separated |
 | `{POL_ANGLE_FIELD}`, `{LEAKAGE_FIELD}` | `ms_field_list` | distinct polarization angle / leakage calibrator field name(s), if different from `{FLUX_FIELD}` and `{PHASE_FIELD}` (MUST be included in Step 4 `gain.G`, Step 6 `fluxscale`, and Step 7b `applycal` with `gainfield=<self>`) |
-| `{TARGET_FIELD}` | `ms_field_list` | field name(s) of the science target (for a mosaic: comma-separated `mosaic_groups[].field_names`, e.g. `'3C391 C1,3C391 C2,...'`, never `group_name`) |
+| `{TARGET_FIELD}` | `ms_field_list` | field name(s) of the science target (for a mosaic: comma-separated `mosaic_groups[].field_names`, e.g. `'SRC C1,SRC C2,...'`, never `group_name`) |
 | `{CAL_FIELDS}` | `ms_field_list` | comma-separated names of ALL distinct calibrators (`{FLUX_FIELD},{PHASE_FIELD}` plus distinct `{POL_ANGLE_FIELD}` / `{LEAKAGE_FIELD}`) |
 | `{ALL_SPW}` | `ms_spectral_window_list` | spw selection string, e.g. `'0~15'` |
 | `{CENTER_CHANNELS}` | `ms_spectral_window_list` | from `ms_spectral_window_list.suggested.center_channels_string` |
 | `{WIDE_CHANNELS}` | `ms_spectral_window_list` | from `ms_spectral_window_list.suggested.wide_channels_string` |
-| `{REFANT}` | `ms_refant` | reference antenna name, e.g. `'ea09'` |
+| `{REFANT}` | `ms_refant` | reference antenna name, e.g. `'eaNN'` |
 | `{MINBLPERANT}` | `ms_antenna_list` | from `ms_antenna_list.recommended_minblperant` |
 | `{PRIORCALS}` | `ms_verify_priorcals` | from `ms_verify_priorcals.priorcals_list` |
 | `{WORKDIR}` | provided in prompt | directory to write all caltables into |
@@ -178,8 +178,8 @@ is gentle -- it catches the worst outliers without over-flagging.
 
 **Gain tables need enough time samples.** rflag judges each gain solution against
 its neighbours in time. With `solint='inf'` on a few calibrator scans there are
-only 2-3 points per antenna per field, and rflag flags real solutions (24A-376:
-3C147 on 2 scans went 16 % → 28 % flagged, other fields untouched).
+only 2-3 points per antenna per field, and rflag flags real solutions (observed:
+a flux calibrator on 2 scans went 16 % → 28 % flagged, other fields untouched).
 `ms_flag_caltable` reports `solution_intervals` (min / median / max per field,
 SpW, antenna) and refuses to auto-route a G/T table whose median is below
 `min_intervals` (default 10). In that case inspect with `ms_calsol_stats` and
@@ -686,8 +686,8 @@ applycal applies a *stack* of caltables to each visibility. With `applymode='cal
 a visibility is flagged if it has no usable solution in **any** table in the stack, so
 the antennas that survive applycal are the **intersection** of the surviving antenna
 sets across all stacked tables -- not any single table's set. Each table can pass its
-own `n_antennas_lost ≤ 3` gate while the intersection still collapses (observed on
-AB1345: a target applycal reduced to a 5-antenna intersection). Nothing else in this
+own `n_antennas_lost ≤ 3` gate while the intersection still collapses (observed in
+practice: a target applycal reduced to a 5-antenna intersection). Nothing else in this
 workflow intersects the sets, so the collapse is otherwise silent until it shows up as
 gutted CORRECTED data -- by which point the FLAG damage is done and there is no
 flagversions rollback in this build.

@@ -7,7 +7,7 @@ initial bandpass has been applied and CORRECTED is populated.
 Why two direct calls (not flagdata mode='list'):
 - CASA 6.7.5 raises `KeyError 'nreport'` in the list-mode report-aggregation
   path after the flags are computed (notably when an agent's report is empty),
-  aborting the call. This bit two separate reduction runs (G55, HH 1-2), both
+  aborting the call. This bit two separate reduction runs, both
   of which fell back to a hand-written two-call script.
 - So we issue two explicit `flagdata(action='apply')` passes — rflag then
   tfcrop — preceded by a single `flagmanager(mode='save')`. Single agent per

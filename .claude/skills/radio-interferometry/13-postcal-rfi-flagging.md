@@ -49,7 +49,7 @@ Calibrate the primaries robustly before clipping their residuals: per-integratio
 **phase** plus per-scan **amplitude**, not per-integration amplitude+phase. Heavy
 flags starve per-integration amplitude solves, the failed solves leave data badly
 calibrated, its residual explodes, and the next clip flags it — a runaway
-(observed on 24A-376: flagged fraction climbed every round while the residual
+(observed in practice: flagged fraction climbed every round while the residual
 sigma in the dirty SpWs got *worse*).
 
 ```
@@ -57,14 +57,14 @@ ms_postcal_flag(
     ms_path    = calibrators.ms,
     field      = '<flux cal>,<pol angle cal>',     # primaries only
     datacolumn = 'residual',
-    clip_sigma = N,                                 # 24A-376: 7
+    clip_sigma = N,                                 # starting value: 7
     floor_spw  = '<clean SpWs>',                    # thermal floor from known-clean windows
     keep_spw   = '<all candidate SpWs>',
 )
 ```
 
 Why `floor_spw`: the SpW's own robust sigma inflates once RFI occupies most of the
-SpW (24A-376: 8–15 Jy in the worst SpWs against a 0.2 Jy floor), so a clip at
+SpW (observed: 8–15 Jy in the worst SpWs against a 0.2 Jy floor), so a clip at
 N × its own sigma removes nothing. The floor from the clean SpWs equals the
 thermal noise there — check that it does (3C147: 0.19–0.21 Jy against ~0.19 Jy
 predicted).
@@ -159,14 +159,14 @@ sigma of the clean SpWs (the floor). The target's visibilities are noise-dominat
 (its sources wash out per visibility), so this is a clean RFI gauge — check it:
 the clean-SpW median |V| should be ≈ 1.18 × the thermal sigma.
 
-| Cut | Action | 24A-376 starting value |
+| Cut | Action | Starting value |
 |---|---|---|
 | Single channel above the spike cutoff | Flag that channel | sigma > 3 × floor |
 | Half-SpW (channels 0–31 / 32–63) whose median sigma is above the broad cutoff | Flag that half | median > 1.5 × floor |
 | Everything else | Keep | — |
 
 Report what stays and what goes **before** applying: channels kept per SpW, and
-the kept fraction of the currently unflagged data. On 24A-376 these cuts kept 75 %
+the kept fraction of the currently unflagged data. In one observed case these cuts kept 75 %
 of the unflagged target data (31 % of the full continuum band).
 
 Caveat: elevated sigma across a whole SpW at a band edge can be a hotter receiver,

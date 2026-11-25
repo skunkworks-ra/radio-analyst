@@ -91,7 +91,7 @@ All placeholders are populated from Phase 1-2 tool outputs before calling `ms_tc
 | Placeholder | Source tool | What to extract |
 |---|---|---|
 | `{VIS}` | provided | full MS path (not calibrators.ms) |
-| `{TARGET_FIELD}` | Step 0 | field **names**, comma-separated, e.g. `'3C391_C1,3C391_C2'` (never numeric IDs; 07 "Field selection") |
+| `{TARGET_FIELD}` | Step 0 | field **names**, comma-separated, e.g. `'SRC_C1,SRC_C2'` (never numeric IDs; 07 "Field selection") |
 | `{IS_MOSAIC}` | Step 0 | True if imaging multiple pointings together |
 | `{STOKES}` | Step 0 | `'IQUV'` if polcal ran, else `'I'` |
 | `{POINTING_CENTERS}` | `ms_field_list` | RA/Dec of each target pointing and `mosaic_groups[]` (`extent_ra_arcmin`, `extent_dec_arcmin`, `max_extent_arcmin`) |
@@ -337,7 +337,7 @@ Read `thermal_rms_jy` (along with `sefd_jy`, `eta_c`, `n_pol`, `n_ant_unflagged`
 
 **Do NOT clean an unmasked (`usemask='pb'`) dynamic-range-limited mosaic down to
 `3 * thermal_rms_jy`.** On extended or bright sources (for example a supernova
-remnant mosaic like 3C391), the actual off-source residual RMS can be 5--10x
+remnant mosaic), the actual off-source residual RMS can be 5--10x
 higher than the theoretical radiometer floor (`thermal_rms_jy`). Driving an
 unmasked PB clean down to `3 * thermal_rms_jy` with `niter=50000` cleans into
 noise and PSF sidelobes, producing severe negative clean bowls or timeouts.

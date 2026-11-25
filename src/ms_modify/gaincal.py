@@ -155,7 +155,7 @@ def run(
                       If True, run gaincal in-process.
         gainfield:    Optional per-prior-table field selection (aligned to
                       gaintable): which field's solutions each prior applies,
-                      e.g. ['', '', 'J1822-0938'] to take a multi-field gain
+                      e.g. ['', '', '<phase_cal>'] to take a multi-field gain
                       table's rows from the phase calibrator only. Default
                       None → CASA default, solutions from every field.
 

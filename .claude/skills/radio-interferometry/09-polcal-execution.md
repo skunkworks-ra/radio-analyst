@@ -164,7 +164,7 @@ last-writer-wins per (field, spw). The pol-angle calibrator (3C286 / 3C138 /
 3C48) is *also* a standard flux/BP calibrator, so `ms_setjy`'s automatic field
 selection includes it. If a plain `ms_setjy(usescratch=True)` pass lands on that
 field **after** `ms_setjy_polcal`, it overwrites the polarized model with a
-Stokes-I-only one — silently. This is the G55 failure: a parallel `ms_setjy`
+Stokes-I-only one — silently. Observed in practice: a parallel `ms_setjy`
 re-set Stokes-I models on both 3C286 entries after the polarized model, wiping it.
 
 **When the pol-angle cal overlaps a flux/BP cal (the usual case), prefer the full

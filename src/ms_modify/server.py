@@ -136,7 +136,7 @@ class InitialBandpassInput(BaseModel):
     )
     ref_ant: str = Field(
         ...,
-        description="Reference antenna name from ms_refant output (e.g. 'ea17').",
+        description="Reference antenna name from ms_refant output (e.g. 'eaNN').",
         min_length=1,
     )
     workdir: str = Field(

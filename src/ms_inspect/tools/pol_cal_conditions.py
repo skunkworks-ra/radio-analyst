@@ -308,7 +308,7 @@ def run(ms_path: str) -> dict:
         # "angle". Every Category A angle standard also lists "leakage", so
         # accepting the first role match promotes 3C286 the moment it precedes
         # the real leakage cal in field order, which is what happened on
-        # 3c391_ctm_mosaic (3C286 at field 0, 3C84 at field 9).
+        # a mosaic MS (3C286 at field 0, 3C84 at field 9).
         if "leakage" in entry.role and "angle" not in entry.role and leakage_cal_entry is None:
             leakage_cal_entry = entry
             leakage_cal_field_id = fid

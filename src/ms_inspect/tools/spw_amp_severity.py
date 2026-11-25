@@ -124,7 +124,7 @@ class _ChanDiffTracker:
     """Exact running RMS/std + bounded uniform reservoir for |V(ch) - V(ch-1)| / sqrt(2).
 
     Adjacent-channel complex differencing cancels smooth continuum sky emission on
-    all baselines (including bright extended sources like 3C391), leaving thermal
+    all baselines (including bright extended sources), leaving thermal
     noise (std / (1.4826 * MAD) ~ 1.0) plus narrow-band/time-variable RFI spikes.
     Exact Chan parallel-variance updates ensure rare high-amplitude bursts are never
     missed by reservoir sampling.

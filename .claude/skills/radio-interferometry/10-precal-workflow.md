@@ -296,8 +296,8 @@ required argument with no default. Gains are solved on the bandpass calibrator
 only (`bp_field`), so it is the only field with a valid solution. The Step 3
 applycal must be restricted to that field — applying to other fields under the
 default `applymode='calflagstrict'` flags them for lack of a matching solution
-and silently corrupts the FLAG state of every non-BP calibrator (observed on
-AB1345). There is no flagversions rollback in this build, so the only recovery
+and silently corrupts the FLAG state of every non-BP calibrator (observed in
+practice). There is no flagversions rollback in this build, so the only recovery
 is to re-split `calibrators.ms`. Pass `applycal_field=bp_field` here; reserve
 `applycal_field=''` (all fields) for stages where all fields genuinely have
 solutions.

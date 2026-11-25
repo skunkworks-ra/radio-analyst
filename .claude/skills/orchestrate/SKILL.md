@@ -413,7 +413,7 @@ B. **Target amplitude against frequency.** `ms_spw_amp_severity({ms},
    `robust_sigma` is the 13 Step 3 measure (13:101-106, :143-148). The floor is
    the median `robust_sigma` of the SpWs with the lowest `severity`. Note, per
    SpW, the channels and half-SpWs over 13 Step 3's cut values; those values
-   are the 24A-376 starting values (13:109-112), not a rule, so note the
+   are starting values (13:109-112), not a rule, so note the
    numbers and say so; note any residual RFI on that reading, then run C.
 C. **Target amplitude against time.** `ms_vis_amp_time_stats({ms},
    field=<targets>, datacolumn='CORRECTED_DATA', top_k=5)`. Read `median_amp`,

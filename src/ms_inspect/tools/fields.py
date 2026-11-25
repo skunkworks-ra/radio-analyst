@@ -784,7 +784,7 @@ def _is_mosaic_candidate(rec: dict) -> bool:
 
 
 def _mosaic_stem(name: str) -> str | None:
-    """Extract base target name from a mosaic pointing label (e.g. '3C391 C1' -> '3C391')."""
+    """Extract base target name from a mosaic pointing label (e.g. 'SRC C1' -> 'SRC')."""
     s = name.strip()
     m = re.match(r"^(.+?)(?:[\s_-]+(?:[A-Za-z]{0,4}\d+))$", s)
     if m:

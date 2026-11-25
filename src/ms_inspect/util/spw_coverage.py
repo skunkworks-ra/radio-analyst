@@ -8,7 +8,7 @@ applied solution flags the uncovered SpWs — and the failure typically surfaces
 several stages later (e.g. as fluxscale "Cannot find solutions for transfer
 field(s)") rather than at solve time.
 
-The pathological case (observed on AB1345 / G55.7+3.4): a single source recorded
+The pathological case (observed in practice): a single source recorded
 under two field IDs with *disjoint* SpWs — 3C286 as field 0 (SpWs 0,1) and field
 1 (SpWs 2-9) — where the target lives only in 2-9. Solving the bandpass on field
 0 silently flagged everything downstream.

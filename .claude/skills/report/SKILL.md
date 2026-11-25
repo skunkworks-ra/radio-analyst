@@ -29,7 +29,7 @@ measure anything new for the report.
    in the code. One item per line, no paragraphs:
    - `## <stage>` lines as subheadings: inspect, precal, calibrate, image.
    - `- ` lines as items, one fact or one decision each.
-   - Every parameter as `` `name = value` ``, e.g. `` `refant = ea21` ``,
+   - Every parameter as `` `name = value` ``, e.g. `` `refant = eaNN` ``,
      `` `pblimit = -0.1` ``.
    - Every decision ends with its ledger step and its source:
      `[step 6, model choice]` when you chose the value, `[step 6, skill 10]`
